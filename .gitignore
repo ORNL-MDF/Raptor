@@ -1,0 +1,7 @@
+# Python package files
+__pycache__
+*.egg-info
+build
+
+# other typical case file names
+*.vti
