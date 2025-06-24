@@ -1,0 +1,50 @@
+output_vtk_filename: "multi_layer_build.vti"
+
+scan_paths:
+  - "data/scanPathData/scanPath_0"
+  - "data/scanPathData/scanPath_1"
+  - "data/scanPathData/scanPath_2"
+  - "data/scanPathData/scanPath_3"
+  - "data/scanPathData/scanPath_4"
+  - "data/scanPathData/scanPath_5"
+  - "data/scanPathData/scanPath_6"
+  - "data/scanPathData/scanPath_7"
+  - "data/scanPathData/scanPath_8"
+  - "data/scanPathData/scanPath_9"
+  - "data/scanPathData/scanPath_10"
+  - "data/scanPathData/scanPath_11"
+  - "data/scanPathData/scanPath_12"
+  - "data/scanPathData/scanPath_13"
+  - "data/scanPathData/scanPath_14"
+  - "data/scanPathData/scanPath_15"
+  - "data/scanPathData/scanPath_16"
+  - "data/scanPathData/scanPath_17"
+  - "data/scanPathData/scanPath_18"
+  - "data/scanPathData/scanPath_19"
+
+parameters:
+  layer_height: 50.0e-6         # (meters)
+  voxel_resolution: 2.5e-6      # (meters)
+  bezier_points_per_half: 10.   # number of bezier points used in evaluation
+  enable_random_segment_phase: false # Default: true
+
+melt_pool_data:
+  width:
+      type: "from_file"
+      from_file:
+          file_name: "data/meltPoolData/ULI_v1700_theta0_meltpool.txt"
+          nmodes: 2.
+          scale: 1.
+
+  depth:
+      type: "from_file"
+      from_file:
+          file_name: "data/meltPoolData/ULI_v1700_theta0_meltpool.txt"
+          nmodes: 2.
+          scale: 0.8
+  hump:
+      type: "from_file"
+      from_file:
+          file_name: "data/meltPoolData/ULI_v1700_theta0_meltpool.txt"
+          nmodes: 2.
+          scale: 0.3
