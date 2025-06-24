@@ -51,8 +51,12 @@ jobs:
           path: venv/
       - name: Run application
         run: |
-          echo "Activating the virtual environment from the build stage..."
+          echo "Activating the virtual environment..."
           chmod +x venv/bin/*
           source venv/bin/activate
+
+          echo "Changing to the examples directory..."
+          cd examples
+
           echo "Running the main application..."
           raptor input.yaml
