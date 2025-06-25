@@ -1,4 +1,5 @@
 name: CI Pipeline
+
 on:
   push:
     branches:
@@ -8,55 +9,30 @@ on:
       - main
 
 concurrency:
-  group: ${ {github.event_name }}-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{github.event_name == 'pull_request'}}
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build:
-    name: Build
+  build-and-run:
+    name: Build and Run
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      - name: Set up Python 3.8
+
+      - name: Set up Python 3.8 with dependency caching
         uses: actions/setup-python@v5
         with:
           python-version: '3.8'
-      - name: Create venv and install dependencies
+          cache: 'pip'
+          cache-dependency-path: 'pyproject.toml'
+
+      - name: Install dependencies
         run: |
-          echo "Creating a virtual environment..."
-          python -m venv venv
-          echo "Activating the virtual environment and installing the project..."
-          source venv/bin/activate
           pip install .
-      - name: Upload venv artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: python-venv
-          path: venv/
 
-  run:
-    name: Run Raptor
-    runs-on: ubuntu-latest
-    needs: build
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-      - name: Download venv artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: python-venv
-          path: venv/
-      - name: Run application
+      - name: Run Raptor application
         run: |
-          echo "Activating the virtual environment..."
-          chmod +x venv/bin/*
-          source venv/bin/activate
-
-          echo "Changing to the examples directory..."
           cd examples
-
-          echo "Running the main application..."
           raptor input.yaml
