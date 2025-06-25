@@ -25,6 +25,7 @@ dependencies = [
     "numba",
     "PyYAML",
     "vtk",
+    "scipy"
 ]
 
 [project.scripts]
