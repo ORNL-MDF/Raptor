@@ -1,5 +1,5 @@
 import numpy as np
-from numba import jit, njit, prange
+from numba import njit, prange
 from typing import List, Tuple
 from .structures import MeltPool, PathVector
 import time
