@@ -152,13 +152,21 @@ def compute_porosity_vtk(
 
     for j in range(len(all_vectors)):
         dx, dy = all_vectors[j].end_coord[:2] - all_vectors[j].start_coord[:2]
-        all_vectors[j].ew, all_vectors[j].ed = local_frame_2d(dx, dy)
+        all_vectors[j].ew, all_vectors[j].es, all_vectors[j].ed = local_frame_2d(dx, dy)
         p0x, p0y, p0z = all_vectors[j].start_coord
         p1x, p1y, p1z = all_vectors[j].end_coord
 
         smx, sMx = min(p0x, p1x), max(p0x, p1x)
         smy, sMy = min(p0y, p1y), max(p0y, p1y)
         smz, sMz = min(p0z, p1z), max(p0z, p1z)
+
+        # segment OBB
+        all_vectors[j].centroid = np.array(
+            [(smx + sMx) / 2, (smy + sMy) / 2, (smz + sMz) / 2]
+        )
+        all_vectors[j].lx = maxW / 2
+        all_vectors[j].ly = np.hypot(sMx - smx, sMy - smy) / 2
+        all_vectors[j].lz = (maxDh + maxDm) / 2
 
         # segment AABB
         all_vectors[j].aabb = np.array(

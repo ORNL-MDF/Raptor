@@ -1,7 +1,8 @@
 import numpy as np
-from numba import njit, prange
+from numba import jit, njit, prange
 from typing import List, Tuple
 from .structures import MeltPool, PathVector
+import time
 
 
 def local_frame_2d(dx: float, dy: float) -> Tuple[np.ndarray, np.ndarray]:
@@ -20,11 +21,13 @@ def local_frame_2d(dx: float, dy: float) -> Tuple[np.ndarray, np.ndarray]:
     Lxy = np.hypot(dx, dy)
     if Lxy < 1e-12:
         e_width = np.array([1.0, 0.0, 0.0])
+        e_scan = np.array([0.0, 1.0, 0.0])
         e_depth_dir = np.array([0.0, 0.0, 1.0])
     else:
         e_width = np.array([-dy / Lxy, dx / Lxy, 0.0])
+        e_scan = np.array([dx / Lxy, dy / Lxy, 0.0])
         e_depth_dir = np.array([0.0, 0.0, 1.0])
-    return e_width, e_depth_dir
+    return e_width, e_scan, e_depth_dir
 
 
 @njit
@@ -167,12 +170,17 @@ def compute_melt_mask(
     ss_g = np.zeros(shape=(n_seg, 3))
     se_g = np.zeros(shape=(n_seg, 3))
     ew_g = np.zeros(shape=(n_seg, 3))
+    es_g = np.zeros(shape=(n_seg, 3))
     ed_g = np.zeros(shape=(n_seg, 3))
     sst_g = np.zeros(n_seg)
     set_g = np.zeros(n_seg)
     s_infl_aabb_g = np.zeros(shape=(n_seg, 6))
     seg_rand_phs_g = np.zeros(shape=(n_seg, max_modes))
     seg_slsq_g = np.zeros(n_seg)
+    seg_centroids = np.zeros(shape=(n_seg, 3))
+    seg_lx = np.zeros(n_seg)
+    seg_ly = np.zeros(n_seg)
+    seg_lz = np.zeros(n_seg)
 
     # unpack segment properties
     for j in range(n_seg):
@@ -180,18 +188,24 @@ def compute_melt_mask(
         ss_g[j, :] = vec.start_coord
         se_g[j, :] = vec.end_coord
         ew_g[j, :] = vec.ew
+        es_g[j, :] = vec.es
         ed_g[j, :] = vec.ed
         sst_g[j] = vec.start_t
         set_g[j] = vec.end_t
         s_infl_aabb_g[j, :] = vec.aabb
         seg_rand_phs_g[j, :] = vec.ph
         seg_slsq_g[j] = vec.slsq
+        seg_centroids[j, :] = vec.centroid
+        seg_lx[j] = vec.lx
+        seg_ly[j] = vec.ly
+        seg_lz[j] = vec.lz
 
     for i_v in prange(n_vox):
         vx, vy, vz = vox_g[i_v, 0], vox_g[i_v, 1], vox_g[i_v, 2]
         is_voxel_melted = False
 
         for j_s in range(n_seg):
+            # coarse aabb check
             if (
                 vx < s_infl_aabb_g[j_s, 0]
                 or vx > s_infl_aabb_g[j_s, 1]
@@ -199,6 +213,26 @@ def compute_melt_mask(
                 or vy > s_infl_aabb_g[j_s, 3]
                 or vz < s_infl_aabb_g[j_s, 4]
                 or vz > s_infl_aabb_g[j_s, 5]
+            ):
+                continue
+            # fine obb check
+            vref = vox_g[i_v] - seg_centroids[j_s]
+            ew_dir = ew_g[j_s] * (
+                vref[0] * ew_g[j_s] + vref[1] * ew_g[j_s, 1] + vref[2] * ew_g[j_s, 2]
+            )
+            proj_ew_vref = (ew_dir[0] ** 2 + ew_dir[1] ** 2 + ew_dir[2] ** 2) ** 0.5
+            es_dir = es_g[j_s] * (
+                vref[0] * es_g[j_s, 0] + vref[1] * es_g[j_s, 1] + vref[2] * es_g[j_s, 2]
+            )
+            proj_es_vref = (es_dir[0] ** 2 + es_dir[1] ** 2 + es_dir[2] ** 2) ** 0.5
+            ed_dir = ed_g[j_s] * (
+                vref[0] * ed_g[j_s, 0] + vref[1] * ed_g[j_s, 1] + vref[2] * ed_g[j_s, 2]
+            )
+            proj_ed_vref = (ed_dir[0] ** 2 + ed_dir[1] ** 2 + ed_dir[2] ** 2) ** 0.5
+            if not (
+                proj_ew_vref < seg_lx[j_s]
+                and proj_es_vref < seg_ly[j_s]
+                and proj_ed_vref < seg_lz[j_s]
             ):
                 continue
 

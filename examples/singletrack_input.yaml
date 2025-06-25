@@ -9,7 +9,7 @@ parameters:
   melt_pool_width: 130.0e-6     # (meters)
   melt_pool_depth: 81.0e-6      # (meters)
   melt_pool_hump: 11.0e-6       # (meters)
-  voxel_resolution: 2.5e-6      # (meters)
+  voxel_resolution: 5.0e-6      # (meters)
   bezier_points_per_half: 10.   # number of bezier points used in evaluation
   enable_random_segment_phase: false # Default: true
 
@@ -34,13 +34,13 @@ melt_pool_data:
           nmodes: 5.
           scale: 0.3
 
-rve:
-  boundBox:
-    p0:
-      - 0.002
-      - -100.0e-6
-      - -100.0e-6
-    p1:
-      - 0.006
-      - 100.0e-6
-      - 100.0e-6
+# rve:
+#   boundBox:
+#     p0:
+#       - 0.002
+#       - -100.0e-6
+#       - -100.0e-6
+#     p1:
+#       - 0.006
+#       - 100.0e-6
+#       - 100.0e-6

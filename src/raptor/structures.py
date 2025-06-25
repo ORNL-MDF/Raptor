@@ -52,8 +52,13 @@ pathvec_spec = [
     ("slsq", float64),
     ("aabb", float64[:]),
     ("ew", float64[:]),
+    ("es", float64[:]),
     ("ed", float64[:]),
     ("ph", float64[:]),
+    ("centroid", float64[:]),
+    ("lx", float64),
+    ("ly", float64),
+    ("lz", float64),
 ]
 
 

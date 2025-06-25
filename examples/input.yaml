@@ -24,7 +24,7 @@ scan_paths:
 
 parameters:
   layer_height: 50.0e-6         # (meters)
-  voxel_resolution: 2.5e-6      # (meters)
+  voxel_resolution: 5.e-6      # (meters)
   bezier_points_per_half: 10.   # number of bezier points used in evaluation
   enable_random_segment_phase: false # Default: true
 
@@ -48,3 +48,14 @@ melt_pool_data:
           file_name: "data/meltPoolData/ULI_v1700_theta0_meltpool.txt"
           nmodes: 2.
           scale: 0.3
+
+rve:
+  boundBox:
+    p0:
+      - 250.e-06
+      - 250.e-06
+      - 0.e-06
+    p1:
+      - 750.e-6
+      - 750.e-6
+      - 500.e-6
