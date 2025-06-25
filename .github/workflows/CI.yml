@@ -48,4 +48,4 @@ jobs:
           echo $(pwd)
           echo $(ls)
           cd examples
-          raptor input.yaml
+          NUMBA_NUM_THREADS=2 raptor input.yaml
