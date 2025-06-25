@@ -44,5 +44,8 @@ jobs:
           pip install .
       - name: Run example
         run: |
+          echo $(which raptor)
+          echo $(pwd)
+          echo $(ls)
           cd examples
           raptor input.yaml
