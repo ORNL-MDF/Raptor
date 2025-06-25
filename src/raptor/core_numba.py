@@ -2,7 +2,6 @@ import numpy as np
 from numba import njit, prange
 from typing import List, Tuple
 from .structures import MeltPool, PathVector
-import time
 
 
 def local_frame_2d(dx: float, dy: float) -> Tuple[np.ndarray, np.ndarray]:
