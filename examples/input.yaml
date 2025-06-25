@@ -24,7 +24,7 @@ scan_paths:
 
 parameters:
   layer_height: 50.0e-6         # (meters)
-  voxel_resolution: 2.5e-6      # (meters)
+  voxel_resolution: 10e-6       # (meters)
   bezier_points_per_half: 10.   # number of bezier points used in evaluation
   enable_random_segment_phase: false # Default: true
 
