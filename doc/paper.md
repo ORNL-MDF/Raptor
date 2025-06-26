@@ -6,11 +6,9 @@ tags:
 authors:
   - name: Vamsi Subraveti
     orcid: 0000-0000-0000-0000
-    equal-contrib: true
     affiliation: 1
   - name: John Coleman
     orcid: 0000-0000-0000-0000
-    equal-contrib: true
     affiliation: 2
   - name: Çağlar Oskay
     orcid: 0000-0000-0000-0000
