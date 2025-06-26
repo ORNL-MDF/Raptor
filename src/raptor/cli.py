@@ -155,4 +155,5 @@ def main() -> int:
 
 def run():
     """Entry point for the console script."""
-    sys.exit(main())
+    main()
+    sys.exit()
