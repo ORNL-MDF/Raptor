@@ -17,35 +17,35 @@ def local_frame_2d(dx: float, dy: float) -> Tuple[np.ndarray, np.ndarray]:
         e_width: Unit vector for width direction in XY plane.
         e_depth_dir: Unit vector for depth direction (global Z-axis).
     """
+
     Lxy = np.hypot(dx, dy)
-    if Lxy < 1e-12:
-        e_width = np.array([1.0, 0.0, 0.0])
-        e_scan = np.array([0.0, 1.0, 0.0])
-        e_depth_dir = np.array([0.0, 0.0, 1.0])
-    else:
-        e_width = np.array([-dy / Lxy, dx / Lxy, 0.0])
-        e_scan = np.array([dx / Lxy, dy / Lxy, 0.0])
-        e_depth_dir = np.array([0.0, 0.0, 1.0])
+    e_width = (
+        np.array([1.0, 0.0, 0.0])
+        if Lxy < 1e-12
+        else np.array([-dy / Lxy, dx / Lxy, 0.0])
+    )
+    e_scan = (
+        np.array([0.0, 1.0, 0.0])
+        if Lxy < 1e-12
+        else np.array([dx / Lxy, dy / Lxy, 0.0])
+    )
+    e_depth_dir = np.array([0.0, 0.0, 1.0])
     return e_width, e_scan, e_depth_dir
 
 
-@njit
+@njit(inline="always", fastmath=True)
 def bezier_vertices(
-    W_d: float, Dh_d: float, Dm_d: float, n_pts_h: int, B_m_c: np.ndarray
-) -> np.ndarray:
+    W_d: float,
+    Dh_d: float,
+    Dm_d: float,
+    n_pts_h: int,
+    B_m_c: np.ndarray,
+    poly_out: np.ndarray,
+):
     """
     Calculates vertices of a 2D Bezier polygon for melt pool cross-section.
-
-    Args:
-        W_d: Current width of the melt pool.
-        Dh_d: Current hump depth/height.
-        Dm_d: Current melt depth.
-        n_pts_h: Number of points per half Bezier curve (must be >= 2).
-        B_m_c: Bezier basis function values (Bernstein polynomials).
-
-    Returns:
-        A NumPy array of (x,y) vertices for the polygon.
     """
+
     s = 4.0 / 3.0
     Ph_c = s * Dh_d
     Pm_c = s * Dm_d
@@ -68,49 +68,45 @@ def bezier_vertices(
     CPb[2, 1] = -Pm_c
     CPb[3, :] = CPt[0, :]
 
-    top_s = np.empty((n_pts_h, 2), dtype=np.float64)
-    bot_s = np.empty((n_pts_h, 2), dtype=np.float64)
-
     for i in range(n_pts_h):
-        top_s[i, 0] = (
+        top_x = (
             B_m_c[i, 0] * CPt[0, 0]
             + B_m_c[i, 1] * CPt[1, 0]
             + B_m_c[i, 2] * CPt[2, 0]
             + B_m_c[i, 3] * CPt[3, 0]
         )
-        top_s[i, 1] = (
+        top_y = (
             B_m_c[i, 0] * CPt[0, 1]
             + B_m_c[i, 1] * CPt[1, 1]
             + B_m_c[i, 2] * CPt[2, 1]
             + B_m_c[i, 3] * CPt[3, 1]
         )
-        bot_s[i, 0] = (
+        poly_out[i, 0] = top_x
+        poly_out[i, 1] = top_y
+
+    for i in range(1, n_pts_h):
+        bot_x = (
             B_m_c[i, 0] * CPb[0, 0]
             + B_m_c[i, 1] * CPb[1, 0]
             + B_m_c[i, 2] * CPb[2, 0]
             + B_m_c[i, 3] * CPb[3, 0]
         )
-        bot_s[i, 1] = (
+        bot_y = (
             B_m_c[i, 0] * CPb[0, 1]
             + B_m_c[i, 1] * CPb[1, 1]
             + B_m_c[i, 2] * CPb[2, 1]
             + B_m_c[i, 3] * CPb[3, 1]
         )
-
-    n_poly = n_pts_h + (n_pts_h - 1)
-    poly = np.empty((n_poly, 2), dtype=np.float64)
-
-    poly[:n_pts_h] = top_s
-    poly[n_pts_h:] = bot_s[1:]
-    return poly
+        poly_out[n_pts_h + i - 1, 0] = bot_x
+        poly_out[n_pts_h + i - 1, 1] = bot_y
 
 
-@njit
+@njit(inline="always", fastmath=True)
 def point_in_poly(xt: float, yt: float, poly_v: np.ndarray) -> bool:
     """
-    Checks if a point is inside a polygon using a fully branchless (predicated)
-    algorithm suitable for high-throughput GPU execution.
+    Checks if a point is inside a polygon.
     """
+
     num_vertices = poly_v.shape[0]
     is_inside_int = 0
     px_prev, py_prev = poly_v[num_vertices - 1]
@@ -131,14 +127,37 @@ def point_in_poly(xt: float, yt: float, poly_v: np.ndarray) -> bool:
     return (is_inside_int % 2) == 1
 
 
-@njit(inline="always")
-def _cosine_expansion(
-    t_osc: np.ndarray, osc_a: np.ndarray, osc_f: np.ndarray, osc_p: np.ndarray
-) -> float:
-    dim_terms = 0
-    for k_n in range(osc_a.shape[0]):
-        dim_terms += osc_a[k_n] * np.cos(2 * np.pi * osc_f[k_n] * t_osc + osc_p[k_n])
-    return dim_terms
+@njit(inline="always", fastmath=True)
+def _compute_melt_pool(
+    t_osc: float,
+    osc_w_a: np.ndarray,
+    osc_w_f: np.ndarray,
+    osc_dm_a: np.ndarray,
+    osc_dm_f: np.ndarray,
+    osc_dh_a: np.ndarray,
+    osc_dh_f: np.ndarray,
+    phases: np.ndarray,
+) -> Tuple[float, float, float]:
+    """
+    Calculates melt pool dimensions at each time.
+    """
+
+    Wd = 0.0
+    Dmd = 0.0
+    Dhd = 0.0
+
+    two_pi_t = 2.0 * np.pi * t_osc
+
+    for k_n in range(osc_w_a.shape[0]):
+        Wd += osc_w_a[k_n] * np.cos(two_pi_t * osc_w_f[k_n] + phases[k_n])
+
+    for k_n in range(osc_dm_a.shape[0]):
+        Dmd += osc_dm_a[k_n] * np.cos(two_pi_t * osc_dm_f[k_n] + phases[k_n])
+
+    for k_n in range(osc_dh_a.shape[0]):
+        Dhd += osc_dh_a[k_n] * np.cos(two_pi_t * osc_dh_f[k_n] + phases[k_n])
+
+    return Wd, Dmd, Dhd
 
 
 @njit(parallel=True, fastmath=True)
@@ -154,7 +173,7 @@ def compute_melt_mask(
     """
     # construct array for melt mask
     n_vox = vox_g.shape[0]
-    melt_mask_g = np.zeros(n_vox, dtype=np.bool_)
+    melt_mask = np.zeros(n_vox, dtype=np.bool_)
 
     # unpack meltpool properties
     osc_W, osc_Dm, osc_Dh = (
@@ -162,6 +181,14 @@ def compute_melt_mask(
         meltpool.osc_info_Dm,
         meltpool.osc_info_Dh,
     )
+    osc_w_amp = osc_W[:, 0]
+    osc_w_freq = osc_W[:, 1]
+
+    osc_dm_amp = osc_Dm[:, 0]
+    osc_dm_freq = osc_Dm[:, 1]
+
+    osc_dh_amp = osc_Dh[:, 0]
+    osc_dh_freq = osc_Dh[:, 1]
     max_modes = meltpool.max_modes
 
     # construct arrays for segment properties
@@ -199,12 +226,16 @@ def compute_melt_mask(
         seg_ly[j] = vec.ly
         seg_lz[j] = vec.lz
 
+    n_poly_pts = n_pts_b_h_g + (n_pts_b_h_g - 1)
+
     for i_v in prange(n_vox):
         vx, vy, vz = vox_g[i_v, 0], vox_g[i_v, 1], vox_g[i_v, 2]
         is_voxel_melted = False
 
+        poly_s = np.empty((n_poly_pts, 2), dtype=np.float64)
+
         for j_s in range(n_seg):
-            # coarse aabb check
+            # 1. Coarse AABB check
             if (
                 vx < s_infl_aabb_g[j_s, 0]
                 or vx > s_infl_aabb_g[j_s, 1]
@@ -214,72 +245,72 @@ def compute_melt_mask(
                 or vz > s_infl_aabb_g[j_s, 5]
             ):
                 continue
-            # fine obb check
-            vref = vox_g[i_v] - seg_centroids[j_s]
-            ew_dir = ew_g[j_s] * (
-                vref[0] * ew_g[j_s, 0] + vref[1] * ew_g[j_s, 1] + vref[2] * ew_g[j_s, 2]
+
+            # 2. Fine OBB check
+            vref_x = vx - seg_centroids[j_s, 0]
+            vref_y = vy - seg_centroids[j_s, 1]
+            vref_z = vz - seg_centroids[j_s, 2]
+
+            dot_es = (
+                vref_x * es_g[j_s, 0] + vref_y * es_g[j_s, 1] + vref_z * es_g[j_s, 2]
             )
-            proj_ew_vref = (ew_dir[0] ** 2 + ew_dir[1] ** 2 + ew_dir[2] ** 2) ** 0.5
-            es_dir = es_g[j_s] * (
-                vref[0] * es_g[j_s, 0] + vref[1] * es_g[j_s, 1] + vref[2] * es_g[j_s, 2]
-            )
-            proj_es_vref = (es_dir[0] ** 2 + es_dir[1] ** 2 + es_dir[2] ** 2) ** 0.5
-            ed_dir = ed_g[j_s] * (
-                vref[0] * ed_g[j_s, 0] + vref[1] * ed_g[j_s, 1] + vref[2] * ed_g[j_s, 2]
-            )
-            proj_ed_vref = (ed_dir[0] ** 2 + ed_dir[1] ** 2 + ed_dir[2] ** 2) ** 0.5
-            if not (
-                proj_ew_vref < seg_lx[j_s]
-                and proj_es_vref < seg_ly[j_s]
-                and proj_ed_vref < seg_lz[j_s]
-            ):
+            if dot_es * dot_es > seg_ly[j_s] * seg_ly[j_s]:
                 continue
 
+            dot_ew = (
+                vref_x * ew_g[j_s, 0] + vref_y * ew_g[j_s, 1] + vref_z * ew_g[j_s, 2]
+            )
+            if dot_ew * dot_ew > seg_lx[j_s] * seg_lx[j_s]:
+                continue
+
+            # dot_ed = vref_x*ed_g[j_s,0] + vref_y*ed_g[j_s,1] + vref_z*ed_g[j_s,2]
+            # if dot_ed * dot_ed > seg_lz[j_s] * seg_lz[j_s]:
+            #    continue
+
+            # 3. Project voxel onto segment line
             p0x, p0y, p0z = ss_g[j_s, 0], ss_g[j_s, 1], ss_g[j_s, 2]
             p1x, p1y, p1z = se_g[j_s, 0], se_g[j_s, 1], se_g[j_s, 2]
-
             sdx, sdy, sdz = p1x - p0x, p1y - p0y, p1z - p0z
             len_sq = sdx * sdx + sdy * sdy + sdz * sdz
-
             v0x, v0y, v0z = vx - p0x, vy - p0y, vz - p0z
             dotp = v0x * sdx + v0y * sdy + v0z * sdz
-
             tu = dotp / len_sq if len_sq > 1e-24 else 0.0
-
             tu_clamped = max(0.0, min(1.0, tu))
-
             t_osc = sst_g[j_s] + tu_clamped * (set_g[j_s] - sst_g[j_s])
 
-            Wd = _cosine_expansion(t_osc, osc_W[:, 0], osc_W[:, 1], seg_rand_phs_g[j_s])
-            Dmd = _cosine_expansion(
-                t_osc, osc_Dm[:, 0], osc_Dm[:, 1], seg_rand_phs_g[j_s]
-            )
-            Dhd = _cosine_expansion(
-                t_osc, osc_Dh[:, 0], osc_Dh[:, 1], seg_rand_phs_g[j_s]
+            # 4. Update melt pool dimensions
+            Wd, Dmd, Dhd = _compute_melt_pool(
+                t_osc,
+                osc_w_amp,
+                osc_w_freq,
+                osc_dm_amp,
+                osc_dm_freq,
+                osc_dh_amp,
+                osc_dh_freq,
+                seg_rand_phs_g[j_s],
             )
 
+            # 5. Final point in polygon check
             cpx = p0x + tu_clamped * sdx
             cpy = p0y + tu_clamped * sdy
             cpz = p0z + tu_clamped * sdz
             dist_sq_to_seg = (vx - cpx) ** 2 + (vy - cpy) ** 2 + (vz - cpz) ** 2
 
-            Lcap_sq = (Wd / 2.0) ** 2
-            if dist_sq_to_seg >= Lcap_sq:
+            if dist_sq_to_seg >= 0.25 * Wd * Wd:
                 continue
 
-            ptlx, ptly, ptlz = p0x + tu * sdx, p0y + tu * sdy, p0z + tu * sdz
-            dpx, dpy, dpz = vx - ptlx, vy - ptly, vz - ptlz
-            ewx, ewy, ewz = ew_g[j_s, 0], ew_g[j_s, 1], ew_g[j_s, 2]
-            edx, edy, edz = ed_g[j_s, 0], ed_g[j_s, 1], ed_g[j_s, 2]
-            xl = dpx * ewx + dpy * ewy + dpz * ewz
-            yl = dpx * edx + dpy * edy + dpz * edz
+            dpx = vx - (p0x + tu * sdx)
+            dpy = vy - (p0y + tu * sdy)
+            dpz = vz - (p0z + tu * sdz)
+            xl = dpx * ew_g[j_s, 0] + dpy * ew_g[j_s, 1] + dpz * ew_g[j_s, 2]
+            yl = dpx * ed_g[j_s, 0] + dpy * ed_g[j_s, 1] + dpz * ed_g[j_s, 2]
 
-            poly_s = bezier_vertices(Wd, Dhd, Dmd, n_pts_b_h_g, Bmc_s_g)
+            bezier_vertices(Wd, Dhd, Dmd, n_pts_b_h_g, Bmc_s_g, poly_s)
 
             if point_in_poly(xl, yl, poly_s):
                 is_voxel_melted = True
                 break
 
-        melt_mask_g[i_v] = is_voxel_melted
+        melt_mask[i_v] = is_voxel_melted
 
-    return melt_mask_g
+    return melt_mask
