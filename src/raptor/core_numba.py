@@ -217,7 +217,7 @@ def compute_melt_mask(
             # fine obb check
             vref = vox_g[i_v] - seg_centroids[j_s]
             ew_dir = ew_g[j_s] * (
-                vref[0] * ew_g[j_s,0] + vref[1] * ew_g[j_s, 1] + vref[2] * ew_g[j_s, 2]
+                vref[0] * ew_g[j_s, 0] + vref[1] * ew_g[j_s, 1] + vref[2] * ew_g[j_s, 2]
             )
             proj_ew_vref = (ew_dir[0] ** 2 + ew_dir[1] ** 2 + ew_dir[2] ** 2) ** 0.5
             es_dir = es_g[j_s] * (
