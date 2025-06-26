@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "raptor"
 version = "0.1.0"
-license = { text = "MIT License" }
+license = { text = "BSD-3-Clause" }
 authors = [
   { name="John Coleman", email="colemanjs@ornl.gov" },
   { name="Vamsi Subraveti", email="vamsi.r.subraveti@vanderbilt.edu" }

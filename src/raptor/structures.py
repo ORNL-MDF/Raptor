@@ -83,7 +83,8 @@ class PathVector:
         self.end_t = end_t
 
         self.dt = self.start_t - self.end_t
-        self.slsq = np.linalg.norm(self.end_coord - self.start_coord)
+        diff = self.end_coord - self.start_coord
+        self.slsq = np.sqrt(np.sum(diff**2))
 
 
 # MeltPool Class
