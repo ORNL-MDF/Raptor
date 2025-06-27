@@ -5,8 +5,8 @@ import traceback
 import yaml
 import numpy as np
 
-from .api import compute_porosity_vtk, compute_spectral_components
-from .io import read_exp_data
+from .api import compute_porosity_vtk, compute_spectral_components, construct_meltpool
+from .io import read_data
 from .structures import MeltPool
 
 
@@ -42,15 +42,26 @@ def main() -> int:
         mp = cfg["melt_pool_data"]
         mp_full_data = {}
         for key in mp:
-            if mp[key]["type"] == "from_file":
-                using_expdata_flag = True
+            datatype = mp[key]["type"]
+            if datatype == "time_series":
                 try:
-                    filepath = mp[key]["from_file"]["file_name"]
-                    nmodes = int(mp[key]["from_file"]["nmodes"])
-                    scale = mp[key]["from_file"]["scale"]
-                    mp_full_data[key] = (scale * read_exp_data(filepath), scale, nmodes)
+                    filepath = mp[key]["file_name"]
+                    nmodes = int(mp[key]["nmodes"])
+                    scale = mp[key]["scale"]
+                    mp_full_data[key] = (scale * read_data(filepath), scale, nmodes)
                 except:
-                    print("Error reading the specified {} data.".format(key))
+                    print("Error reading the specified {} {} data format.".format(key,datatype))
+            elif datatype == "spectral_components":
+                try:
+                    filepath = mp[key]["file_name"]
+                    nmodes = int(mp[key]["nmodes"])
+                    scale = mp[key]["scale"]
+                    print("Scaling the zeroth mode (mean) of {} spectral array.")
+                    spec_array = read_data(filepath)
+                    spec_array[0,0] *= scale
+                    mp_full_data[key] = (spec_array, scale, nmodes)
+                except:
+                    print("Error reading the specified {} {} data format.".format(key,datatype))
 
         rve = cfg.get("rve", {})
         try:
@@ -107,12 +118,13 @@ def main() -> int:
         else:
             print(f"  {k}: {v_item}")
 
-    if using_expdata_flag:
-        print("  Melt pool data:")
-        for key in mp_full_data:
-            print(f"    {key} path : " + mp[key]["from_file"]["file_name"])
-            print(f"    {key} scaling : {mp_full_data[key][1]}")
-            print(f"    {key} modes : {mp_full_data[key][2]}")
+    print("  Melt pool data:")
+    for key in mp_full_data:
+        print(f"    {key} datatype: "+mp[key]["type"])
+        print(f"    {key} path : " + mp[key]["file_name"])
+        print(f"    {key} scaling : {mp_full_data[key][1]}")
+        print(f"    {key} modes : {mp_full_data[key][2]}")
+
 
     if boundingBox is not None:
         print("  RVE data:")
@@ -120,21 +132,9 @@ def main() -> int:
         print(f"    xmax,ymax,zmax = {p1[0]} m,{p1[1]} m,{p1[2]} m")
 
     try:
-        if using_expdata_flag:
-            osc_dict = {}
-            # compute spectral expansion and consolidate amps,freqs,phases here.
-            for key in mp_full_data.keys():
-                mp_data, scale, nmodes = mp_full_data[key]
-                max_ratio = mp_data[:, 1].max() / mp_data[:, 1].mean()
-                osc_dict[key] = (
-                    compute_spectral_components(mp_data, nmodes),
-                    max_ratio,
-                )
 
-        osc_W, max_rW = osc_dict["width"]
-        osc_Dm, max_rDm = osc_dict["depth"]
-        osc_Dh, max_rDh = osc_dict["hump"]
-        mp = MeltPool(osc_W, osc_Dm, osc_Dh, max_rW, max_rDm, max_rDh, en_rand_ph)
+        mp = construct_meltpool(mp_full_data, en_rand_ph)
+
         compute_porosity_vtk(
             sfp_abs, lh_val, vtk_abs, d_res, n_pts_bh, mp, boundBox=boundingBox
         )

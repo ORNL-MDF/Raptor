@@ -52,8 +52,13 @@ pathvec_spec = [
     ("slsq", float64),
     ("aabb", float64[:]),
     ("ew", float64[:]),
+    ("es", float64[:]),
     ("ed", float64[:]),
     ("ph", float64[:]),
+    ("centroid", float64[:]),
+    ("lx", float64),
+    ("ly", float64),
+    ("lz", float64),
 ]
 
 
@@ -78,7 +83,8 @@ class PathVector:
         self.end_t = end_t
 
         self.dt = self.start_t - self.end_t
-        self.slsq = np.linalg.norm(self.end_coord - self.start_coord)
+        diff = self.end_coord - self.start_coord
+        self.slsq = np.sqrt(np.sum(diff**2))
 
 
 # MeltPool Class
