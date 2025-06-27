@@ -38,37 +38,35 @@ def construct_meltpool(mp_full_data: dict, en_rand_ph: bool) -> dict:
     osc_dict = {}
     max_modes = 0
     for key in mp_full_data.keys():
-        mp_data,scale,nmodes = mp_full_data[key]
-        max_modes = np.max([nmodes,max_modes]) # setting max_modes for padding
-        if mp_data.shape[1]==2:
+        mp_data, scale, nmodes = mp_full_data[key]
+        max_modes = np.max([nmodes, max_modes])  # setting max_modes for padding
+        if mp_data.shape[1] == 2:
             # measurement sequence
             max_ratio = mp_data[:, 1].max() / mp_data[:, 1].mean()
-            osc_dict[key] = (compute_spectral_components(mp_data,nmodes),max_ratio)
-        elif mp_data.shape[1]==3:
+            osc_dict[key] = (compute_spectral_components(mp_data, nmodes), max_ratio)
+        elif mp_data.shape[1] == 3:
             # spectral array
             # compute max ratio from sum of amplitudes/mode0 amplitude
             # assuming that the number of modes are small enough s.t. perfect
             # constructive interference doesn't yield a very large max_ratio
-            As = mp_data[:,0]
-            max_ratio = np.sum(As)/As[0]
-            osc_dict[key] = (mp_data,max_ratio)
-        
+            As = mp_data[:, 0]
+            max_ratio = np.sum(As) / As[0]
+            osc_dict[key] = (mp_data, max_ratio)
+
     # pad the spectral components
     for key in osc_dict.keys():
-        if osc_dict[key][0].shape[0]<max_modes:
-            pad = np.zeros(shape=(max_modes-osc_dict[key][0].shape[0],osc_dict[key][0].shape[1]))
-            osc_dict[key] = (
-                np.vstack([osc_dict[key][0],pad]),
-                osc_dict[key][1]
+        if osc_dict[key][0].shape[0] < max_modes:
+            pad = np.zeros(
+                shape=(max_modes - osc_dict[key][0].shape[0], osc_dict[key][0].shape[1])
             )
+            osc_dict[key] = (np.vstack([osc_dict[key][0], pad]), osc_dict[key][1])
     # unpack meltpool arguments
-    osc_W,max_rW = osc_dict["width"]
-    osc_Dm,max_rDm = osc_dict["depth"]
-    osc_Dh,max_rDh = osc_dict["hump"]
-    mp = MeltPool(osc_W,osc_Dm,osc_Dh,
-                  max_rW,max_rDm,max_rDh,
-                  en_rand_ph)
+    osc_W, max_rW = osc_dict["width"]
+    osc_Dm, max_rDm = osc_dict["depth"]
+    osc_Dh, max_rDh = osc_dict["hump"]
+    mp = MeltPool(osc_W, osc_Dm, osc_Dh, max_rW, max_rDm, max_rDh, en_rand_ph)
     return mp
+
 
 def compute_porosity_vtk(
     scan_file_paths: List[str],

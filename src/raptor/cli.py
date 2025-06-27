@@ -50,7 +50,11 @@ def main() -> int:
                     scale = mp[key]["scale"]
                     mp_full_data[key] = (scale * read_data(filepath), scale, nmodes)
                 except:
-                    print("Error reading the specified {} {} data format.".format(key,datatype))
+                    print(
+                        "Error reading the specified {} {} data format.".format(
+                            key, datatype
+                        )
+                    )
             elif datatype == "spectral_components":
                 try:
                     filepath = mp[key]["file_name"]
@@ -58,10 +62,14 @@ def main() -> int:
                     scale = mp[key]["scale"]
                     print("Scaling the zeroth mode (mean) of {} spectral array.")
                     spec_array = read_data(filepath)
-                    spec_array[0,0] *= scale
+                    spec_array[0, 0] *= scale
                     mp_full_data[key] = (spec_array, scale, nmodes)
                 except:
-                    print("Error reading the specified {} {} data format.".format(key,datatype))
+                    print(
+                        "Error reading the specified {} {} data format.".format(
+                            key, datatype
+                        )
+                    )
 
         rve = cfg.get("rve", {})
         try:
@@ -120,11 +128,10 @@ def main() -> int:
 
     print("  Melt pool data:")
     for key in mp_full_data:
-        print(f"    {key} datatype: "+mp[key]["type"])
+        print(f"    {key} datatype: " + mp[key]["type"])
         print(f"    {key} path : " + mp[key]["file_name"])
         print(f"    {key} scaling : {mp_full_data[key][1]}")
         print(f"    {key} modes : {mp_full_data[key][2]}")
-
 
     if boundingBox is not None:
         print("  RVE data:")
