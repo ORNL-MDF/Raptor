@@ -15,6 +15,7 @@ def local_frame_2d(dx: float, dy: float) -> Tuple[np.ndarray, np.ndarray]:
     Returns:
         Tuple (e_width, e_depth_dir):
         e_width: Unit vector for width direction in XY plane.
+        e_scan: Unit vector for local scan direction in XY plane.
         e_depth_dir: Unit vector for depth direction (global Z-axis).
     """
 
@@ -127,16 +128,15 @@ def point_in_poly(xt: float, yt: float, poly_v: np.ndarray) -> bool:
     return (is_inside_int % 2) == 1
 
 
-@njit(parallel=True, fastmath=True)
 def compute_melt_mask(
     vox_g: np.ndarray,
     Bmc_s_g: np.ndarray,
     n_pts_b_h_g: int,
     meltpool: MeltPool,
     active_vectors: List[PathVector],
-) -> np.ndarray:
+):
     """
-    Computes a boolean mask indicating which voxels are melted by any scan segment.
+    Unpacks jitclasses into arrays to pass to compute_melt_mask_implicit().
     """
     # construct array for melt mask
     n_vox = vox_g.shape[0]
@@ -169,11 +169,9 @@ def compute_melt_mask(
     set_g = np.zeros(n_seg)
     s_infl_aabb_g = np.zeros(shape=(n_seg, 6))
     seg_rand_phs_g = np.zeros(shape=(n_seg, max_modes))
-    seg_slsq_g = np.zeros(n_seg)
     seg_centroids = np.zeros(shape=(n_seg, 3))
     seg_lx = np.zeros(n_seg)
     seg_ly = np.zeros(n_seg)
-    seg_lz = np.zeros(n_seg)
 
     # unpack segment properties
     for j in range(n_seg):
@@ -187,14 +185,72 @@ def compute_melt_mask(
         set_g[j] = vec.end_t
         s_infl_aabb_g[j, :] = vec.aabb
         seg_rand_phs_g[j, :] = vec.ph
-        seg_slsq_g[j] = vec.slsq
         seg_centroids[j, :] = vec.centroid
         seg_lx[j] = vec.lx
         seg_ly[j] = vec.ly
-        seg_lz[j] = vec.lz
 
     n_poly_pts = n_pts_b_h_g + (n_pts_b_h_g - 1)
 
+    return compute_melt_mask_implicit(
+        n_vox,
+        vox_g,
+        melt_mask,
+        n_pts_b_h_g,
+        n_seg,
+        ss_g,
+        se_g,
+        ew_g,
+        es_g,
+        ed_g,
+        sst_g,
+        set_g,
+        s_infl_aabb_g,
+        seg_rand_phs_g,
+        seg_centroids,
+        seg_lx,
+        seg_ly,
+        Bmc_s_g,
+        n_poly_pts,
+        osc_w_amp,
+        osc_w_freq,
+        osc_dm_amp,
+        osc_dm_freq,
+        osc_dh_amp,
+        osc_dh_freq,
+    )
+
+
+@njit(parallel=True, fastmath=True)
+def compute_melt_mask_implicit(
+    n_vox: int,
+    vox_g: np.ndarray,
+    melt_mask: np.ndarray,
+    n_pts_b_h_g: int,
+    n_seg: int,
+    ss_g: np.ndarray,
+    se_g: np.ndarray,
+    ew_g: np.ndarray,
+    es_g: np.ndarray,
+    ed_g: np.ndarray,
+    sst_g: np.ndarray,
+    set_g: np.ndarray,
+    s_infl_aabb_g: np.ndarray,
+    seg_rand_phs_g: np.ndarray,
+    seg_centroids: np.ndarray,
+    seg_lx: np.ndarray,
+    seg_ly: np.ndarray,
+    Bmc_s_g: np.ndarray,
+    n_poly_pts: int,
+    osc_w_amp: np.ndarray,
+    osc_w_freq: np.ndarray,
+    osc_dm_amp: np.ndarray,
+    osc_dm_freq: np.ndarray,
+    osc_dh_amp: np.ndarray,
+    osc_dh_freq: np.ndarray,
+) -> np.ndarray:
+    """
+    Implicit compute melt mask function optimized for parallelization.
+    """
     for i_v in prange(n_vox):
         vx, vy, vz = vox_g[i_v, 0], vox_g[i_v, 1], vox_g[i_v, 2]
         is_voxel_melted = False
