@@ -71,7 +71,6 @@ def construct_meltpool(mp_full_data: dict, en_rand_ph: bool) -> dict:
 def compute_porosity(
     scan_file_paths: List[str],
     layer_height: float,
-    # vtk_output_path: str,
     voxel_res: float,
     n_bezier_pts_half: int,
     meltpool: MeltPool,
