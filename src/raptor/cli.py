@@ -5,7 +5,7 @@ import traceback
 import yaml
 import numpy as np
 
-from .api import compute_porosity_vtk, compute_spectral_components,construct_meltpool
+from .api import compute_porosity_vtk, compute_spectral_components, construct_meltpool
 from .io import read_exp_data
 from .structures import MeltPool
 
@@ -121,7 +121,7 @@ def main() -> int:
 
     try:
 
-        mp = construct_meltpool(mp_full_data,en_rand_ph)
+        mp = construct_meltpool(mp_full_data, en_rand_ph)
 
         compute_porosity_vtk(
             sfp_abs, lh_val, vtk_abs, d_res, n_pts_bh, mp, boundBox=boundingBox

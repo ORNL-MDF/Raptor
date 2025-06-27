@@ -247,9 +247,15 @@ def compute_melt_mask(
             Dhd = 0
 
             for k_n in range(seg_rand_phs_g[j_s].shape[0]):
-                Wd += osc_w_amp[k_n] * np.cos(2*np.pi*t_osc * osc_w_freq[k_n] + seg_rand_phs_g[j_s][k_n])
-                Dmd += osc_dm_amp[k_n] * np.cos(2*np.pi*t_osc * osc_dm_freq[k_n] + seg_rand_phs_g[j_s][k_n])
-                Dhd += osc_dh_amp[k_n] * np.cos(2*np.pi*t_osc * osc_dh_freq[k_n] + seg_rand_phs_g[j_s][k_n])
+                Wd += osc_w_amp[k_n] * np.cos(
+                    2 * np.pi * t_osc * osc_w_freq[k_n] + seg_rand_phs_g[j_s][k_n]
+                )
+                Dmd += osc_dm_amp[k_n] * np.cos(
+                    2 * np.pi * t_osc * osc_dm_freq[k_n] + seg_rand_phs_g[j_s][k_n]
+                )
+                Dhd += osc_dh_amp[k_n] * np.cos(
+                    2 * np.pi * t_osc * osc_dh_freq[k_n] + seg_rand_phs_g[j_s][k_n]
+                )
 
             # 5. Final point in polygon check
             cpx = p0x + tu_clamped * sdx
