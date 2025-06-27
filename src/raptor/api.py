@@ -68,17 +68,16 @@ def construct_meltpool(mp_full_data: dict, en_rand_ph: bool) -> dict:
     return mp
 
 
-def compute_porosity_vtk(
+def compute_porosity(
     scan_file_paths: List[str],
     layer_height: float,
-    vtk_output_path: str,
     voxel_res: float,
     n_bezier_pts_half: int,
     meltpool: MeltPool,
     boundBox: Optional[np.ndarray] = None,
 ) -> None:
     """
-    Main computation: reads paths, computes melt pool, generates porosity VTK.
+    Main computation: computes porosity field.
     """
     all_vectors = numbaList()
 
@@ -272,12 +271,22 @@ def compute_porosity_vtk(
     )
 
     porosity = (~melted).astype(np.uint8).reshape((nx, ny, nz), order="C")
-    del melted
+    return np.array([xg[0], yg[0], zg[0]]), porosity
+
+
+def write_vtk(
+    origin: np.ndarray, voxel_res: float, porosity: np.ndarray, vtk_output_path: str
+) -> None:
+    """
+    Generates porosity VTK.
+    """
 
     imageData = vtk.vtkImageData()
 
+    nx, ny, nz = porosity.shape
+
     imageData.SetDimensions(nx, ny, nz)
-    imageData.SetOrigin(float(xg[0]), float(yg[0]), float(zg[0]))
+    imageData.SetOrigin(origin[0], origin[1], origin[2])
     imageData.SetSpacing(voxel_res, voxel_res, voxel_res)
 
     porosity_vtk_order = np.transpose(porosity, (2, 1, 0))
