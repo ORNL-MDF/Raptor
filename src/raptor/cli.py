@@ -78,8 +78,8 @@ def main() -> int:
 
         rve = cfg.get("rve", {})
         try:
-            p0 = rve["boundBox"]["p0"]
-            p1 = rve["boundBox"]["p1"]
+            p0 = rve["min_point"]
+            p1 = rve["max_point"]
             boundingBox = np.array([p0, p1])
         except:
             print("Warning: 'boundBox' was not found, defaulting to none")
