@@ -12,24 +12,21 @@ parameters:
 
 melt_pool_data:
   width:
-      type: "from_file"
-      from_file:
-          file_name: "data/meltPoolData/ULI_v1700_theta0_meltpool.txt"
-          nmodes: 10.
-          scale: 1.
+      type: "time_series"
+      file_name: "data/meltPoolData/ULI_v1700_theta0_widths.txt"
+      nmodes: 10.
+      scale: 1.
 
   depth:
-      type: "from_file"
-      from_file:
-          file_name: "data/meltPoolData/ULI_v1700_theta0_meltpool.txt"
-          nmodes: 10.
-          scale: 0.7
+      type: "time_series"
+      file_name: "data/meltPoolData/ULI_v1700_theta0_widths.txt"
+      nmodes: 10.
+      scale: 0.7
   hump:
-      type: "from_file"
-      from_file:
-          file_name: "data/meltPoolData/ULI_v1700_theta0_meltpool.txt"
-          nmodes: 5.
-          scale: 0.3
+      type: "time_series"
+      file_name: "data/meltPoolData/ULI_v1700_theta0_widths.txt"
+      nmodes: 5.
+      scale: 0.3
 
 rve:
   boundBox:

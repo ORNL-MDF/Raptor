@@ -5,9 +5,13 @@ from typing import List, Tuple
 from .structures import PathSegment, PathVector
 
 
-def read_exp_data(fname: str) -> np.ndarray:
+def read_data(fname: str) -> np.ndarray:
     """
-    Reads experimental scan track measurements from a .txt or .csv file.
+    Reads data from a .txt or .csv file.
+    Two types of input data structures are supported:
+        1. Melt pool timeseries -- T x 2 array of time, measurement
+        2. Spectral component array -- N x 3 array of amplitudes, frequences, and phases,
+                                       indexed by modenumber (low to high frequency)
     """
     if not os.path.exists(fname):
         raise FileNotFoundError(f"Melt pool measurement file not found: {fname}")
