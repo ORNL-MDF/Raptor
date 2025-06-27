@@ -25,9 +25,35 @@ def compute_spectral_components(mp_data, nmodes):
     exp_phases = np.float64(np.angle(F[:nmodes]))
     amps = np.float64(1 / (len(fft_res) / 2) * np.abs(F[:nmodes]))
     spectral_array = np.vstack(
-        [np.array([mode0, 0, 0]), np.vstack([amps, freqs, exp_phases]).transpose()]
+        [np.array([mode0, 0, 0]), np.vstack([amps[1:], freqs[1:], exp_phases[1:]]).transpose()]
     )
     return np.float64(spectral_array)
+
+def construct_meltpool(mp_full_data: dict, en_rand_ph: bool) -> dict:
+    # passing in the data read from file and consolidating the spectral components
+    osc_dict = {}
+    max_modes = 0
+    for key in mp_full_data.keys():
+        mp_data,scale,nmodes = mp_full_data[key]
+        max_modes = np.max([nmodes,max_modes]) # setting max_modes for padding
+        max_ratio = mp_data[:, 1].max() / mp_data[:, 1].mean()
+        osc_dict[key] = (compute_spectral_components(mp_data,nmodes),max_ratio)
+    # pad the spectral components
+    for key in osc_dict.keys():
+        if osc_dict[key][0].shape[0]<max_modes:
+            pad = np.zeros(shape=(max_modes-osc_dict[key][0].shape[0],osc_dict[key][0].shape[1]))
+            osc_dict[key] = (
+                np.vstack([osc_dict[key][0],pad]),
+                osc_dict[key][1]
+            )
+    # unpack meltpool arguments
+    osc_W,max_rW = osc_dict["width"]
+    osc_Dm,max_rDm = osc_dict["depth"]
+    osc_Dh,max_rDh = osc_dict["hump"]
+    mp = MeltPool(osc_W,osc_Dm,osc_Dh,
+                  max_rW,max_rDm,max_rDh,
+                  en_rand_ph)
+    return mp
 
 
 def compute_porosity_vtk(
