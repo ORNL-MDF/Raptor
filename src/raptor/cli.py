@@ -120,22 +120,8 @@ def main() -> int:
         print(f"    xmax,ymax,zmax = {p1[0]} m,{p1[1]} m,{p1[2]} m")
 
     try:
-        # if using_expdata_flag:
-        #     osc_dict = {}
-        #     # compute spectral expansion and consolidate amps,freqs,phases here.
-        #     for key in mp_full_data.keys():
-        #         mp_data, scale, nmodes = mp_full_data[key]
-        #         max_ratio = mp_data[:, 1].max() / mp_data[:, 1].mean()
-        #         osc_dict[key] = (
-        #             compute_spectral_components(mp_data, nmodes),
-        #             max_ratio,
-        #         )
 
-        # osc_W, max_rW = osc_dict["width"]
-        # osc_Dm, max_rDm = osc_dict["depth"]
-        # osc_Dh, max_rDh = osc_dict["hump"]
         mp = construct_meltpool(mp_full_data,en_rand_ph)
-
 
         compute_porosity_vtk(
             sfp_abs, lh_val, vtk_abs, d_res, n_pts_bh, mp, boundBox=boundingBox

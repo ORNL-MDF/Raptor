@@ -127,39 +127,6 @@ def point_in_poly(xt: float, yt: float, poly_v: np.ndarray) -> bool:
     return (is_inside_int % 2) == 1
 
 
-@njit(inline="always", fastmath=True)
-def _compute_melt_pool(
-    t_osc: float,
-    osc_w_a: np.ndarray,
-    osc_w_f: np.ndarray,
-    osc_dm_a: np.ndarray,
-    osc_dm_f: np.ndarray,
-    osc_dh_a: np.ndarray,
-    osc_dh_f: np.ndarray,
-    phases: np.ndarray,
-) -> Tuple[float, float, float]:
-    """
-    Calculates melt pool dimensions at each time.
-    """
-
-    Wd = 0.0
-    Dmd = 0.0
-    Dhd = 0.0
-
-    two_pi_t = 2.0 * np.pi * t_osc
-
-    for k_n in range(osc_w_a.shape[0]):
-        Wd += osc_w_a[k_n] * np.cos(two_pi_t * osc_w_f[k_n] + phases[k_n])
-
-    for k_n in range(osc_dm_a.shape[0]):
-        Dmd += osc_dm_a[k_n] * np.cos(two_pi_t * osc_dm_f[k_n] + phases[k_n])
-
-    for k_n in range(osc_dh_a.shape[0]):
-        Dhd += osc_dh_a[k_n] * np.cos(two_pi_t * osc_dh_f[k_n] + phases[k_n])
-
-    return Wd, Dmd, Dhd
-
-
 @njit(parallel=True, fastmath=True)
 def compute_melt_mask(
     vox_g: np.ndarray,
@@ -263,10 +230,6 @@ def compute_melt_mask(
             if dot_ew * dot_ew > seg_lx[j_s] * seg_lx[j_s]:
                 continue
 
-            # dot_ed = vref_x*ed_g[j_s,0] + vref_y*ed_g[j_s,1] + vref_z*ed_g[j_s,2]
-            # if dot_ed * dot_ed > seg_lz[j_s] * seg_lz[j_s]:
-            #    continue
-
             # 3. Project voxel onto segment line
             p0x, p0y, p0z = ss_g[j_s, 0], ss_g[j_s, 1], ss_g[j_s, 2]
             p1x, p1y, p1z = se_g[j_s, 0], se_g[j_s, 1], se_g[j_s, 2]
@@ -278,17 +241,15 @@ def compute_melt_mask(
             tu_clamped = max(0.0, min(1.0, tu))
             t_osc = sst_g[j_s] + tu_clamped * (set_g[j_s] - sst_g[j_s])
 
-            # 4. Update melt pool dimensions
-            Wd, Dmd, Dhd = _compute_melt_pool(
-                t_osc,
-                osc_w_amp,
-                osc_w_freq,
-                osc_dm_amp,
-                osc_dm_freq,
-                osc_dh_amp,
-                osc_dh_freq,
-                seg_rand_phs_g[j_s],
-            )
+            # 4. Compute melt pool dimensions
+            Wd = 0
+            Dmd = 0
+            Dhd = 0
+
+            for k_n in range(seg_rand_phs_g[j_s].shape[0]):
+                Wd += osc_w_amp[k_n] * np.cos(2*np.pi*t_osc * osc_w_freq[k_n] + seg_rand_phs_g[j_s][k_n])
+                Dmd += osc_dm_amp[k_n] * np.cos(2*np.pi*t_osc * osc_dm_freq[k_n] + seg_rand_phs_g[j_s][k_n])
+                Dhd += osc_dh_amp[k_n] * np.cos(2*np.pi*t_osc * osc_dh_freq[k_n] + seg_rand_phs_g[j_s][k_n])
 
             # 5. Final point in polygon check
             cpx = p0x + tu_clamped * sdx
