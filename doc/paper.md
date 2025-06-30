@@ -56,7 +56,7 @@ Raptor then applies the notion of point-parallel computation, associating each v
 
 Once the voxel-segment interactions are defined, the time at which the voxel interacts with the segment is computed. This time is defined as when the melt pool passes through the voxel, which can be determined for a local segment by the input velocity (from scan paths) and start and end points of the segment. The cosine expansion is performed at the local time when the melt pool passes through the voxel to determine the melt pool dimensions. Once the local melt pool dimensions are computed from the cosine expansion, they are used to define control points for two Bezier curves describing the boundary of the melt pool depth below the current layer and the melt pool cap above the current layer. The number of points in the Bezier curve is also user-specified.
 
-[INSERT LOCAL MELTPOOL MASK IMAGE]
+![blah blah](figures/meltmask.png)
 
 This approach of filtering the relevant scan paths for the locally interacting voxel-segment groups lends itself to a parallel approach over the voxels in a domain. Since each voxel only interacts with the scan paths and not with any other voxel, they can be processed in parallel, with the output of the masking operation being a superposition of the realized stochastic melt pool histories over the voxelized domain. Compared to the time-stepping approach in which a melt pool is translated throughout a domain with a global time counter, the parallel approach offers a significant efficiency gain for the same solution.
 
