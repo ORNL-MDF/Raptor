@@ -60,7 +60,7 @@ Once the voxel-segment interactions are defined, the time at which the voxel int
 
 This approach of filtering the relevant scan paths for the locally interacting voxel-segment groups lends itself to a parallel approach over the voxels in a domain. Since each voxel only interacts with the scan paths and not with any other voxel, they can be processed in parallel, with the output of the masking operation being a superposition of the realized stochastic melt pool histories over the voxelized domain. Compared to the time-stepping approach in which a melt pool is translated throughout a domain with a global time counter, the parallel approach offers a significant efficiency gain for the same solution.
 
-[INSERT RVE IMAGE]
+![blah blah](figures/rve_example.png)
 
 To evaluate part-scale builds, a feature was included in Raptor to employ a user-specified sub-volume, referred to as a representative volume element (RVE). The RVE domain is a simple rectangular prism, the extents of which are used to down-select the relevant scan path files (say, from a large build). This allows for the efficient analysis of stochastic defect populations location-specific manner for application to targeted simulation of critical regions. 
 
