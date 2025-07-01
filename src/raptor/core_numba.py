@@ -314,14 +314,6 @@ def compute_melt_mask_implicit(
                 )
 
             # 5. Final point in polygon check
-            cpx = p0x + tu_clamped * sdx
-            cpy = p0y + tu_clamped * sdy
-            cpz = p0z + tu_clamped * sdz
-            dist_sq_to_seg = (vx - cpx) ** 2 + (vy - cpy) ** 2 + (vz - cpz) ** 2
-
-            if dist_sq_to_seg >= 0.25 * Wd * Wd:
-                continue
-
             dpx = vx - (p0x + tu * sdx)
             dpy = vy - (p0y + tu * sdy)
             dpz = vz - (p0z + tu * sdz)
