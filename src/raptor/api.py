@@ -39,11 +39,13 @@ def construct_meltpool(mp_full_data: dict, en_rand_ph: bool) -> dict:
     max_modes = 0
     for key in mp_full_data.keys():
         mp_data, scale, nmodes = mp_full_data[key]
-        max_modes = np.max([nmodes, max_modes])  # setting max_modes for padding
+        max_modes = np.max([nmodes, max_modes])
         if mp_data.shape[1] == 2:
             # measurement sequence
             max_ratio = mp_data[:, 1].max() / mp_data[:, 1].mean()
-            osc_dict[key] = (compute_spectral_components(mp_data, nmodes), max_ratio)
+            spectral_components = compute_spectral_components(mp_data, nmodes)
+            spectral_components[:, 0] *= scale
+            osc_dict[key] = (spectral_components, max_ratio)
         elif mp_data.shape[1] == 3:
             # spectral array
             # compute max ratio from sum of amplitudes/mode0 amplitude
