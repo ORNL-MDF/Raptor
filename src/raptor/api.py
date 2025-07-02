@@ -23,7 +23,7 @@ def compute_spectral_components(mp_data, nmodes):
 
     freqs = np.float64(1 / (dt * len(fft_res))) * np.arange(nmodes, dtype=np.float64)
     exp_phases = np.float64(np.angle(F[:nmodes]))
-    amps = np.float64(1 / (len(fft_res) / 2) * np.abs(F[:nmodes]))
+    amps = np.float64(np.abs(F[:nmodes]) / len(fft_res))
     spectral_array = np.vstack(
         [
             np.array([mode0, 0, 0]),
