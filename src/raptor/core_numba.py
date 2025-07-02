@@ -302,15 +302,16 @@ def compute_melt_mask_implicit(
             Dmd = 0
             Dhd = 0
 
-            for k_n in range(seg_rand_phs_g[j_s].shape[0]):
-                Wd += osc_w_amp[k_n] * np.cos(
-                    2 * np.pi * t_osc * osc_w_freq[k_n] + seg_rand_phs_g[j_s][k_n]
-                )
+            phase = seg_rand_phs_g[j_s]
+            two_pi_t = 2 * np.pi * t_osc
+
+            for k_n in range(phase.shape[0]):
+                Wd += osc_w_amp[k_n] * np.cos(two_pi_t * osc_w_freq[k_n] + phase[k_n])
                 Dmd += osc_dm_amp[k_n] * np.cos(
-                    2 * np.pi * t_osc * osc_dm_freq[k_n] + seg_rand_phs_g[j_s][k_n]
+                    two_pi_t * osc_dm_freq[k_n] + phase[k_n]
                 )
                 Dhd += osc_dh_amp[k_n] * np.cos(
-                    2 * np.pi * t_osc * osc_dh_freq[k_n] + seg_rand_phs_g[j_s][k_n]
+                    two_pi_t * osc_dh_freq[k_n] + phase[k_n]
                 )
 
             # 5. Final point in polygon check

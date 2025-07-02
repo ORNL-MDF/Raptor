@@ -53,7 +53,7 @@ def main() -> int:
                     filepath = mp[key]["file_name"]
                     nmodes = int(mp[key]["nmodes"])
                     scale = mp[key]["scale"]
-                    mp_full_data[key] = (scale * read_data(filepath), scale, nmodes)
+                    mp_full_data[key] = (read_data(filepath), scale, nmodes)
                 except:
                     print(
                         "Error reading the specified {} {} data format.".format(
@@ -67,7 +67,6 @@ def main() -> int:
                     scale = mp[key]["scale"]
                     print("Scaling the zeroth mode (mean) of {} spectral array.")
                     spec_array = read_data(filepath)
-                    spec_array[0, 0] *= scale
                     mp_full_data[key] = (spec_array, scale, nmodes)
                 except:
                     print(
