@@ -14,18 +14,18 @@ melt_pool_data:
   width:
       type: "time_series"
       file_name: "data/meltPoolData/ULI_v1700_theta0_widths.txt"
-      nmodes: 100.
+      nmodes: 10.
       scale: 1.
 
   depth:
       type: "time_series"
       file_name: "data/meltPoolData/ULI_v1700_theta0_widths.txt"
-      nmodes: 100.
+      nmodes: 10.
       scale: 0.7
   hump:
       type: "time_series"
       file_name: "data/meltPoolData/ULI_v1700_theta0_widths.txt"
-      nmodes: 50.
+      nmodes: 5.
       scale: 0.3
 
 rve:
