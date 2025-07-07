@@ -12,7 +12,10 @@ authors:
     affiliation: 2
   - name: Çağlar Oskay
     orcid: 0000-0000-0000-0000
-    affiliation: 1    
+    affiliation: 1
+  - name: Alex Plotkowski
+    orcid: 0000-0000-0000-0000
+    affiliation: 2    
 affiliations:
  - name: Vanderbilt University, Nashville, TN, USA
    index: 1
@@ -20,7 +23,8 @@ affiliations:
    index: 2
 date: 06 June 2025
 bibliography: paper.bib
-
+header-includes:
+  - \usepackage{amsmath}
 ---
 
 # Summary
@@ -31,9 +35,13 @@ Laser powder bed fusion is a metal AM technique which can produce complex, bespo
 
 
 # Statement of need
-Lack-of-fusion (LoF) defects are a type of defect in LPBF that result from local overlap-induced undermelting between adjacent melt pools or successive layers [@tang_lof_2017; @gordon_defectstructure_2020]. The analytical prediction of LoF defects commonly relate the melt pool dimensions to spacing parameters chosen before the build [@tang_lof_2017]. Assuming the melt pool is elliptical, a common criterion used to determine the formation of defects in the process space is 
+Lack-of-fusion (LoF) defects are a type of defect in LPBF that result from local undermelting caused by insufficient overlap between adjacent melt pools or successive layers [@tang_lof_2017; @gordon_defectstructure_2020]. The analytical prediction of LoF defects commonly relate the melt pool dimensions to spacing parameters chosen before the build [@tang_lof_2017]. Assuming the melt pool is elliptical, a common criterion used to determine the formation of defects in the process space is 
 
 $$\left( \frac{L}{D} \right)^2 + \left( \frac{H}{W} \right)^2 \leq1.$$
+
+\begin{equation}
+ff
+\end{equation}
 
 As a first approximation, this LoF criterion is ubiquitous in process maps to inform process parameter design. However, the strong assumption underlying the simplicity of this criterion is that the melt pool dimensions are constant. In experiments, the melt pool boundary has been observed to be stochastic, driven by the interaction of the laser with a non-uniformly packed powder bed and the subsequent coupled thermal-fluid problem [@khairallah_physics_2016; @grasso_insitu_2017; @miner_lof_2024]. The direct numerical simulation of these physics is prohibitive for incorporating stochasticity to infer downstream stochastic LoF (sLoF) defects, due to the stochastic defect structures forming from multiple tracks and layers. 
 
