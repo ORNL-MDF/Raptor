@@ -10,6 +10,8 @@ from .api import (
     construct_meltpool,
     compute_porosity,
     write_vtk,
+    compute_morphology,
+    write_morphology
 )
 from .io import read_data
 from .structures import MeltPool
@@ -38,6 +40,8 @@ def main() -> int:
     try:
         sfp_rel = cfg["scan_paths"]
         vtk_rel = cfg["output_vtk_filename"]
+        morph_rel = cfg["output_morphology_filename"]
+        morph_fields = cfg["output_morphology_fields"]
         p = cfg.get("parameters", {})
         lh_val = p["layer_height"]
         n_pts_bh = int(p["bezier_points_per_half"])
@@ -102,6 +106,9 @@ def main() -> int:
     if not isinstance(vtk_rel, str) or not vtk_rel:
         print("Error: 'output_vtk_filename' must be a string.")
         return 1
+    if not isinstance(morph_rel, str) or not morph_rel:
+        print("Error: 'output_morphology_filename' must be a string.")
+        return 1
     if not isinstance(lh_val, (int, float)) or lh_val <= 0:
         print("Error: 'layer_height' must be a positive number.")
         return 1
@@ -113,6 +120,7 @@ def main() -> int:
         os.path.join(cfg_dir, pth) if not os.path.isabs(pth) else pth for pth in sfp_rel
     ]
     vtk_abs = os.path.join(cfg_dir, vtk_rel) if not os.path.isabs(vtk_rel) else vtk_rel
+    morph_abs = os.path.join(cfg_dir, morph_rel) if not os.path.isabs(morph_rel) else morph_rel
 
     print("\n--- Simulation Parameters ---")
     param_summary = {
@@ -120,6 +128,7 @@ def main() -> int:
         "  Random Phases": f"{en_rand_ph}",
         "Layer Height": f"{lh_val:.2e} m",
         "VTK Output": vtk_abs,
+        "Morphology Output": morph_abs,
         "Voxel Res": f"{d_res:.2e} m",
         "Bezier Pts/Half": n_pts_bh,
     }
@@ -151,6 +160,9 @@ def main() -> int:
         )
 
         write_vtk(origin, d_res, porosity, vtk_abs)
+        if morph_fields:
+            props = compute_morphology(porosity,d_res,morph_fields)
+            write_morphology(props,morph_abs)
     except FileNotFoundError as e:
         print(f"Error: {e}")
         return 1

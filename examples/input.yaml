@@ -1,5 +1,8 @@
 output_vtk_filename: "ULI_st.vti"
 
+output_morphology_filename: "morphology.csv"
+
+output_morphology_fields:
 
 scan_paths:
   - "data/scanPathData/scanPath_ULI"
