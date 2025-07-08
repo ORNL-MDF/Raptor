@@ -24,12 +24,15 @@ def compute_spectral_components(mp_data, nmodes):
     freqs = np.float64(1 / (dt * len(fft_res))) * np.arange(nmodes, dtype=np.float64)
     exp_phases = np.float64(np.angle(F[:nmodes]))
     amps = np.float64(np.abs(F[:nmodes]) / len(fft_res))
-    spectral_array = np.vstack(
-        [
-            np.array([mode0, 0, 0]),
-            np.vstack([amps[1:], freqs[1:], exp_phases[1:]]).transpose(),
-        ]
-    )
+    if nmodes==1:
+        spectral_array = np.array([[mode0, 0 , 0]])
+    else:
+        spectral_array = np.vstack(
+            [
+                np.array([mode0, 0, 0]),
+                np.vstack([amps[1:], freqs[1:], exp_phases[1:]]).transpose(),
+            ]
+        )
     return np.float64(spectral_array)
 
 
@@ -160,9 +163,7 @@ def compute_porosity(
                 )
             )
         else:
-            all_vectors[j].ph = np.float64(
-                meltpool.osc_info_W[:, 2]
-            )  # experimental phases
+            all_vectors[j].ph = meltpool.osc_info_W[:, 2].astype(np.float64) # experimental phases
 
     t_p = np.linspace(0, 1, n_bezier_pts_half)  # Bezier t parameter
     Bmcs_np = np.empty((n_bezier_pts_half, 4))  # Bezier basis coeffs
