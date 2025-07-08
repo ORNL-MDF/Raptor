@@ -3,6 +3,15 @@ output_vtk_filename: "ULI_st.vti"
 output_morphology_filename: "morphology.csv"
 
 output_morphology_fields:
+#  - "label"
+#  - "bbox"
+#  - "area"
+#  - "area_bbox"
+#  - "area_filled"
+#  - "centroid"
+#  - "equivalent_diameter_area"
+#  - "euler_number"
+#  - "extent"
 
 scan_paths:
   - "data/scanPathData/scanPath_ULI"
