@@ -27,8 +27,8 @@ def compute_spectral_components(mp_data, nmodes):
     freqs = np.float64(1 / (dt * len(fft_res))) * np.arange(nmodes, dtype=np.float64)
     exp_phases = np.float64(np.angle(F[:nmodes]))
     amps = np.float64(np.abs(F[:nmodes]) / len(fft_res))
-    if nmodes==1:
-        spectral_array = np.array([[mode0, 0 , 0]])
+    if nmodes == 1:
+        spectral_array = np.array([[mode0, 0, 0]])
     else:
         spectral_array = np.vstack(
             [
@@ -166,7 +166,9 @@ def compute_porosity(
                 )
             )
         else:
-            all_vectors[j].ph = meltpool.osc_info_W[:, 2].astype(np.float64) # experimental phases
+            all_vectors[j].ph = meltpool.osc_info_W[:, 2].astype(
+                np.float64
+            )  # experimental phases
 
     t_p = np.linspace(0, 1, n_bezier_pts_half)  # Bezier t parameter
     Bmcs_np = np.empty((n_bezier_pts_half, 4))  # Bezier basis coeffs
@@ -317,34 +319,31 @@ def write_vtk(
 
     print(f"VTK porosity map written to: {vtk_output_path}")
 
+
 def compute_morphology(
-        porosity : np.ndarray,
-        voxel_res: float,
-        morph_fields: List[str]
+    porosity: np.ndarray, voxel_res: float, morph_fields: List[str]
 ) -> np.ndarray:
     """
     Extracts pores, computes morphology features.
     """
-    labeled_defects = measure.label(porosity,connectivity=3)
-    minsize=2
-    filtered_defects = remove_small_objects(labeled_defects,minsize)
-    return measure.regionprops_table(filtered_defects,spacing=voxel_res,properties=morph_fields)
+    labeled_defects = measure.label(porosity, connectivity=3)
+    minsize = 2
+    filtered_defects = remove_small_objects(labeled_defects, minsize)
+    return measure.regionprops_table(
+        filtered_defects, spacing=voxel_res, properties=morph_fields
+    )
 
-def write_morphology(props: dict,
-                     morphology_output_path: str
-)-> None:
+
+def write_morphology(props: dict, morphology_output_path: str) -> None:
     """
     Writes morphology output as a .csv.
     Note that props must be list of RegionProperties from skimage.measure.
     """
-    columns = ','.join([key for key in props.keys()])
+    columns = ",".join([key for key in props.keys()])
     morph_arr = np.vstack([props[key] for key in props.keys()]).transpose()
     np.savetxt(
-        morphology_output_path,
-        morph_arr,
-        header=columns,
-        delimiter=',',
-        comments=''
+        morphology_output_path, morph_arr, header=columns, delimiter=",", comments=""
     )
-    print(f"Morphology features of {morph_arr.shape[0]} defects written to: {morphology_output_path}")
-
+    print(
+        f"Morphology features of {morph_arr.shape[0]} defects written to: {morphology_output_path}"
+    )

@@ -11,7 +11,7 @@ from .api import (
     compute_porosity,
     write_vtk,
     compute_morphology,
-    write_morphology
+    write_morphology,
 )
 from .io import read_data
 from .structures import MeltPool
@@ -120,7 +120,9 @@ def main() -> int:
         os.path.join(cfg_dir, pth) if not os.path.isabs(pth) else pth for pth in sfp_rel
     ]
     vtk_abs = os.path.join(cfg_dir, vtk_rel) if not os.path.isabs(vtk_rel) else vtk_rel
-    morph_abs = os.path.join(cfg_dir, morph_rel) if not os.path.isabs(morph_rel) else morph_rel
+    morph_abs = (
+        os.path.join(cfg_dir, morph_rel) if not os.path.isabs(morph_rel) else morph_rel
+    )
 
     print("\n--- Simulation Parameters ---")
     param_summary = {
@@ -161,8 +163,8 @@ def main() -> int:
 
         write_vtk(origin, d_res, porosity, vtk_abs)
         if morph_fields:
-            props = compute_morphology(porosity,d_res,morph_fields)
-            write_morphology(props,morph_abs)
+            props = compute_morphology(porosity, d_res, morph_fields)
+            write_morphology(props, morph_abs)
     except FileNotFoundError as e:
         print(f"Error: {e}")
         return 1
