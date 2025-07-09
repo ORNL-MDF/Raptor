@@ -4,7 +4,7 @@ scan_paths:
 parameters:
   layer_height: 50.0e-6              # (meters)
   voxel_resolution: 5.0e-6           # (meters)
-  bezier_points_per_half: 10.        # number of bezier points
+  bezier_points_per_half: 20.        # number of bezier points
   enable_random_segment_phase: false # Default: true
 
 melt_pool_data:
