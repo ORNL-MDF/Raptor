@@ -122,7 +122,7 @@ def main() -> int:
     print("\n--- Simulation Parameters ---")
     param_summary = {
         "Scan Paths": scan_path_files,
-        "  Random Phases": f"{en_rand_ph}",
+        "Random Phases": f"{en_rand_ph}",
         "Layer Height": f"{layer_height:.2e} m",
         "VTK Output": vtk_file,
         "Morphology Output": morpholopy_file,
