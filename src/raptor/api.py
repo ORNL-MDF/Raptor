@@ -4,8 +4,11 @@ from numba.typed import List as numbaList
 import numpy as np
 import vtk
 from vtk.util import numpy_support
-from .structures import MeltPool
+from skimage import measure
+from skimage.morphology import remove_small_objects
 
+
+from .structures import MeltPool
 from .io import read_scan_path
 from .core_numba import compute_melt_mask, local_frame_2d
 
@@ -272,10 +275,11 @@ def compute_porosity(
     n_melted = melted.sum()
     print(
         f" -> Melt-mask computation: {t_elapsed:.1f}s. "
-        f"Melted {n_melted}/{total_vox} voxels."
+        f"Melted {n_melted}/{total_vox} voxels. "
+        f"{total_vox-n_melted} unmelted voxels."
     )
 
-    porosity = (~melted).astype(np.uint8).reshape((nx, ny, nz), order="C")
+    porosity = (~melted).astype(np.int8).reshape((nx, ny, nz), order="C")
     return np.array([xg[0], yg[0], zg[0]]), porosity
 
 
@@ -314,3 +318,32 @@ def write_vtk(
     del porosity_vtk_order
 
     print(f"VTK porosity map written to: {vtk_output_path}")
+
+
+def compute_morphology(
+    porosity: np.ndarray, voxel_res: float, morph_fields: List[str]
+) -> np.ndarray:
+    """
+    Extracts pores, computes morphology features.
+    """
+    labeled_defects = measure.label(porosity, connectivity=3)
+    minsize = 2
+    filtered_defects = remove_small_objects(labeled_defects, minsize)
+    return measure.regionprops_table(
+        filtered_defects, spacing=voxel_res, properties=morph_fields
+    )
+
+
+def write_morphology(props: dict, morphology_output_path: str) -> None:
+    """
+    Writes morphology output as a .csv.
+    Note that props must be list of RegionProperties from skimage.measure.
+    """
+    columns = ",".join([key for key in props.keys()])
+    morph_arr = np.vstack([props[key] for key in props.keys()]).transpose()
+    np.savetxt(
+        morphology_output_path, morph_arr, header=columns, delimiter=",", comments=""
+    )
+    print(
+        f"Morphology features of {morph_arr.shape[0]} defects written to: {morphology_output_path}"
+    )

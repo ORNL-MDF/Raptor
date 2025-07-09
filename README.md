@@ -41,9 +41,14 @@ This script requires Python 3 (tested with Python 3.8+). The following Python pa
     pip install vtk
     ```
 
+*   **scikit-image**: For calculating pore morphologies.
+    ```bash
+    pip install scikit-image
+    ```
+
 You can install all dependencies using pip:
 ```bash
-pip install numpy numba pyyaml vtk
+pip install numpy numba pyyaml vtk scikit-image
 ```
 It's highly recommended to use a virtual environment (e.g., `venv` or `conda`) to manage these dependencies.
 

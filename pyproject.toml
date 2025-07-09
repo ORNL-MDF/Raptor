@@ -15,7 +15,7 @@ readme = "README.md"
 requires-python = ">=3.8"
 classifiers = [
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: BSD-3-Clause License",
     "Operating System :: OS Independent",
     "Intended Audience :: Science/Research",
     "Topic :: Scientific/Engineering",
@@ -24,7 +24,8 @@ dependencies = [
     "numpy",
     "numba",
     "PyYAML",
-    "vtk"
+    "vtk",
+    "scikit-image"
 ]
 
 [project.scripts]
