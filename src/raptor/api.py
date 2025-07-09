@@ -50,7 +50,7 @@ def construct_meltpool(mp_full_data: dict, en_rand_ph: bool) -> dict:
             # measurement sequence
             max_ratio = mp_data[:, 1].max() / mp_data[:, 1].mean()
             spectral_components = compute_spectral_components(mp_data, nmodes)
-            spectral_components[:, 0] *= scale
+            spectral_components[0, 0] *= scale # only scaling the mean.
             osc_dict[key] = (spectral_components, max_ratio)
         elif mp_data.shape[1] == 3:
             # spectral array
