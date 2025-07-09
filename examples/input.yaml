@@ -1,25 +1,10 @@
-output_vtk_filename: "ULI_st.vti"
-
-output_morphology_filename: "morphology.csv"
-
-output_morphology_fields:
-#  - "label"
-#  - "bbox"
-#  - "area"
-#  - "area_bbox"
-#  - "area_filled"
-#  - "centroid"
-#  - "equivalent_diameter_area"
-#  - "euler_number"
-#  - "extent"
-
 scan_paths:
   - "data/scanPathData/scanPath_ULI"
 
 parameters:
-  layer_height: 50.0e-6         # (meters)
-  voxel_resolution: 5.0e-6      # (meters)
-  bezier_points_per_half: 10.   # number of bezier points used in evaluation
+  layer_height: 50.0e-6              # (meters)
+  voxel_resolution: 5.0e-6           # (meters)
+  bezier_points_per_half: 10.        # number of bezier points
   enable_random_segment_phase: false # Default: true
 
 melt_pool_data:
@@ -43,3 +28,19 @@ melt_pool_data:
 rve:
   min_point: [0.002, -500.0e-6, -500.0e-6]
   max_point: [0.006, 500.0e-6, 500.0e-6]
+
+output:
+  vtk:
+    file_name: "ULI_porosity.vti"
+  morphology:
+    file_name: "ULI_morphology.csv"
+    fields:
+    #  - "label"
+    #  - "bbox"
+    #  - "area"
+    #  - "area_bbox"
+    #  - "area_filled"
+    #  - "centroid"
+    #  - "equivalent_diameter_area"
+    #  - "euler_number"
+    #  - "extent"
