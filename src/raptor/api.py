@@ -8,7 +8,7 @@ from skimage import measure
 from skimage.morphology import remove_small_objects
 
 
-from .structures import MeltPool
+from .structures import MeltPool, PathVector
 from .io import read_scan_path
 from .core_numba import compute_melt_mask, local_frame_2d
 
@@ -50,7 +50,7 @@ def construct_meltpool(mp_full_data: dict, en_rand_ph: bool) -> dict:
             # measurement sequence
             max_ratio = mp_data[:, 1].max() / mp_data[:, 1].mean()
             spectral_components = compute_spectral_components(mp_data, nmodes)
-            spectral_components[0, 0] *= scale # only scaling the mean.
+            spectral_components[0, 0] *= scale  # only scaling the mean.
             osc_dict[key] = (spectral_components, max_ratio)
         elif mp_data.shape[1] == 3:
             # spectral array
@@ -76,17 +76,9 @@ def construct_meltpool(mp_full_data: dict, en_rand_ph: bool) -> dict:
     return mp
 
 
-def compute_porosity(
-    scan_file_paths: List[str],
-    layer_height: float,
-    voxel_res: float,
-    n_bezier_pts_half: int,
-    meltpool: MeltPool,
-    boundBox: Optional[np.ndarray] = None,
-) -> None:
-    """
-    Main computation: computes porosity field.
-    """
+def compute_scanpath_vectors(
+    scan_file_paths: List[str], layer_height, boundBox: Optional[np.ndarray] = None
+) -> List[PathVector]:
     all_vectors = numbaList()
 
     time_offset = 0.0
@@ -141,6 +133,19 @@ def compute_porosity(
         raise ValueError("No segments found in any scan path files.")
 
     print(f"Total active (exposure) vectors: {len(all_vectors)}")
+    return all_vectors
+
+
+def compute_porosity(
+    all_vectors: List[PathVector],
+    voxel_res: float,
+    n_bezier_pts_half: int,
+    meltpool: MeltPool,
+    boundBox: Optional[np.ndarray] = None,
+) -> None:
+    """
+    Main computation: computes porosity field.
+    """
 
     meltpool.max_modes = int(
         np.max(
