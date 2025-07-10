@@ -6,7 +6,7 @@ import yaml
 import numpy as np
 
 from .api import (
-    compute_spectral_components,
+    compute_scanpath_vectors,
     construct_meltpool,
     compute_porosity,
     write_vtk,
@@ -155,13 +155,17 @@ def main() -> int:
 
     try:
 
+        # compute scan vectors
+        all_vectors = compute_scanpath_vectors(
+            scan_path_files, layer_height, bounding_box
+        )
+
         # construct melt pools
         melt_pool = construct_meltpool(melt_pool_data, en_rand_ph)
 
         # compute porosity
         centroid, porosity = compute_porosity(
-            scan_path_files,
-            layer_height,
+            all_vectors,
             voxel_resolution,
             n_bezier_pts_half,
             melt_pool,
