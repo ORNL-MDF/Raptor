@@ -38,7 +38,7 @@ ssb.construct_vectors()
 active_vectors = ssb.process_vectors()
 
 # 2. Defining melt pool from data
-mp_datapath = 'data/meltPoolData/ULI_v1700_theta0_widths.txt'
+mp_datapath = '../data/meltPoolData/ULI_v1700_theta0_widths.txt'
 width_data = read_data(mp_datapath)
 dw,hw = 0.8,0.4
 # Defining the cap and depth as the same here; will get rescaled in construct_meltpool
@@ -61,4 +61,4 @@ origin, porosity = compute_porosity(
      ssb.rveBoundBox
 )
 # Write vti
-write_vtk(origin, voxel_res, porosity, './api_example/rve.vti')
+write_vtk(origin, voxel_res, porosity, 'rve.vti')
