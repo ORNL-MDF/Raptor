@@ -251,6 +251,11 @@ def compute_melt_mask_implicit(
     """
     Implicit compute melt mask function optimized for parallelization.
     """
+
+    centroid = vox_g[n_vox // 2]
+    print("centorid", centroid)
+    radius = 100e-6
+
     for i_v in prange(n_vox):
         vx, vy, vz = vox_g[i_v, 0], vox_g[i_v, 1], vox_g[i_v, 2]
         is_voxel_melted = False
@@ -321,11 +326,31 @@ def compute_melt_mask_implicit(
             xl = dpx * ew_g[j_s, 0] + dpy * ew_g[j_s, 1] + dpz * ew_g[j_s, 2]
             yl = dpx * ed_g[j_s, 0] + dpy * ed_g[j_s, 1] + dpz * ed_g[j_s, 2]
 
+            segment_center = ss_g[j_s, :] + tu_clamped * (se_g[j_s, :] - ss_g[j_s, :])
+
+            # Overlap particle, set melt pool dimensions to zero
+            distanceSqr = (
+                (segment_center[0] - centroid[0]) ** 2
+                + (segment_center[1] - centroid[1]) ** 2
+                + (segment_center[2] - centroid[2]) ** 2
+            )
+            if distanceSqr < radius * radius:
+                Wd = 1e-10
+                Dhd = 1e-10
+                Dmd = 1e-10
+
             bezier_vertices(Wd, Dhd, Dmd, n_pts_b_h_g, Bmc_s_g, poly_s)
 
             if point_in_poly(xl, yl, poly_s):
                 is_voxel_melted = True
                 break
+
+        # spatter particle is solid
+        distanceSqr = (
+            (vx - centroid[0]) ** 2 + (vy - centroid[1]) ** 2 + (vz - centroid[2]) ** 2
+        )
+        if distanceSqr <= radius * radius:
+            is_voxel_melted = True
 
         melt_mask[i_v] = is_voxel_melted
 

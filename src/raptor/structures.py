@@ -135,81 +135,106 @@ class MeltPool:
         self.base_Dm = self.osc_info_Dm[0, 0]
         self.base_Dh = self.osc_info_Dh[0, 0]
 
+
 # ScanStrategyBuilder
 class ScanStrategyBuilder:
     """
     Handles scan strategy generation from process parameters.
     """
-    def __init__(self,
-                 rvedims: np.ndarray,
-                 power: float,
-                 velocity: float,
-                 hatch: float,
-                 layer_thickness: float,
-                 rotation: float,
-                 overhang_hatch: float,
-                 additional_layers: int,
-                 output_name: str
-                 ):
+
+    def __init__(
+        self,
+        rvedims: np.ndarray,
+        power: float,
+        velocity: float,
+        hatch: float,
+        layer_thickness: float,
+        rotation: float,
+        overhang_hatch: float,
+        additional_layers: int,
+        output_name: str,
+    ):
         self.output_name = output_name
         self.rvedims = rvedims
-        self.power,self.velocity = power,velocity
+        self.power, self.velocity = power, velocity
         self.hatch = hatch
         self.layer_thickness = layer_thickness
         self.rotation = np.deg2rad(rotation)
         self.overhang_hatch = overhang_hatch
         self.rot_center = np.array(
             [
-                self.rvedims[0]/2,
-                self.rvedims[1]/2,
+                self.rvedims[0] / 2,
+                self.rvedims[1] / 2,
             ]
-        ) # defining the rotation center as the center of the rve.
+        )  # defining the rotation center as the center of the rve.
         self.additional_layers = additional_layers
-        self.nlayers = np.int16((self.rvedims[2]//self.layer_thickness+1)+self.additional_layers)
+        self.nlayers = np.int16(
+            (self.rvedims[2] // self.layer_thickness + 1) + self.additional_layers
+        )
         self.layers = {}
 
     def generate_0th_layer(self):
         """
         Generates the zeroth layer (global z=0) aligned nominally with [1,0,0].
         """
-        xmin = -self.overhang_hatch # starting from overhang_hatch outside the rve dimensions
-        xmax = self.rvedims[1]+self.overhang_hatch
+        xmin = (
+            -self.overhang_hatch
+        )  # starting from overhang_hatch outside the rve dimensions
+        xmax = self.rvedims[1] + self.overhang_hatch
         ymin = -self.overhang_hatch
-        ymax = self.rvedims[1]+self.overhang_hatch
-        ylocs = np.arange(ymin,ymax,self.hatch)
-        starts = np.vstack([np.ones_like(ylocs)*xmin,np.arange(ymin,ymax,self.hatch)]).transpose()
-        ends = np.vstack([np.ones_like(ylocs)*xmax,np.arange(ymin,ymax,self.hatch)]).transpose()
-        self.layers[0] = [starts,ends]
-    
-    def rotation_mat(self,k):
+        ymax = self.rvedims[1] + self.overhang_hatch
+        ylocs = np.arange(ymin, ymax, self.hatch)
+        starts = np.vstack(
+            [np.ones_like(ylocs) * xmin, np.arange(ymin, ymax, self.hatch)]
+        ).transpose()
+        ends = np.vstack(
+            [np.ones_like(ylocs) * xmax, np.arange(ymin, ymax, self.hatch)]
+        ).transpose()
+        self.layers[0] = [starts, ends]
+
+    def rotation_mat(self, k):
         """
         Returns the 2D rotation matrix given by self.rotation*k, k>=1.
         """
-        return np.array([[np.cos(k*self.rotation),-np.sin(k*self.rotation)],
-                         [np.sin(k*self.rotation),np.cos(k*self.rotation)]])
-    
-    def generate_kth_layer(self,k):
+        return np.array(
+            [
+                [np.cos(k * self.rotation), -np.sin(k * self.rotation)],
+                [np.sin(k * self.rotation), np.cos(k * self.rotation)],
+            ]
+        )
+
+    def generate_kth_layer(self, k):
         """
         Generates layers rotated by self.rotation*k, k>=1
         """
         rot_mat = self.rotation_mat(k)
         # apply rotations relative to rotation center origin
-        l_k_starts = np.array([np.matmul(rot_mat,s-self.rot_center)+self.rot_center for s in self.layers[0][0]])
-        l_k_ends = np.array([np.matmul(rot_mat,e-self.rot_center)+self.rot_center for e in self.layers[0][1]])
-        self.layers[k] = [l_k_starts,l_k_ends]
-    
+        l_k_starts = np.array(
+            [
+                np.matmul(rot_mat, s - self.rot_center) + self.rot_center
+                for s in self.layers[0][0]
+            ]
+        )
+        l_k_ends = np.array(
+            [
+                np.matmul(rot_mat, e - self.rot_center) + self.rot_center
+                for e in self.layers[0][1]
+            ]
+        )
+        self.layers[k] = [l_k_starts, l_k_ends]
+
     def generate_layers(self):
         """
         Generates layers starting from the 0th by successive applications of rotation matrix.
         """
         self.generate_0th_layer()
-        for k in range(1,self.nlayers+1):
+        for k in range(1, self.nlayers + 1):
             self.generate_kth_layer(k)
-    
-    def construct_vectors(self)->list[PathVector]:
+
+    def construct_vectors(self) -> list[PathVector]:
         """
         Constructs PathVector objects based on current layer dictionary.
-        The list of PathVectors is associated with a key in a new dictionary. 
+        The list of PathVectors is associated with a key in a new dictionary.
         """
         if not self.layers.keys():
             print("No layers generated. Aborting.")
@@ -217,20 +242,35 @@ class ScanStrategyBuilder:
         else:
             self.pathvec_layers = {}
             for l_key in self.layers.keys():
-                l_start,l_end = self.layers[l_key]
-                se_pairs = [np.vstack([np.hstack([1,s,l_key*self.layer_thickness,0,0]),
-                                      np.hstack([0,e,l_key*self.layer_thickness,self.power,self.velocity])]) for s,e in zip(l_start,l_end)]
+                l_start, l_end = self.layers[l_key]
+                se_pairs = [
+                    np.vstack(
+                        [
+                            np.hstack([1, s, l_key * self.layer_thickness, 0, 0]),
+                            np.hstack(
+                                [
+                                    0,
+                                    e,
+                                    l_key * self.layer_thickness,
+                                    self.power,
+                                    self.velocity,
+                                ]
+                            ),
+                        ]
+                    )
+                    for s, e in zip(l_start, l_end)
+                ]
                 allpaths = np.vstack([np.vstack(se) for se in se_pairs])
                 segment_mode: List[int] = []
                 segment_position: List[np.ndarray] = []
                 segment_parameter: List[float] = []
                 for path in allpaths:
-                    m,x,y,z,_,p = path
-                    position = np.array([x,y,z])
+                    m, x, y, z, _, p = path
+                    position = np.array([x, y, z])
                     segment_mode.append(m)
                     segment_position.append(position)
                     segment_parameter.append(p)
-                
+
                 segment_time: List[float] = []
                 start_t: List[float] = []
                 end_t: List[float] = []
@@ -245,8 +285,14 @@ class ScanStrategyBuilder:
                     if segment_mode[i] == 1:
                         dt = segment_parameter[i]
                     else:
-                        dist = np.linalg.norm(segment_position[i] - segment_position[i_prev])
-                        dt = dist / segment_parameter[i] if segment_parameter[i] > 1e-12 else 0.0
+                        dist = np.linalg.norm(
+                            segment_position[i] - segment_position[i_prev]
+                        )
+                        dt = (
+                            dist / segment_parameter[i]
+                            if segment_parameter[i] > 1e-12
+                            else 0.0
+                        )
                     segment_time.append(segment_time[i_prev] + dt)
 
                 for i in range(len(segment_time)):
@@ -263,15 +309,23 @@ class ScanStrategyBuilder:
                 for sc, ec, st, et in zip(start_pos, end_pos, start_t, end_t):
                     vec = PathVector(sc, ec, st, et)
                     active_vectors.append(vec)
-                self.pathvec_layers[l_key] = active_vectors    
-    def process_vectors(self)->List[PathVector]:
+                self.pathvec_layers[l_key] = active_vectors
+
+    def process_vectors(self) -> List[PathVector]:
         """
         Downselects vectors and computes local time offsets.
-        Note that the bounding box is defined implictly by specifying rvedims at instantiation.
+        Note that the bounding box is defined implicitly by specifying rvedims at instantiation.
         """
         self.rveBoundBox = np.array(
-            [[0.0e-6,0.0e-6,self.layer_thickness],
-            [self.rvedims[0],self.rvedims[1],self.layer_thickness+self.rvedims[2]]])
+            [
+                [0.0e-6, 0.0e-6, self.layer_thickness],
+                [
+                    self.rvedims[0],
+                    self.rvedims[1],
+                    self.layer_thickness + self.rvedims[2],
+                ],
+            ]
+        )
         time_offset = 0.0
         start_L = 0
         end_L = len(self.layers.keys())
@@ -282,8 +336,8 @@ class ScanStrategyBuilder:
         end_L = int(np.min([bBz1_infl / self.layer_thickness, end_L]))
         all_vectors = numbaList()
         print(f"Starting at L{start_L}, ending at L{end_L-1}")
-        for layerkey in range(start_L,end_L):
-            z_offset = layerkey*self.layer_thickness
+        for layerkey in range(start_L, end_L):
+            z_offset = layerkey * self.layer_thickness
             print(f"Computing layer {layerkey}.")
             layer_vectors = self.pathvec_layers[layerkey]
             if not layer_vectors:
@@ -325,17 +379,40 @@ class ScanStrategyBuilder:
         """
         Writes scan paths as files.
         """
-        if len(self.layers.keys())==0:
-            print('No layers found to write.')
+        if len(self.layers.keys()) == 0:
+            print("No layers found to write.")
             return
         else:
             for l_key in self.layers.keys():
-                l_start,l_end = self.layers[l_key]
-                se_pairs = [np.vstack([np.hstack([1,s,l_key*self.layer_thickness,0,0]),
-                                      np.hstack([0,e,l_key*self.layer_thickness,self.power,self.velocity])]) for s,e in zip(l_start,l_end)]
+                l_start, l_end = self.layers[l_key]
+                se_pairs = [
+                    np.vstack(
+                        [
+                            np.hstack([1, s, l_key * self.layer_thickness, 0, 0]),
+                            np.hstack(
+                                [
+                                    0,
+                                    e,
+                                    l_key * self.layer_thickness,
+                                    self.power,
+                                    self.velocity,
+                                ]
+                            ),
+                        ]
+                    )
+                    for s, e in zip(l_start, l_end)
+                ]
                 allpaths = np.vstack([np.vstack(se) for se in se_pairs])
                 header_str = "Mode X(m) Y(m) Z(m) Power(W) tParam"
-                filename = self.output_name+'{}'.format(l_key)
-                np.savetxt(filename, allpaths,
-                           fmt='%.6f',delimiter=" ", header=header_str,comments='')
-                print('Wrote file '+filename+' for layer {}.'.format(l_key),end='\n')
+                filename = self.output_name + "{}".format(l_key)
+                np.savetxt(
+                    filename,
+                    allpaths,
+                    fmt="%.6f",
+                    delimiter=" ",
+                    header=header_str,
+                    comments="",
+                )
+                print(
+                    "Wrote file " + filename + " for layer {}.".format(l_key), end="\n"
+                )
