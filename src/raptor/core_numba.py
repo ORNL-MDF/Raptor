@@ -134,6 +134,8 @@ def compute_melt_mask(
     n_pts_b_h_g: int,
     meltpool: MeltPool,
     active_vectors: List[PathVector],
+    spatter_centroid: np.ndarray,
+    spatter_r: float
 ):
     """
     Unpacks jitclasses into arrays to pass to compute_melt_mask_implicit().
@@ -217,6 +219,8 @@ def compute_melt_mask(
         osc_dm_freq,
         osc_dh_amp,
         osc_dh_freq,
+        spatter_centroid,
+        spatter_r
     )
 
 
@@ -247,14 +251,16 @@ def compute_melt_mask_implicit(
     osc_dm_freq: np.ndarray,
     osc_dh_amp: np.ndarray,
     osc_dh_freq: np.ndarray,
+    spatter_centroid: np.ndarray,
+    spatter_r: float
 ) -> np.ndarray:
     """
     Implicit compute melt mask function optimized for parallelization.
     """
 
-    centroid = vox_g[n_vox // 2]
-    print("centorid", centroid)
-    radius = 100e-6
+    centroid = spatter_centroid
+    print("centroid", centroid)
+    radius = spatter_r
 
     for i_v in prange(n_vox):
         vx, vy, vz = vox_g[i_v, 0], vox_g[i_v, 1], vox_g[i_v, 2]

@@ -167,6 +167,8 @@ def compute_porosity(
     voxel_res: float,
     n_bezier_pts_half: int,
     meltpool: MeltPool,
+    spatter_centroid: Optional[np.ndarray],
+    spatter_r: Optional[float],
     boundBox: Optional[np.ndarray] = None,
 ) -> None:
     """
@@ -296,10 +298,20 @@ def compute_porosity(
     X, Y, Z = np.meshgrid(xg, yg, zg, indexing="ij")
     vox_np = np.vstack([X.ravel(), Y.ravel(), Z.ravel()]).T.copy()
 
+    # spatter function here
+    #spatter_centroid = np.zeros(3) # dummy centroid if no spatter
+    # if spatter_r:
+        # # compute a random centroid for spatter
+        # spatter_centroid = np.array([np.random.uniform(low=xg[0],high=xg[-1]),
+        #                              np.random.uniform(low=yg[0],high=yg[-1]),
+        #                              np.random.uniform(low=yg[0],high=yg[-1]),])
+    if not spatter_r:
+        spatter_r = 0.0
+
     print("Running Numba-accelerated melt-mask calculation...")
     t0 = time.time()
     melted = compute_melt_mask(
-        vox_np, Bmcs_np, n_bezier_pts_half, meltpool, all_vectors
+        vox_np, Bmcs_np, n_bezier_pts_half, meltpool, all_vectors,spatter_centroid,spatter_r
     )
 
     t_elapsed = time.time() - t0

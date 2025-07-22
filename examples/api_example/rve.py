@@ -20,7 +20,7 @@ Loosely, the procedure can be broken down as follows:
 rvedims = np.array([1000e-6, 1000e-6, 1000e-6])  # 0.5 mm edge cube.
 power = 370  # Laser power (W)
 velocity = 1.7  # Laser velocity (m/s)
-hatch = 130e-6  # Hatch spacing (m)
+hatch = 110e-6  # Hatch spacing (m)
 layer_thickness = 30e-6  # Layer height (m)
 rotation = 67  # Inter-layer rotation (degrees)
 overhang_hatch = 500e-6  # Distance from edge of RVE
@@ -54,13 +54,15 @@ dw, hw = 0.8, 0.45
 nmodes = 50
 mp_data_dict = {
     "width": (width_data, 1, nmodes),
-    "depth": (width_data, dw, nmodes),
-    "hump": (width_data, hw, int(nmodes / 2)),
+    "depth": (width_data, 0.7, nmodes),
+    "hump": (width_data, 0.4, int(nmodes / 2)),
 }
 mp = construct_meltpool(mp_data_dict, en_rand_ph=True)
 # Compute porosity
+spatter_radius = 100e-6
+spatter_centroid = np.ones(3)*250e-6
 origin, porosity = compute_porosity(
-    active_vectors, voxel_res, n_bezier, mp, ssb.rveBoundBox
+    active_vectors, voxel_res, n_bezier, mp, spatter_centroid,spatter_radius,ssb.rveBoundBox
 )
 # Write vti
 write_vtk(origin, voxel_res, porosity, "rve.vti")

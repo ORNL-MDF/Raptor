@@ -44,3 +44,7 @@ output:
     #  - "equivalent_diameter_area"
     #  - "euler_number"
     #  - "extent"
+
+spatter:
+  radius: 
+  
