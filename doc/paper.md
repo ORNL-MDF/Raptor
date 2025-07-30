@@ -35,7 +35,7 @@ Laser powder bed fusion (LPBF) is a metal AM technique which can produce complex
 
 
 # Statement of need
-Lack-of-fusion (LoF) defects are a type of defect in LPBF that result from local undermelting caused by insufficient overlap between adjacent melt pools or successive layers [@tang_lof_2017; @gordon_defectstructure_2020]. The analytical prediction of LoF defects commonly relate the melt pool dimensions to spacing parameters chosen before the build [@tang_lof_2017]. Assuming the melt pool is elliptical and defined by its width $W$ and depth $D$, and adjacent melt pools are separated by hatch spacing $H$ and layer thickness $L$, a common criterion used to determine the formation of LoF is given by
+Lack-of-fusion (LoF) defects are a type of defect in LPBF that result from local undermelting caused by insufficient overlap between adjacent melt pools or successive layers [@tang_lof_2017; @gordon_defectstructure_2020]. The analytical prediction of LoF defects commonly relate the melt pool dimensions to spacing parameters chosen before the build [@tang_lof_2017; @subraveti_lof_2024]. Assuming the melt pool is elliptical and defined by its width $W$ and depth $D$, and adjacent melt pools are separated by hatch spacing $H$ and layer thickness $L$, a common criterion used to determine the formation of LoF is given by
 
 \begin{equation}
 \left( \frac{L}{D} \right)^2 + \left( \frac{H}{W} \right)^2 \leq 1
