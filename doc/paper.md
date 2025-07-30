@@ -12,10 +12,10 @@ authors:
     affiliation: 2
   - name: Alex Plotkowski
     orcid: 0000-0000-0000-0000
-    affiliation: 1
+    affiliation: 2
   - name: Çağlar Oskay
     orcid: 0000-0000-0000-0000
-    affiliation: 2    
+    affiliation: 1    
 affiliations:
  - name: Vanderbilt University, Nashville, TN, USA
    index: 1
