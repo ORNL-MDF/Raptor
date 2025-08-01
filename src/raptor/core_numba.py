@@ -140,7 +140,7 @@ def compute_melt_mask(
     """
     # construct array for melt mask
     n_vox = vox_g.shape[0]
-    melt_mask = np.zeros(n_vox, dtype=np.bool_)
+    melt_mask = np.zeros(n_vox, dtype=float)
 
     # unpack meltpool properties
     osc_W, osc_Dm, osc_Dh = (
@@ -253,6 +253,7 @@ def compute_melt_mask_implicit(
     """
     for i_v in prange(n_vox):
         vx, vy, vz = vox_g[i_v, 0], vox_g[i_v, 1], vox_g[i_v, 2]
+        vs = 0.0
         is_voxel_melted = False
 
         poly_s = np.empty((n_poly_pts, 2), dtype=np.float64)
@@ -321,12 +322,26 @@ def compute_melt_mask_implicit(
             xl = dpx * ew_g[j_s, 0] + dpy * ew_g[j_s, 1] + dpz * ew_g[j_s, 2]
             yl = dpx * ed_g[j_s, 0] + dpy * ed_g[j_s, 1] + dpz * ed_g[j_s, 2]
 
-            bezier_vertices(Wd, Dhd, Dmd, n_pts_b_h_g, Bmc_s_g, poly_s)
+            #bezier_vertices(Wd, Dhd, Dmd, n_pts_b_h_g, Bmc_s_g, poly_s)
 
-            if point_in_poly(xl, yl, poly_s):
-                is_voxel_melted = True
-                break
-
-        melt_mask[i_v] = is_voxel_melted
-
+            #if point_in_poly(xl, yl, poly_s):
+            #    is_voxel_melted = True
+            #    break
+            
+            a = Wd/2
+            b = Dmd
+            c = Dhd
+            if yl <= 0:
+                is_voxel_melted = (xl * xl) / (a * a) + (yl * yl) / (b * b) <= 1 #+ 1e-10            
+            else:
+                is_voxel_melted = (xl * xl) / (a * a) + (yl * yl) / (c * c) <= 1 #+ 1e-10
+                
+            if is_voxel_melted:
+                vox_theta = np.arctan(yl/xl)
+                active_d = c if yl >= 0 else b
+                rb = (a * a * active_d * active_d)/(pow(active_d * np.cos(vox_theta),2) + pow(a * np.sin(vox_theta),2))
+                rv = xl * xl + yl * yl
+                vs = max(0, 1.0 - rv/rb)
+            
+        melt_mask[i_v] = vs
     return melt_mask
