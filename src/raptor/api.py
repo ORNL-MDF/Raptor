@@ -12,26 +12,32 @@ from .structures import ScanStrategyBuilder, MeltPool, PathVector
 from .io import read_scan_path
 from .core_numba import compute_melt_mask, local_frame_2d
 
+
 def generate_scanpaths(
-        rvedims: np.ndarray,
-        power: float,
-        velocity: float,
-        hatch: float,
-        layer_thickness: float,
-        rotation: float,
-        overhang_hatch: float,
-        additional_layers: int,
-        output_name: str
-)->None:
+    rvedims: np.ndarray,
+    power: float,
+    velocity: float,
+    hatch: float,
+    layer_thickness: float,
+    rotation: float,
+    overhang_hatch: float,
+    additional_layers: int,
+    output_name: str,
+) -> None:
     ssb = ScanStrategyBuilder(
         rvedims,
-        power,velocity,
-        hatch,layer_thickness,rotation,
-        overhang_hatch,additional_layers,
-        output_name
+        power,
+        velocity,
+        hatch,
+        layer_thickness,
+        rotation,
+        overhang_hatch,
+        additional_layers,
+        output_name,
     )
     ssb.generate_layers()
     return ssb
+
 
 def compute_spectral_components(mp_data, nmodes):
     # mp_data assumed to be np.ndarray(N,2)
