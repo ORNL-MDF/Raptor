@@ -231,7 +231,7 @@ class ScanStrategyBuilder:
         for k in range(1, self.nlayers + 1):
             self.generate_kth_layer(k)
 
-    def construct_vectors(self) -> list[PathVector]:
+    def construct_vectors(self) -> List[PathVector]:
         """
         Constructs PathVector objects based on current layer dictionary.
         The list of PathVectors is associated with a key in a new dictionary.
