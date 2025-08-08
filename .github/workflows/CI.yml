@@ -26,8 +26,9 @@ jobs:
           pip install .
       - name: Run example
         run: |
-          echo $(which raptor)
-          echo $(pwd)
-          echo $(ls)
-          cd examples
+          base=$(pwd)
+          cd $base/examples/cli_example
           NUMBA_NUM_THREADS=2 raptor input.yaml
+          
+          cd $base/examples/api_example
+          NUMBA_NUM_THREADS=2 python rve.py
