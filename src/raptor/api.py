@@ -7,103 +7,137 @@ from vtk.util import numpy_support
 from skimage import measure
 from skimage.morphology import remove_small_objects
 
-
-from .structures import ScanStrategyBuilder, MeltPool, PathVector
+from .utilities import ScanPathBuilder
+from .structures import MeltPool, PathVector, Grid, Bezier
 from .io import read_scan_path
-from .core_numba import compute_melt_mask, local_frame_2d
+from .core import compute_melt_mask
 
 
-def generate_scanpaths(
-    rvedims: np.ndarray,
-    power: float,
-    velocity: float,
-    hatch: float,
-    layer_thickness: float,
-    rotation: float,
-    overhang_hatch: float,
-    additional_layers: int,
-    output_name: str,
-) -> None:
-    ssb = ScanStrategyBuilder(
-        rvedims,
-        power,
-        velocity,
-        hatch,
-        layer_thickness,
-        rotation,
-        overhang_hatch,
-        additional_layers,
-        output_name,
+def create_grid(
+    voxel_resolution: float,
+    *,
+    path_vectors: Optional[List[PathVector]] = None,
+    bound_box: Optional[np.ndarray] = None,
+) -> Grid:
+
+    return Grid(
+        voxel_resolution=voxel_resolution,
+        path_vectors=path_vectors,
+        bound_box=bound_box,
     )
-    ssb.generate_layers()
-    return ssb
 
 
-def compute_spectral_components(mp_data, nmodes):
-    # mp_data assumed to be np.ndarray(N,2)
-    # where N is the number of timesteps in the input data
-    dt = mp_data[1, 0] - mp_data[0, 0]
-    mode0 = mp_data[:, 1].mean()
-    fft_res = np.fft.fft(mp_data[:, 1])
-    F = np.zeros_like(fft_res)
-    for i in range(1, nmodes):
-        F[i] = fft_res[i]
-        F[len(fft_res) - i] = fft_res[len(fft_res) - i]
+def create_path_vectors(
+    bound_box: np.ndarray,
+    power: float,
+    scan_speed: float,
+    hatch_spacing: float,
+    layer_height: float,
+    rotation: float,
+    scan_extension: float,
+    extra_layers: int,
+) -> List[PathVector]:
 
-    freqs = np.float64(1 / (dt * len(fft_res))) * np.arange(nmodes, dtype=np.float64)
-    exp_phases = np.float64(np.angle(F[:nmodes]))
-    amps = np.float64(np.abs(F[:nmodes]) / len(fft_res))
-    if nmodes == 1:
+    scan_path_builder = ScanPathBuilder(
+        bound_box,
+        power,
+        scan_speed,
+        hatch_spacing,
+        layer_height,
+        rotation,
+        scan_extension,
+        extra_layers,
+    )
+
+    scan_path_builder.generate_layers()
+    scan_path_builder.construct_vectors()
+    return scan_path_builder.process_vectors()
+
+
+def compute_spectral_components(melt_pool_data, n_modes) -> np.ndarray:
+
+    dt = melt_pool_data[1, 0] - melt_pool_data[0, 0]
+    mode0 = melt_pool_data[:, 1].mean()
+    fft_resolution = np.fft.fft(melt_pool_data[:, 1])
+    F = np.zeros_like(fft_resolution)
+    n_fft = len(fft_resolution)
+
+    for i in range(1, n_modes):
+        F[i] = fft_resolution[i]
+        F[n_fft - i] = fft_resolution[n_fft - i]
+
+    frequencies = np.float64(1 / (dt * n_fft)) * np.arange(n_modes, dtype=np.float64)
+    phases = np.float64(np.angle(F[:n_modes]))
+    amplitudes = np.float64(np.abs(F[:n_modes]) / n_fft)
+
+    if n_modes == 1:
         spectral_array = np.array([[mode0, 0, 0]])
     else:
         spectral_array = np.vstack(
             [
                 np.array([mode0, 0, 0]),
-                np.vstack([amps[1:], freqs[1:], exp_phases[1:]]).transpose(),
+                np.vstack([amplitudes[1:], frequencies[1:], phases[1:]]).transpose(),
             ]
         )
     return np.float64(spectral_array)
 
 
-def construct_meltpool(mp_full_data: dict, en_rand_ph: bool) -> dict:
-    # passing in the data read from file and consolidating the spectral components
-    osc_dict = {}
+def create_melt_pool(melt_pool_dict: dict, enable_random_phases: bool) -> MeltPool:
+
+    processed_components = {}
     max_modes = 0
-    for key in mp_full_data.keys():
-        mp_data, scale, nmodes = mp_full_data[key]
-        max_modes = np.max([nmodes, max_modes])
-        if mp_data.shape[1] == 2:
-            # measurement sequence
-            max_ratio = mp_data[:, 1].max() / mp_data[:, 1].mean()
-            spectral_components = compute_spectral_components(mp_data, nmodes)
-            spectral_components[0, 0] *= scale
-            osc_dict[key] = (spectral_components, max_ratio)
-        elif mp_data.shape[1] == 3:
-            # spectral array
-            # compute max ratio from sum of amplitudes/mode0 amplitude
-            # assuming that the number of modes are small enough s.t. perfect
-            # constructive interference doesn't yield a very large max_ratio
-            As = mp_data[:, 0]
-            max_ratio = np.sum(As) / As[0]
-            osc_dict[key] = (mp_data, max_ratio)
 
-    # pad the spectral components
-    for key in osc_dict.keys():
-        if osc_dict[key][0].shape[0] < max_modes:
-            pad = np.zeros(
-                shape=(max_modes - osc_dict[key][0].shape[0], osc_dict[key][0].shape[1])
-            )
-            osc_dict[key] = (np.vstack([osc_dict[key][0], pad]), osc_dict[key][1])
-    # unpack meltpool arguments
-    osc_W, max_rW = osc_dict["width"]
-    osc_Dm, max_rDm = osc_dict["depth"]
-    osc_Dh, max_rDh = osc_dict["hump"]
-    mp = MeltPool(osc_W, osc_Dm, osc_Dh, max_rW, max_rDm, max_rDh, en_rand_ph)
-    return mp
+    # 1. Determine the maximum number of modes required.
+    for _, _, n_modes in melt_pool_dict.values():
+        max_modes = max(max_modes, n_modes)
+
+    # 2. Process each component into its spectral format
+    for key, (data, scale, n_modes) in melt_pool_dict.items():
+        # Option A: Input data is a raw time-series [time, value]
+        if data.shape[1] == 2:
+            max_dimension = data[:, 1].max()
+            spectral_array = compute_spectral_components(data, n_modes)
+            spectral_array[0, 0] *= scale
+
+        # Option B: Input data is a spectral array [amplitude, frequency, phase]
+        if data.shape[1] == 3:
+            amplitudes = amplitudes[:, 0]
+            max_dimension = np.sum(amplitudes)
+            spectral_array = data.copy()
+
+        # Pad the array with zeros if it has fewer modes than the max.
+        current_modes = spectral_array.shape[0]
+        if current_modes < max_modes:
+            pad_width = spectral_array.shape[1]
+            pad_array = np.zeros(shape=(max_modes - current_modes, pad_width))
+            spectral_array = np.vstack([spectral_array, pad_array])
+
+        # Store the final, padded spectral array and the calculated max ratio.
+        processed_components[key] = (spectral_array, max_dimension)
+
+    # 3. Create the MeltPool object
+    width_oscillations, width_max = processed_components["width"]
+    depth_oscillations, depth_max = processed_components["depth"]
+    height_oscillations, height_max = processed_components["height"]
+
+    melt_pool = MeltPool(
+        width_oscillations,
+        depth_oscillations,
+        height_oscillations,
+        width_max,
+        depth_max,
+        height_max,
+        enable_random_phases,
+    )
+
+    return melt_pool
 
 
-def compute_scanpath_vectors(
-    scan_file_paths: List[str], layer_height, boundBox: Optional[np.ndarray] = None
+"""
+def create_scan_path_vectors(
+    scan_file_paths: List[str],
+    layer_height,
+    bound_box: Optional[np.ndarray] = None
 ) -> List[PathVector]:
     all_vectors = numbaList()
 
@@ -111,11 +145,11 @@ def compute_scanpath_vectors(
     start_L = 0
     end_L = len(scan_file_paths)
     rve_bb_infl_factor = 0.1
-    if boundBox is not None:
-        bBx0, bBy0, bBz0 = boundBox[0]
-        bBx1, bBy1, bBz1 = boundBox[1]
-        bbx0_infl, bBy0_infl, bBz0_infl = boundBox[0] * (1 - rve_bb_infl_factor)
-        bbx1_infl, bBy1_infl, bBz1_infl = boundBox[1] * (1 + rve_bb_infl_factor)
+    if bound_box is not None:
+        bBx0, bBy0, bBz0 = bound_box[0]
+        bBx1, bBy1, bBz1 = bound_box[1]
+        bbx0_infl, bBy0_infl, bBz0_infl = bound_box[0] * (1 - rve_bb_infl_factor)
+        bbx1_infl, bBy1_infl, bBz1_infl = bound_box[1] * (1 + rve_bb_infl_factor)
         start_L = int(np.max([np.floor(bBz0 / layer_height) - 1, start_L]))
         end_L = int(np.min([bBz1 / layer_height, end_L]))
     print(f"Starting at L{start_L}, ending at L{end_L-1}")
@@ -139,7 +173,7 @@ def compute_scanpath_vectors(
                     [vec.end_coord[0], vec.end_coord[1]],
                 ]
             )
-            if boundBox is not None:
+            if bound_box is not None:
                 # check if path is inside the inflated rve bounding box
                 if (
                     (np.max(vec_bb[:, 0]) < np.min([bbx0_infl, bbx1_infl]))
@@ -160,162 +194,43 @@ def compute_scanpath_vectors(
 
     print(f"Total active (exposure) vectors: {len(all_vectors)}")
     return all_vectors
+"""
 
 
 def compute_porosity(
-    all_vectors: List[PathVector],
-    voxel_res: float,
-    n_bezier_pts_half: int,
-    meltpool: MeltPool,
-    boundBox: Optional[np.ndarray] = None,
+    grid: Grid, path_vectors: List[PathVector], melt_pool: MeltPool, bezier: Bezier
 ) -> None:
     """
     Main computation: computes porosity field.
     """
 
-    meltpool.max_modes = int(
-        np.max(
-            [
-                meltpool.osc_info_W.shape[0],
-                meltpool.osc_info_Dm.shape[0],
-                meltpool.osc_info_Dh.shape[0],
-            ]
-        )
-    )
+    # 1. Assign melt pool model to path vector
+    for path_vector in path_vectors:
+        path_vector.set_melt_pool_properties(melt_pool)
 
-    for j in range(len(all_vectors)):
-        if meltpool.enable_rand_phs:
-            # ensure 0 phase shift for the zeroth mode (mean)
-            all_vectors[j].ph = np.float64(
-                np.hstack(
-                    [
-                        0,
-                        np.random.uniform(
-                            low=0, high=2 * np.pi, size=meltpool.max_modes - 1
-                        ),
-                    ]
-                )
-            )
-        else:
-            all_vectors[j].ph = meltpool.osc_info_W[:, 2].astype(
-                np.float64
-            )  # experimental phases
-
-    t_p = np.linspace(0, 1, n_bezier_pts_half)  # Bezier t parameter
-    Bmcs_np = np.empty((n_bezier_pts_half, 4))  # Bezier basis coeffs
-    omt = 1.0 - t_p
-    tsq = t_p * t_p
-    omtsq = omt * omt
-    Bmcs_np[:, 0] = omtsq * omt
-    Bmcs_np[:, 1] = 3.0 * t_p * omtsq
-    Bmcs_np[:, 2] = 3.0 * tsq * omt
-    Bmcs_np[:, 3] = tsq * t_p
-
-    # compute oscillation
-    maxW = meltpool.base_W * meltpool.max_rW
-    maxDm = meltpool.base_Dm * meltpool.max_rDm
-    maxDh = meltpool.base_Dh * meltpool.max_rDh
-    minf_aabb = 0.05
-    maxW = max(maxW, meltpool.base_W * minf_aabb)
-    maxDm = max(maxDm, meltpool.base_Dm * minf_aabb)
-    maxDh = max(0.0, maxDh)  # Hump cannot be negative
-    if meltpool.base_Dh > 1e-9:
-        maxDh = max(maxDh, meltpool.base_Dh * minf_aabb)
-    else:
-        maxDh = 0.0
-
-    max_r_xy = maxW / 2.0  # Max melt radius in XY for AABB
-
-    for j in range(len(all_vectors)):
-        dx, dy = all_vectors[j].end_coord[:2] - all_vectors[j].start_coord[:2]
-        all_vectors[j].ew, all_vectors[j].es, all_vectors[j].ed = local_frame_2d(dx, dy)
-        p0x, p0y, p0z = all_vectors[j].start_coord
-        p1x, p1y, p1z = all_vectors[j].end_coord
-
-        smx, sMx = min(p0x, p1x), max(p0x, p1x)
-        smy, sMy = min(p0y, p1y), max(p0y, p1y)
-        smz, sMz = min(p0z, p1z), max(p0z, p1z)
-
-        # segment OBB
-        all_vectors[j].centroid = np.array(
-            [(smx + sMx) / 2, (smy + sMy) / 2, (smz + sMz) / 2]
-        )
-        all_vectors[j].lx = maxW / 2
-        all_vectors[j].ly = np.hypot(sMx - smx, sMy - smy) / 2
-        all_vectors[j].lz = (maxDh + maxDm) / 2
-
-        # segment AABB
-        all_vectors[j].aabb = np.array(
-            [
-                smx - max_r_xy,
-                sMx + max_r_xy,
-                smy - max_r_xy,
-                sMy + max_r_xy,
-                smz - maxDm,
-                sMz + maxDh,
-            ],
-            dtype=np.float64,
-        )
-
-    if boundBox is None:
-        all_pts_np = np.vstack(
-            (
-                [vec.start_coord for vec in all_vectors],
-                [vec.end_coord for vec in all_vectors],
-            )
-        )
-        xmin, ymin, zmin = all_pts_np.min(axis=0)
-        xmax, ymax, zmax = all_pts_np.max(axis=0)
-
-        bufxy = maxW * 2.0
-        gx0, gx1 = xmin - bufxy, xmax + bufxy
-        gy0, gy1 = ymin - bufxy, ymax + bufxy
-        gz0, gz1 = zmin - 1.5 * maxDm, zmax + 1.5 * maxDh
-    else:
-        xmin, ymin, zmin = boundBox[0]
-        xmax, ymax, zmax = boundBox[1]
-        gx0, gy0, gz0 = boundBox[0]
-        gx1, gy1, gz1 = boundBox[1]
-
-    xg = np.arange(gx0, gx1 + voxel_res / 2.0, voxel_res)
-    yg = np.arange(gy0, gy1 + voxel_res / 2.0, voxel_res)
-    zg = np.arange(gz0, gz1 + voxel_res / 2.0, voxel_res)
-
-    nx, ny, nz = len(xg), len(yg), len(zg)
-    total_vox = nx * ny * nz
-    if total_vox == 0:
-        msg = f"Warning: Voxel grid empty ({nx}x{ny}x{nz}). No VTK."
-        print(msg)
-        return
-
-    print(
-        f"Grid: {nx}x{ny}x{nz} = {total_vox} vox. "
-        f"Z-scan:[{zmin:.2e},{zmax:.2e}], Z-grid:[{gz0:.2e},{gz1:.2e}]"
-    )
-
-    X, Y, Z = np.meshgrid(xg, yg, zg, indexing="ij")
-    vox_np = np.vstack([X.ravel(), Y.ravel(), Z.ravel()]).T.copy()
-
-    print("Running Numba-accelerated melt-mask calculation...")
+    # 2. Calculate porosity from voxelized melt pool masks
+    print("Running melt-mask calculation...")
     t0 = time.time()
-    melted = compute_melt_mask(
-        vox_np, Bmcs_np, n_bezier_pts_half, meltpool, all_vectors
-    )
+
+    melted = compute_melt_mask(grid.voxels, melt_pool, path_vectors, bezier)
 
     t_elapsed = time.time() - t0
     n_melted = melted.sum()
+
     print(
         f" -> Melt-mask computation: {t_elapsed:.1f}s. "
-        f"Melted {n_melted}/{total_vox} voxels. "
-        f"{total_vox-n_melted} unmelted voxels."
+        f"Melted {n_melted}/{grid.n_voxels} voxels. "
+        f"{grid.n_voxels-n_melted} unmelted voxels."
     )
 
-    porosity = (~melted).astype(np.int8).reshape((nx, ny, nz), order="C")
-    return np.array([xg[0], yg[0], zg[0]]), porosity
+    return (~melted).astype(np.int8).reshape(grid.shape, order="C")
 
 
 def write_vtk(
-    origin: np.ndarray, voxel_res: float, porosity: np.ndarray, vtk_output_path: str
+    origin: np.ndarray,
+    voxel_resolution: float,
+    porosity: np.ndarray,
+    vtk_output_path: str,
 ) -> None:
     """
     Generates porosity VTK.
@@ -327,7 +242,7 @@ def write_vtk(
 
     imageData.SetDimensions(nx, ny, nz)
     imageData.SetOrigin(origin[0], origin[1], origin[2])
-    imageData.SetSpacing(voxel_res, voxel_res, voxel_res)
+    imageData.SetSpacing(voxel_resolution, voxel_resolution, voxel_resolution)
 
     porosity_vtk_order = np.transpose(porosity, (2, 1, 0))
 
@@ -352,7 +267,7 @@ def write_vtk(
 
 
 def compute_morphology(
-    porosity: np.ndarray, voxel_res: float, morph_fields: List[str]
+    porosity: np.ndarray, voxel_resolution: float, morphology_fields: List[str]
 ) -> np.ndarray:
     """
     Extracts pores, computes morphology features.
@@ -360,21 +275,25 @@ def compute_morphology(
     labeled_defects = measure.label(porosity, connectivity=3)
     minsize = 2
     filtered_defects = remove_small_objects(labeled_defects, minsize)
-    return measure.regionprops_table(
-        filtered_defects, spacing=voxel_res, properties=morph_fields
+
+    return measure.regionproperties_table(
+        filtered_defects, spacing=voxel_resolution, properties=morphology_fields
     )
 
 
-def write_morphology(props: dict, morphology_output_path: str) -> None:
+def write_morphology(properties: dict, morphology_output_path: str) -> None:
     """
     Writes morphology output as a .csv.
-    Note that props must be list of RegionProperties from skimage.measure.
     """
-    columns = ",".join([key for key in props.keys()])
-    morph_arr = np.vstack([props[key] for key in props.keys()]).transpose()
+    columns = ",".join([key for key in properties.keys()])
+
+    morphology = np.vstack([properties[key] for key in properties.keys()]).transpose()
+
     np.savetxt(
-        morphology_output_path, morph_arr, header=columns, delimiter=",", comments=""
+        morphology_output_path, morphology, header=columns, delimiter=",", comments=""
     )
+
     print(
-        f"Morphology features of {morph_arr.shape[0]} defects written to: {morphology_output_path}"
+        f"Morphology features of {morphology.shape[0]} "
+        f"defects written to: {morphology_output_path}"
     )

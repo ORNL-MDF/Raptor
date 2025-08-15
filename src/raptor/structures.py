@@ -2,417 +2,299 @@ from dataclasses import dataclass
 import numpy as np
 from numba.experimental import jitclass
 from numba.typed import List as numbaList
-from typing import List
+from typing import List, Optional
 from numba import int32, int64, float64, boolean
 
-# PathSegment Class
-pathsegment_spec = [
-    ("mode", int32),
-    ("position", float64[:]),
-    ("power", float64),
-    ("parameter", float64),
-    ("time", float64),
-    ("start_t", float64),
-    ("end_t", float64),
-    ("s", float64[:]),
-    ("e", float64[:]),
-    ("aabb", float64[:]),
-    ("ew", float64[:]),
-    ("ed", float64[:]),
-    ("ph", float64[:]),
+# Define jitclass specifications
+bezier_spec = [
+    ("n_points", int64),
+    ("weights", float64[:, :]),
+    ("polygon", float64[:, :]),
 ]
 
+melt_pool_spec = [
+    ("width_oscillations", float64[:, :]),
+    ("depth_oscillations", float64[:, :]),
+    ("height_oscillations", float64[:, :]),
+    ("width_max", float64),
+    ("depth_max", float64),
+    ("height_max", float64),
+    ("enable_random_phases", boolean),
+    ("width_mean", float64),
+    ("depth_mean", float64),
+    ("height_mean", float64),
+    ("n_modes", int64),
+]
 
-@jitclass(pathsegment_spec)
-class PathSegment:
-    """
-    Represents a segment of a scan path.
-
-    Attributes:
-        mode: Segment mode (0 for exposure/mark, 1 for time delay).
-        position: Endpoint of the segment (x, y, z) as a NumPy array.
-        power: Laser power for the segment.
-        parameter: Mode-dependent parameter (speed for mode 0, time for mode 1).
-        time: Accumulated time at the end of this segment.
-    """
-
-    def __init__(self, mode, position, power, parameter):
-        self.mode = mode
-        self.position = position
-        self.power = power
-        self.parameter = parameter
-        self.time = 0.0
-
-
-# PathVector Class
-pathvec_spec = [
-    ("start_coord", float64[:]),
-    ("end_coord", float64[:]),
-    ("start_t", float64),
-    ("end_t", float64),
-    ("dt", float64),
-    ("slsq", float64),
-    ("aabb", float64[:]),
-    ("ew", float64[:]),
-    ("es", float64[:]),
-    ("ed", float64[:]),
-    ("ph", float64[:]),
+path_vector_spec = [
+    ("start_point", float64[:]),
+    ("end_point", float64[:]),
+    ("start_time", float64),
+    ("end_time", float64),
+    ("duration", float64),
+    ("distance", float64[:]),
+    ("AABB", float64[:]),
+    ("e0", float64[:]),  # Width direction -> global X
+    ("e1", float64[:]),  # Scan direction -> global Y
+    ("e2", float64[:]),  # Depth direction -> global Z
+    ("L0", float64),  # OBB half-length along e0
+    ("L1", float64),  # OBB half-length along e1
+    ("L2", float64),  # OBB half-length along e2
+    ("phases", float64[:]),
     ("centroid", float64[:]),
-    ("lx", float64),
-    ("ly", float64),
-    ("lz", float64),
 ]
 
 
-@jitclass(pathvec_spec)
-class PathVector:
-    """
-    Represents a scan vector.
+@jitclass(bezier_spec)
+class Bezier:
+    def __init__(self, n_points: int):
+        self.n_points = n_points
+        n_polygon_pts = n_points + (n_points - 1)
 
-    Attributes:
-        start_coord: starting coordinate of the vector
-        end_coord: ending coordinate of the vector
-        start_t: (global) start time
-        end_t: (global) end time
-        dt: duration of scan
-        slsq: segment length squared
-    """
+        # Pre-allocate the polygon array
+        self.polygon = np.empty((n_polygon_pts, 2), dtype=np.float64)
 
-    def __init__(self, start_coord, end_coord, start_t, end_t):
-        self.start_coord = start_coord
-        self.end_coord = end_coord
-        self.start_t = start_t
-        self.end_t = end_t
+        # Pre-calculate Bezier weights
+        t_p = np.linspace(0, 1, n_points)
+        weights = np.empty((n_points, 4), dtype=np.float64)
+        omt = 1.0 - t_p
+        tsq = t_p * t_p
+        omtsq = omt * omt
+        weights[:, 0] = omtsq * omt
+        weights[:, 1] = 3.0 * t_p * omtsq
+        weights[:, 2] = 3.0 * tsq * omt
+        weights[:, 3] = tsq * t_p
+        self.weights = weights
 
-        self.dt = self.start_t - self.end_t
-        diff = self.end_coord - self.start_coord
-        self.slsq = np.sqrt(np.sum(diff**2))
+    def update(self, width: float, depth: float, height: float):
+        height_control = 4.0 / 3.0 * height
+        depth_control = 4.0 / 3.0 * depth
+
+        # Top control points
+        p_top = np.array(
+            [
+                [-width / 2.0, 0.0],
+                [-width / 4.0, height_control],
+                [width / 4.0, height_control],
+                [width / 2.0, 0.0],
+            ],
+            dtype=np.float64,
+        )
+
+        # Bottom control points
+        p_bottom = np.array(
+            [
+                [width / 2.0, 0.0],
+                [width / 4.0, -depth_control],
+                [-width / 4.0, -depth_control],
+                [-width / 2.0, 0.0],
+            ],
+            dtype=np.float64,
+        )
+
+        # Update top half of the polygon
+        for i in range(self.n_points):
+            # dot product for the X coordinate
+            self.polygon[i, 0] = (self.weights[i, 0] * p_top[0, 0] +
+                                  self.weights[i, 1] * p_top[1, 0] +
+                                  self.weights[i, 2] * p_top[2, 0] +
+                                  self.weights[i, 3] * p_top[3, 0])
+            # dot product for the Y coordinate
+            self.polygon[i, 1] = (self.weights[i, 0] * p_top[0, 1] +
+                                  self.weights[i, 1] * p_top[1, 1] +
+                                  self.weights[i, 2] * p_top[2, 1] +
+                                  self.weights[i, 3] * p_top[3, 1])
+
+        # Update bottom half of the polygon
+        for i in range(1, self.n_points):
+            idx = self.n_points + i - 1
+            # dot product for the X coordinate
+            self.polygon[idx, 0] = (self.weights[i, 0] * p_bottom[0, 0] +
+                                    self.weights[i, 1] * p_bottom[1, 0] +
+                                    self.weights[i, 2] * p_bottom[2, 0] +
+                                    self.weights[i, 3] * p_bottom[3, 0])
+            # dot product for the Y coordinate
+            self.polygon[idx, 1] = (self.weights[i, 0] * p_bottom[0, 1] +
+                                    self.weights[i, 1] * p_bottom[1, 1] +
+                                    self.weights[i, 2] * p_bottom[2, 1] +
+                                    self.weights[i, 3] * p_bottom[3, 1])
+
+    def point_in_polygon(self, x: float, y: float) -> bool:
+        n_vertices = self.polygon.shape[0]
+        px0 = self.polygon[n_vertices - 1, 0]
+        py0 = self.polygon[n_vertices - 1, 1]
+
+        is_inside = False
+
+        for i in range(n_vertices):
+            px1, py1 = self.polygon[i, 0], self.polygon[i, 1]
+            crosses_y = (py1 > y) != (py0 > y)
+            left_of_edge = (x - px1) * (py0 - py1) < (px0 - px1) * (y - py1)
+            is_inside += crosses_y and (left_of_edge != (py1 > py0))
+            px0, py0 = px1, py1
+
+        return (is_inside % 2) == 1
 
 
-# MeltPool Class
-meltpool_spec = [
-    ("osc_info_W", float64[:, :]),
-    ("osc_info_Dm", float64[:, :]),
-    ("osc_info_Dh", float64[:, :]),
-    ("max_rW", float64),
-    ("max_rDm", float64),
-    ("max_rDh", float64),
-    ("enable_rand_phs", boolean),
-    ("base_W", float64),
-    ("base_Dm", float64),
-    ("base_Dh", float64),
-    ("max_modes", int64),
-]
-
-
-@jitclass(meltpool_spec)
+@jitclass(melt_pool_spec)
 class MeltPool:
     """
-    Represents the melt pool (with oscillation properties)
+    Represents the melt pool with oscillation properties.
 
     Attributes:
-        base_W: mean (modenumber 0) of the oscillations
+        width_mean: mean (mode number 0) of the oscillations
     """
 
     def __init__(
         self,
-        osc_info_W,
-        osc_info_Dm,
-        osc_info_Dh,
-        max_rW,
-        max_rDm,
-        max_rDh,
-        enable_rand_phs,
+        width_oscillations,
+        depth_oscillations,
+        height_oscillations,
+        width_max,
+        depth_max,
+        height_max,
+        enable_random_phases,
     ):
-        self.osc_info_W = osc_info_W
-        self.osc_info_Dm = osc_info_Dm
-        self.osc_info_Dh = osc_info_Dh
-        self.max_rW = max_rW
-        self.max_rDm = max_rDm
-        self.max_rDh = max_rDh
-        self.enable_rand_phs = enable_rand_phs
-        self.base_W = self.osc_info_W[0, 0]
-        self.base_Dm = self.osc_info_Dm[0, 0]
-        self.base_Dh = self.osc_info_Dh[0, 0]
+        self.width_oscillations = width_oscillations
+        self.depth_oscillations = depth_oscillations
+        self.height_oscillations = height_oscillations
+
+        self.width_max = width_max
+        self.depth_max = width_max
+        self.height_max = width_max
+
+        self.enable_random_phases = enable_random_phases
+
+        self.width_mean = self.width_oscillations[0, 0]
+        self.depth_mean = self.depth_oscillations[0, 0]
+        self.height_mean = self.height_oscillations[0, 0]
 
 
-# ScanStrategyBuilder
-class ScanStrategyBuilder:
+@jitclass(path_vector_spec)
+class PathVector:
     """
-    Handles scan strategy generation from process parameters.
+    Represents a scan vector with a melt pool dependent bounding box
+    """
+
+    def __init__(self, start_point, end_point, start_time, end_time):
+        self.start_point = start_point
+        self.end_point = end_point
+        self.start_time = start_time
+        self.end_time = end_time
+
+        self.distance = self.end_point - self.start_point
+        self.centroid = (self.end_point + self.start_point) / 2.0
+
+        self.duration = self.end_time - self.start_time
+
+        # Calculate local coordinate frame
+        dx, dy = self.distance[0], self.distance[1]
+        Lxy = np.hypot(dx, dy)
+        if Lxy < 1e-12:
+            self.e0 = np.array([1.0, 0.0, 0.0], dtype=np.float64)
+            self.e1 = np.array([0.0, 1.0, 0.0], dtype=np.float64)
+        else:
+            self.e0 = np.array([-dy / Lxy, dx / Lxy, 0.0], dtype=np.float64)
+            self.e1 = np.array([dx / Lxy, dy / Lxy, 0.0], dtype=np.float64)
+        self.e2 = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+
+    def set_phases(self, melt_pool: MeltPool) -> None:
+        if melt_pool.enable_random_phases:
+            size = melt_pool.width_oscillations.shape[0] - 1
+            random_phase = np.random.uniform(0.0, 2.0 * np.pi, size)
+            zero_phase = np.array([0.0], dtype=np.float64)
+            self.phases = np.hstack((zero_phase, random_phase))
+        else:
+            self.phases = melt_pool.width_oscillations[:, 2].astype(np.float64)
+
+    def set_bound_box(self, melt_pool: MeltPool) -> None:
+        """
+        Calculates and sets the OBB half-lengths and the AABB for this vector
+        based on the physical properties of a given MeltPool.
+        """
+        # Unpack max dimensions from the melt pool for clarity
+        width_max = melt_pool.width_max
+        depth_max = melt_pool.depth_max
+        height_max = melt_pool.height_max
+
+        # --- Calculate Oriented Bounding Box (OBB) half-lengths ---
+        self.L0 = width_max / 2.0
+        self.L1 = np.hypot(self.distance[0], self.distance[1]) / 2.0
+        self.L2 = max(height_max, depth_max) / 2.0
+
+        # --- Calculate Axis-Aligned Bounding Box (AABB) ---
+        p_min = np.minimum(self.start_point, self.end_point)
+        p_max = np.maximum(self.start_point, self.end_point)
+
+        pad_xy = width_max / 2.0
+        self.AABB = np.array(
+            [
+                p_min[0] - pad_xy,  # x-min
+                p_max[0] + pad_xy,  # x-max
+                p_min[1] - pad_xy,  # y-min
+                p_max[1] + pad_xy,  # y-max
+                p_min[2] - depth_max,  # z-min
+                p_max[2] + height_max,  # z-max
+            ],
+            dtype=np.float64,
+        )
+
+    def set_melt_pool_properties(self, melt_pool: MeltPool) -> None:
+        """
+        Orchestrator to set melt pool dependent properties on the vector.
+        """
+        self.set_phases(melt_pool)
+
+        self.set_bound_box(melt_pool)
+
+
+class Grid:
+    """
+    Represents the discrete voxel grid for the simulation domain.
+
+    The grid boundaries can be defined either by a fixed bounding box or
+    be automatically generated from a list of scan path vectors.
     """
 
     def __init__(
         self,
-        rvedims: np.ndarray,
-        power: float,
-        velocity: float,
-        hatch: float,
-        layer_thickness: float,
-        rotation: float,
-        overhang_hatch: float,
-        additional_layers: int,
-        output_name: str,
+        voxel_resolution: float,
+        bound_box: Optional[np.array] = None,
+        path_vectors: Optional[List[PathVector]] = None,
     ):
-        self.output_name = output_name
-        self.rvedims = rvedims
-        self.power, self.velocity = power, velocity
-        self.hatch = hatch
-        self.layer_thickness = layer_thickness
-        self.rotation = np.deg2rad(rotation)
-        self.overhang_hatch = overhang_hatch
-        self.rot_center = np.array(
-            [
-                self.rvedims[0] / 2,
-                self.rvedims[1] / 2,
-            ]
-        )  # defining the rotation center as the center of the rve.
-        self.additional_layers = additional_layers
-        self.nlayers = np.int16(
-            (self.rvedims[2] // self.layer_thickness + 1) + self.additional_layers
-        )
-        self.layers = {}
+        self.resolution = voxel_resolution
 
-    def generate_0th_layer(self):
-        """
-        Generates the zeroth layer (global z=0) aligned nominally with [1,0,0].
-        """
-        xmin = (
-            -self.overhang_hatch
-        )  # starting from overhang_hatch outside the rve dimensions
-        xmax = self.rvedims[1] + self.overhang_hatch
-        ymin = -self.overhang_hatch
-        ymax = self.rvedims[1] + self.overhang_hatch
-        ylocs = np.arange(ymin, ymax, self.hatch)
-        starts = np.vstack(
-            [np.ones_like(ylocs) * xmin, np.arange(ymin, ymax, self.hatch)]
-        ).transpose()
-        ends = np.vstack(
-            [np.ones_like(ylocs) * xmax, np.arange(ymin, ymax, self.hatch)]
-        ).transpose()
-        self.layers[0] = [starts, ends]
+        if bound_box is not None:
+            # Option 1: Grid is constructed from a user-defined bounding box.
+            gx0, gy0, gz0 = bound_box[0]
+            gx1, gy1, gz1 = bound_box[1]
 
-    def rotation_mat(self, k):
-        """
-        Returns the 2D rotation matrix given by self.rotation*k, k>=1.
-        """
-        return np.array(
-            [
-                [np.cos(k * self.rotation), -np.sin(k * self.rotation)],
-                [np.sin(k * self.rotation), np.cos(k * self.rotation)],
-            ]
-        )
+        elif path_vectors is not None:
+            # Option 2: Grid is constructed from boundaries of path vectors.
+            all_points = np.vstack(
+                [p.start_point for p in path_vectors]
+                + [p.end_point for p in path_vectors]
+            )
+            xmin, ymin, zmin = all_points.min(axis=0)
+            xmax, ymax, zmax = all_points.max(axis=0)
 
-    def generate_kth_layer(self, k):
-        """
-        Generates layers rotated by self.rotation*k, k>=1
-        """
-        rot_mat = self.rotation_mat(k)
-        # apply rotations relative to rotation center origin
-        l_k_starts = np.array(
-            [
-                np.matmul(rot_mat, s - self.rot_center) + self.rot_center
-                for s in self.layers[0][0]
-            ]
-        )
-        l_k_ends = np.array(
-            [
-                np.matmul(rot_mat, e - self.rot_center) + self.rot_center
-                for e in self.layers[0][1]
-            ]
-        )
-        self.layers[k] = [l_k_starts, l_k_ends]
-
-    def generate_layers(self):
-        """
-        Generates layers starting from the 0th by successive applications of rotation matrix.
-        """
-        self.generate_0th_layer()
-        for k in range(1, self.nlayers + 1):
-            self.generate_kth_layer(k)
-
-    def construct_vectors(self) -> List[PathVector]:
-        """
-        Constructs PathVector objects based on current layer dictionary.
-        The list of PathVectors is associated with a key in a new dictionary.
-        """
-        if not self.layers.keys():
-            print("No layers generated. Aborting.")
-            return
+            gx0, gy0, gz0 = xmin, ymin, zmin
+            gx1, gy1, gz1 = xmax, ymax, zmax
         else:
-            self.pathvec_layers = {}
-            for l_key in self.layers.keys():
-                l_start, l_end = self.layers[l_key]
-                se_pairs = [
-                    np.vstack(
-                        [
-                            np.hstack([1, s, l_key * self.layer_thickness, 0, 0]),
-                            np.hstack(
-                                [
-                                    0,
-                                    e,
-                                    l_key * self.layer_thickness,
-                                    self.power,
-                                    self.velocity,
-                                ]
-                            ),
-                        ]
-                    )
-                    for s, e in zip(l_start, l_end)
-                ]
-                allpaths = np.vstack([np.vstack(se) for se in se_pairs])
-                segment_mode: List[int] = []
-                segment_position: List[np.ndarray] = []
-                segment_parameter: List[float] = []
-                for path in allpaths:
-                    m, x, y, z, _, p = path
-                    position = np.array([x, y, z])
-                    segment_mode.append(m)
-                    segment_position.append(position)
-                    segment_parameter.append(p)
+            raise ValueError(
+                "Grid construction failed: "
+                "You must provide either a 'bound_box' "
+                "or a non-empty list of 'path_vectors'."
+            )
 
-                segment_time: List[float] = []
-                start_t: List[float] = []
-                end_t: List[float] = []
-                start_pos: List[np.ndarray] = []
-                end_pos: List[np.ndarray] = []
-                if segment_mode[0] == 1:
-                    segment_time.append(segment_parameter[0])
-                else:
-                    segment_time.append(0.0)
-                for i in range(1, len(segment_mode)):
-                    i_prev = i - 1
-                    if segment_mode[i] == 1:
-                        dt = segment_parameter[i]
-                    else:
-                        dist = np.linalg.norm(
-                            segment_position[i] - segment_position[i_prev]
-                        )
-                        dt = (
-                            dist / segment_parameter[i]
-                            if segment_parameter[i] > 1e-12
-                            else 0.0
-                        )
-                    segment_time.append(segment_time[i_prev] + dt)
+        self.origin = np.array([gx0, gy0, gz0])
 
-                for i in range(len(segment_time)):
-                    if segment_mode[i] == 0:
-                        if i == 0:
-                            print("exposure on first segment. skipping.")
-                            continue
-                        start_pos.append(segment_position[i - 1].copy())
-                        end_pos.append(segment_position[i].copy())
-                        start_t.append(segment_time[i - 1])
-                        end_t.append(segment_time[i])
+        xg = np.arange(gx0, gx1 + self.resolution / 2.0, self.resolution)
+        yg = np.arange(gy0, gy1 + self.resolution / 2.0, self.resolution)
+        zg = np.arange(gz0, gz1 + self.resolution / 2.0, self.resolution)
 
-                active_vectors = []
-                for sc, ec, st, et in zip(start_pos, end_pos, start_t, end_t):
-                    vec = PathVector(sc, ec, st, et)
-                    active_vectors.append(vec)
-                self.pathvec_layers[l_key] = active_vectors
+        self.shape = (len(xg), len(yg), len(zg))
+        self.n_voxels = self.shape[0] * self.shape[1] * self.shape[2]
 
-    def process_vectors(self) -> List[PathVector]:
-        """
-        Downselects vectors and computes local time offsets.
-        Note that the bounding box is defined implicitly by specifying rvedims at instantiation.
-        """
-        self.rveBoundBox = np.array(
-            [
-                [0.0e-6, 0.0e-6, self.layer_thickness],
-                [
-                    self.rvedims[0],
-                    self.rvedims[1],
-                    self.layer_thickness + self.rvedims[2],
-                ],
-            ]
-        )
-        time_offset = 0.0
-        start_L = 0
-        end_L = len(self.layers.keys())
-        rve_bb_infl_factor = 0.1
-        bbx0_infl, bBy0_infl, bBz0_infl = self.rveBoundBox[0] * (1 - rve_bb_infl_factor)
-        bbx1_infl, bBy1_infl, bBz1_infl = self.rveBoundBox[1] * (1 + rve_bb_infl_factor)
-        start_L = int(np.max([np.floor(bBz0_infl / self.layer_thickness) - 1, start_L]))
-        end_L = int(np.min([bBz1_infl / self.layer_thickness, end_L]))
-        all_vectors = numbaList()
-        print(f"Starting at L{start_L}, ending at L{end_L-1}")
-        for layerkey in range(start_L, end_L):
-            z_offset = layerkey * self.layer_thickness
-            print(f"Computing layer {layerkey}.")
-            layer_vectors = self.pathvec_layers[layerkey]
-            if not layer_vectors:
-                print(f"Warning: No segments in L{layerkey}). Skipping.")
-                continue
-            max_t_layer = layer_vectors[-1].start_t if layer_vectors else 0.0
-            for vec in layer_vectors:
-                vec.start_coord[2] += z_offset
-                vec.end_coord[2] += z_offset
-                vec.start_t += time_offset
-                vec.end_t += time_offset
-
-                vec_bb = np.array(
-                    [
-                        [vec.start_coord[0], vec.start_coord[1]],
-                        [vec.end_coord[0], vec.end_coord[1]],
-                    ]
-                )
-                # check if path is inside the inflated rve bounding box
-                if (
-                    (np.max(vec_bb[:, 0]) < np.min([bbx0_infl, bbx1_infl]))
-                    or (np.min(vec_bb[:, 0]) > np.max([bbx0_infl, bbx1_infl]))
-                    or (np.max(vec_bb[:, 1]) < np.min([bBy0_infl, bBy1_infl]))
-                    or (np.min(vec_bb[:, 1]) > np.max([bBy0_infl, bBy1_infl]))
-                ):
-                    continue
-                else:
-                    all_vectors.append(vec)
-            if layer_vectors:
-                time_offset += max_t_layer
-
-        if not all_vectors:
-            raise ValueError("No PathVectors found in the scan strategy.")
-
-        print(f"Total active (exposure) vectors: {len(all_vectors)}")
-        return all_vectors
-
-    def write_layers(self):
-        """
-        Writes scan paths as files.
-        """
-        if len(self.layers.keys()) == 0:
-            print("No layers found to write.")
-            return
-        else:
-            for l_key in self.layers.keys():
-                l_start, l_end = self.layers[l_key]
-                se_pairs = [
-                    np.vstack(
-                        [
-                            np.hstack([1, s, l_key * self.layer_thickness, 0, 0]),
-                            np.hstack(
-                                [
-                                    0,
-                                    e,
-                                    l_key * self.layer_thickness,
-                                    self.power,
-                                    self.velocity,
-                                ]
-                            ),
-                        ]
-                    )
-                    for s, e in zip(l_start, l_end)
-                ]
-                allpaths = np.vstack([np.vstack(se) for se in se_pairs])
-                header_str = "Mode X(m) Y(m) Z(m) Power(W) tParam"
-                filename = self.output_name + "{}".format(l_key)
-                np.savetxt(
-                    filename,
-                    allpaths,
-                    fmt="%.6f",
-                    delimiter=" ",
-                    header=header_str,
-                    comments="",
-                )
-                print(
-                    "Wrote file " + filename + " for layer {}.".format(l_key), end="\n"
-                )
+        X, Y, Z = np.meshgrid(xg, yg, zg, indexing="ij")
+        self.voxels = np.vstack([X.ravel(), Y.ravel(), Z.ravel()]).T.copy()
