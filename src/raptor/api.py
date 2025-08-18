@@ -1,6 +1,5 @@
 import time
-from typing import List, Tuple, Optional
-from numba.typed import List as numbaList
+from typing import List, Tuple, Optional, Dict, Any
 import numpy as np
 import vtk
 from vtk.util import numpy_support
@@ -54,7 +53,10 @@ def create_path_vectors(
     return scan_path_builder.process_vectors()
 
 
-def compute_spectral_components(melt_pool_data, n_modes) -> np.ndarray:
+def compute_spectral_components(
+    melt_pool_data: np.ndarray,
+    n_modes: int
+) -> np.ndarray:
 
     dt = melt_pool_data[1, 0] - melt_pool_data[0, 0]
     mode0 = melt_pool_data[:, 1].mean()
@@ -82,9 +84,12 @@ def compute_spectral_components(melt_pool_data, n_modes) -> np.ndarray:
     return np.float64(spectral_array)
 
 
-def create_melt_pool(melt_pool_dict: dict, enable_random_phases: bool) -> MeltPool:
+def create_melt_pool(
+    melt_pool_dict: Dict[str, Any],
+    enable_random_phases: bool
+) -> MeltPool:
 
-    processed_components = {}
+    processed_components: Dict[str, Tuple[np.ndarray, float]] = {}
     max_modes = 0
 
     # 1. Determine the maximum number of modes required.
@@ -97,22 +102,21 @@ def create_melt_pool(melt_pool_dict: dict, enable_random_phases: bool) -> MeltPo
         if data.shape[1] == 2:
             max_dimension = data[:, 1].max()
             spectral_array = compute_spectral_components(data, n_modes)
-            spectral_array[0, 0] *= scale
 
         # Option B: Input data is a spectral array [amplitude, frequency, phase]
-        if data.shape[1] == 3:
-            amplitudes = amplitudes[:, 0]
-            max_dimension = np.sum(amplitudes)
+        elif data.shape[1] == 3:
             spectral_array = data.copy()
+            max_dimension = np.sum(spectral_array[:, 0])
+
+        else:
+            raise ValueError(f"Unsupported data shape: {data.shape}.  Must be [time, value] or [amplitude, frequency, phase]")
 
         # Pad the array with zeros if it has fewer modes than the max.
         current_modes = spectral_array.shape[0]
         if current_modes < max_modes:
-            pad_width = spectral_array.shape[1]
-            pad_array = np.zeros(shape=(max_modes - current_modes, pad_width))
+            pad_array = np.zeros(shape=(max_modes - current_modes, spectral_array.shape[1]), dtype=np.float64)
             spectral_array = np.vstack([spectral_array, pad_array])
 
-        # Store the final, padded spectral array and the calculated max ratio.
         processed_components[key] = (spectral_array, max_dimension)
 
     # 3. Create the MeltPool object
@@ -132,76 +136,8 @@ def create_melt_pool(melt_pool_dict: dict, enable_random_phases: bool) -> MeltPo
 
     return melt_pool
 
-
-"""
-def create_scan_path_vectors(
-    scan_file_paths: List[str],
-    layer_height,
-    bound_box: Optional[np.ndarray] = None
-) -> List[PathVector]:
-    all_vectors = numbaList()
-
-    time_offset = 0.0
-    start_L = 0
-    end_L = len(scan_file_paths)
-    rve_bb_infl_factor = 0.1
-    if bound_box is not None:
-        bBx0, bBy0, bBz0 = bound_box[0]
-        bBx1, bBy1, bBz1 = bound_box[1]
-        bbx0_infl, bBy0_infl, bBz0_infl = bound_box[0] * (1 - rve_bb_infl_factor)
-        bbx1_infl, bBy1_infl, bBz1_infl = bound_box[1] * (1 + rve_bb_infl_factor)
-        start_L = int(np.max([np.floor(bBz0 / layer_height) - 1, start_L]))
-        end_L = int(np.min([bBz1 / layer_height, end_L]))
-    print(f"Starting at L{start_L}, ending at L{end_L-1}")
-    for layer_idx, sfp in enumerate(scan_file_paths[start_L:end_L]):
-        z_offset = layer_idx * layer_height
-        print(f"Reading Layer {start_L+layer_idx}: {sfp}")
-        active_vectors = read_scan_path(sfp)
-        if not active_vectors:
-            print(f"Warning: No segments in L{start_L+layer_idx} ({sfp}). Skipping.")
-            continue
-        max_t_layer = active_vectors[-1].start_t if active_vectors else 0.0
-        for vec in active_vectors:
-            vec.start_coord[2] += z_offset
-            vec.end_coord[2] += z_offset
-            vec.start_t += time_offset
-            vec.end_t += time_offset
-
-            vec_bb = np.array(
-                [
-                    [vec.start_coord[0], vec.start_coord[1]],
-                    [vec.end_coord[0], vec.end_coord[1]],
-                ]
-            )
-            if bound_box is not None:
-                # check if path is inside the inflated rve bounding box
-                if (
-                    (np.max(vec_bb[:, 0]) < np.min([bbx0_infl, bbx1_infl]))
-                    or (np.min(vec_bb[:, 0]) > np.max([bbx0_infl, bbx1_infl]))
-                    or (np.max(vec_bb[:, 1]) < np.min([bBy0_infl, bBy1_infl]))
-                    or (np.min(vec_bb[:, 1]) > np.max([bBy0_infl, bBy1_infl]))
-                ):
-                    continue
-                else:
-                    all_vectors.append(vec)
-            else:
-                all_vectors.append(vec)
-        if active_vectors:
-            time_offset += max_t_layer
-
-    if not all_vectors:
-        raise ValueError("No segments found in any scan path files.")
-
-    print(f"Total active (exposure) vectors: {len(all_vectors)}")
-    return all_vectors
-"""
-
-
 def compute_porosity(
-    grid: Grid,
-    path_vectors: List[PathVector],
-    melt_pool: MeltPool,
-    bezier: Bezier
+    grid: Grid, path_vectors: List[PathVector], melt_pool: MeltPool, bezier: Bezier
 ) -> None:
     """
     Main computation: computes porosity field.
@@ -217,7 +153,7 @@ def compute_porosity(
     # Warm up the main, parallelized compute kernel.
     if grid.n_voxels > 0 and path_vectors:
         _ = compute_melt_mask(grid.voxels[0:1], melt_pool, path_vectors[0:1], bezier)
-    
+
     print(f" -> JIT warmup complete ({time.time() - t_start_warmup:.8f}s).")
 
     # --- Main Computation ---
@@ -233,7 +169,7 @@ def compute_porosity(
     t0_run = time.time()
     melted_mask_flat = compute_melt_mask(grid.voxels, melt_pool, path_vectors, bezier)
     t_elapsed = time.time() - t0_run
-    
+
     n_melted = melted_mask_flat.sum()
     print(
         f" -> Melt-mask computation complete ({t_elapsed:.8f}s). "

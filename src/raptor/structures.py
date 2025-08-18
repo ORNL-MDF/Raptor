@@ -47,14 +47,12 @@ path_vector_spec = [
 
 @jitclass(bezier_spec)
 class Bezier:
-    def __init__(self, n_points: int):
+    def __init__(self, n_points: int64):
         self.n_points = n_points
         n_polygon_pts = n_points + (n_points - 1)
 
-        # Pre-allocate the polygon array
         self.polygon = np.empty((n_polygon_pts, 2), dtype=np.float64)
 
-        # Pre-calculate Bezier weights
         t_p = np.linspace(0, 1, n_points)
         weights = np.empty((n_points, 4), dtype=np.float64)
         omt = 1.0 - t_p
@@ -66,7 +64,7 @@ class Bezier:
         weights[:, 3] = tsq * t_p
         self.weights = weights
 
-    def update(self, width: float, depth: float, height: float):
+    def update(self, width: float64, depth: float64, height: float64) -> None:
         height_control = 4.0 / 3.0 * height
         depth_control = 4.0 / 3.0 * depth
 
@@ -95,31 +93,39 @@ class Bezier:
         # Update top half of the polygon
         for i in range(self.n_points):
             # dot product for the X coordinate
-            self.polygon[i, 0] = (self.weights[i, 0] * p_top[0, 0] +
-                                  self.weights[i, 1] * p_top[1, 0] +
-                                  self.weights[i, 2] * p_top[2, 0] +
-                                  self.weights[i, 3] * p_top[3, 0])
+            self.polygon[i, 0] = (
+                self.weights[i, 0] * p_top[0, 0]
+                + self.weights[i, 1] * p_top[1, 0]
+                + self.weights[i, 2] * p_top[2, 0]
+                + self.weights[i, 3] * p_top[3, 0]
+            )
             # dot product for the Y coordinate
-            self.polygon[i, 1] = (self.weights[i, 0] * p_top[0, 1] +
-                                  self.weights[i, 1] * p_top[1, 1] +
-                                  self.weights[i, 2] * p_top[2, 1] +
-                                  self.weights[i, 3] * p_top[3, 1])
+            self.polygon[i, 1] = (
+                self.weights[i, 0] * p_top[0, 1]
+                + self.weights[i, 1] * p_top[1, 1]
+                + self.weights[i, 2] * p_top[2, 1]
+                + self.weights[i, 3] * p_top[3, 1]
+            )
 
         # Update bottom half of the polygon
         for i in range(1, self.n_points):
             idx = self.n_points + i - 1
             # dot product for the X coordinate
-            self.polygon[idx, 0] = (self.weights[i, 0] * p_bottom[0, 0] +
-                                    self.weights[i, 1] * p_bottom[1, 0] +
-                                    self.weights[i, 2] * p_bottom[2, 0] +
-                                    self.weights[i, 3] * p_bottom[3, 0])
+            self.polygon[idx, 0] = (
+                self.weights[i, 0] * p_bottom[0, 0]
+                + self.weights[i, 1] * p_bottom[1, 0]
+                + self.weights[i, 2] * p_bottom[2, 0]
+                + self.weights[i, 3] * p_bottom[3, 0]
+            )
             # dot product for the Y coordinate
-            self.polygon[idx, 1] = (self.weights[i, 0] * p_bottom[0, 1] +
-                                    self.weights[i, 1] * p_bottom[1, 1] +
-                                    self.weights[i, 2] * p_bottom[2, 1] +
-                                    self.weights[i, 3] * p_bottom[3, 1])
+            self.polygon[idx, 1] = (
+                self.weights[i, 0] * p_bottom[0, 1]
+                + self.weights[i, 1] * p_bottom[1, 1]
+                + self.weights[i, 2] * p_bottom[2, 1]
+                + self.weights[i, 3] * p_bottom[3, 1]
+            )
 
-    def point_in_polygon(self, x: float, y: float) -> bool:
+    def point_in_polygon(self, x: float64, y: float64) -> bool:
         n_vertices = self.polygon.shape[0]
         px0 = self.polygon[n_vertices - 1, 0]
         py0 = self.polygon[n_vertices - 1, 1]
@@ -147,13 +153,13 @@ class MeltPool:
 
     def __init__(
         self,
-        width_oscillations,
-        depth_oscillations,
-        height_oscillations,
-        width_max,
-        depth_max,
-        height_max,
-        enable_random_phases,
+        width_oscillations: float64[:, :],
+        depth_oscillations: float64[:, :],
+        height_oscillations: float64[:, :],
+        width_max: float64,
+        depth_max: float64,
+        height_max: float64,
+        enable_random_phases: boolean,
     ):
         self.width_oscillations = width_oscillations
         self.depth_oscillations = depth_oscillations
@@ -176,23 +182,23 @@ class PathVector:
     Represents a scan vector with a melt pool dependent bounding box
     """
 
-    def __init__(self, start_point, end_point, start_time, end_time):
+    def __init__(
+        self,
+        start_point: float64[:],
+        end_point: float64[:],
+        start_time: float64,
+        end_time: float64
+    ): 
         self.start_point = start_point
         self.end_point = end_point
         self.start_time = start_time
         self.end_time = end_time
-
-        #self.distance = self.end_point - self.start_point
-        #self.centroid = (self.end_point + self.start_point) / 2.0
-        
-        #print(self.start_point)#, self.end_point, self.centroid)
-
         self.duration = self.end_time - self.start_time
 
     def set_coordinate_frame(self) -> None:
         self.distance = self.end_point - self.start_point
         self.centroid = (self.end_point + self.start_point) / 2.0
-            
+
         # Calculate local coordinate frame
         dx, dy = self.distance[0], self.distance[1]
         Lxy = np.hypot(dx, dy)
@@ -209,7 +215,7 @@ class PathVector:
             size = melt_pool.width_oscillations.shape[0] - 1
             random_phase = np.random.uniform(0.0, 2.0 * np.pi, size)
             zero_phase = np.array([0.0], dtype=np.float64)
-            self.phases = np.hstack((zero_phase, random_phase))
+            self.phases = np.hstack((zero_phase, random_phase)).astype(np.float64)
         else:
             self.phases = melt_pool.width_oscillations[:, 2].astype(np.float64)
 
@@ -217,7 +223,7 @@ class PathVector:
         """
         Calculates and sets the OBB half-lengths and the AABB for this vector
         based on the physical properties of a given MeltPool.
-        """        
+        """
         # Unpack max dimensions from the melt pool for clarity
         width_max = melt_pool.width_max
         depth_max = melt_pool.depth_max
@@ -235,11 +241,11 @@ class PathVector:
         pad_xy = width_max / 2.0
         self.AABB = np.array(
             [
-                p_min[0] - pad_xy,  # x-min
-                p_max[0] + pad_xy,  # x-max
-                p_min[1] - pad_xy,  # y-min
-                p_max[1] + pad_xy,  # y-max
-                p_min[2] - depth_max,  # z-min
+                p_min[0] - pad_xy,      # x-min
+                p_max[0] + pad_xy,      # x-max
+                p_min[1] - pad_xy,      # y-min
+                p_max[1] + pad_xy,      # y-max
+                p_min[2] - depth_max,   # z-min
                 p_max[2] + height_max,  # z-max
             ],
             dtype=np.float64,
@@ -250,7 +256,7 @@ class PathVector:
         Orchestrator to set melt pool dependent properties on the vector.
         """
         self.set_coordinate_frame()
-        
+
         self.set_phases(melt_pool)
 
         self.set_bound_box(melt_pool)

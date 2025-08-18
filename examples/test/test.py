@@ -14,7 +14,7 @@ from raptor.structures import Bezier
 min_point = np.array([0.0, 0.0, 0.0])
 max_point = np.array([5.0e-4, 5.0e-4, 5.0e-4])
 bound_box = np.array([min_point, max_point])
-voxel_resolution = 2.5e-6
+voxel_resolution = 5e-6
 
 grid = create_grid(voxel_resolution, bound_box=bound_box)
 

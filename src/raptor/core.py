@@ -123,25 +123,29 @@ def compute_melt_mask_implicit(
             dot_e0 = vec_cx * e0[j, 0] + vec_cy * e0[j, 1] + vec_cz * e0[j, 2]
             if (dot_e0 * dot_e0) > (L0[j] * L0[j]):
                 continue
-            
+
             dot_e2 = vec_cx * e2[j, 0] + vec_cy * e2[j, 1] + vec_cz * e2[j, 2]
             if (dot_e2 * dot_e2) > (L2[j] * L2[j]):
                 continue
 
-            dist_sqr = (distances[j, 0] * distances[j, 0] +
-                        distances[j, 1] * distances[j, 1] +
-                        distances[j, 2] * distances[j, 2])
+            dist_sqr = (
+                distances[j, 0] * distances[j, 0]
+                + distances[j, 1] * distances[j, 1]
+                + distances[j, 2] * distances[j, 2]
+            )
 
             time_fraction = 0.0
             if dist_sqr > 1e-12:
                 vec_sx = vx - start_points[j, 0]
                 vec_sy = vy - start_points[j, 1]
                 vec_sz = vz - start_points[j, 2]
-                
-                dot_dist = (vec_sx * distances[j, 0] +
-                            vec_sy * distances[j, 1] +
-                            vec_sz * distances[j, 2])
-                
+
+                dot_dist = (
+                    vec_sx * distances[j, 0]
+                    + vec_sy * distances[j, 1]
+                    + vec_sz * distances[j, 2]
+                )
+
                 time_fraction = dot_dist / dist_sqr
 
             time_fraction = max(0.0, min(1.0, time_fraction))
@@ -150,10 +154,14 @@ def compute_melt_mask_implicit(
             vec_path_x = vx - (start_points[j, 0] + time_fraction * distances[j, 0])
             vec_path_y = vy - (start_points[j, 1] + time_fraction * distances[j, 1])
             vec_path_z = vz - (start_points[j, 2] + time_fraction * distances[j, 2])
-            
-            local_y = vec_path_x * e0[j, 0] + vec_path_y * e0[j, 1] + vec_path_z * e0[j, 2]
-            local_z = vec_path_x * e2[j, 0] + vec_path_y * e2[j, 1] + vec_path_z * e2[j, 2]
-            
+
+            local_y = (
+                vec_path_x * e0[j, 0] + vec_path_y * e0[j, 1] + vec_path_z * e0[j, 2]
+            )
+            local_z = (
+                vec_path_x * e2[j, 0] + vec_path_y * e2[j, 1] + vec_path_z * e2[j, 2]
+            )
+
             width, depth, height = 0.0, 0.0, 0.0
             phase = phases[j, :]
             two_pi_t = 2.0 * np.pi * time
