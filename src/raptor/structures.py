@@ -8,14 +8,14 @@ from numba import int32, int64, float64, boolean
 # Define jitclass specifications
 bezier_spec = [
     ("n_points", int64),
-    ("weights", float64[:, :]),
-    ("polygon", float64[:, :]),
+    ("weights", float64[:, ::1]),
+    ("polygon", float64[:, ::1]),
 ]
 
 melt_pool_spec = [
-    ("width_oscillations", float64[:, :]),
-    ("depth_oscillations", float64[:, :]),
-    ("height_oscillations", float64[:, :]),
+    ("width_oscillations", float64[:, ::1]),
+    ("depth_oscillations", float64[:, ::1]),
+    ("height_oscillations", float64[:, ::1]),
     ("width_max", float64),
     ("depth_max", float64),
     ("height_max", float64),
@@ -187,17 +187,18 @@ class PathVector:
         start_point: float64[:],
         end_point: float64[:],
         start_time: float64,
-        end_time: float64
-    ): 
+        end_time: float64,
+    ):
         self.start_point = start_point
         self.end_point = end_point
         self.start_time = start_time
         self.end_time = end_time
-        self.duration = self.end_time - self.start_time
 
     def set_coordinate_frame(self) -> None:
         self.distance = self.end_point - self.start_point
         self.centroid = (self.end_point + self.start_point) / 2.0
+
+        self.duration = self.end_time - self.start_time
 
         # Calculate local coordinate frame
         dx, dy = self.distance[0], self.distance[1]
@@ -241,11 +242,11 @@ class PathVector:
         pad_xy = width_max / 2.0
         self.AABB = np.array(
             [
-                p_min[0] - pad_xy,      # x-min
-                p_max[0] + pad_xy,      # x-max
-                p_min[1] - pad_xy,      # y-min
-                p_max[1] + pad_xy,      # y-max
-                p_min[2] - depth_max,   # z-min
+                p_min[0] - pad_xy,  # x-min
+                p_max[0] + pad_xy,  # x-max
+                p_min[1] - pad_xy,  # y-min
+                p_max[1] + pad_xy,  # y-max
+                p_min[2] - depth_max,  # z-min
                 p_max[2] + height_max,  # z-max
             ],
             dtype=np.float64,
@@ -255,10 +256,7 @@ class PathVector:
         """
         Orchestrator to set melt pool dependent properties on the vector.
         """
-        self.set_coordinate_frame()
-
         self.set_phases(melt_pool)
-
         self.set_bound_box(melt_pool)
 
 

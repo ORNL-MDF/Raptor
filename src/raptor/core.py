@@ -112,6 +112,19 @@ def compute_melt_mask_implicit(
         is_voxel_melted = False
 
         for j in range(n_vectors):
+            '''
+            TODO: Check this
+            if (
+                vx < AABB[j, 0]
+                or vx > AABB[j, 1]
+                or vy < AABB[j, 2]
+                or vy > AABB[j, 3]
+                or vz < AABB[j, 4]
+                or vz > AABB[j, 5]
+            ):
+                continue
+            '''
+        
             vec_cx = vx - centroids[j, 0]
             vec_cy = vy - centroids[j, 1]
             vec_cz = vz - centroids[j, 2]

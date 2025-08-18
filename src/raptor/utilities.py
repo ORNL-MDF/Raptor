@@ -162,6 +162,11 @@ class ScanPathBuilder:
             raise ValueError("No path vectors found inside the specified RVE.")
 
         print(f"Total active (exposure) vectors: {len(all_vectors)}")
+
+        # Update coordinate and time frame properties
+        for path_vector in all_vectors:
+            path_vector.set_coordinate_frame()
+
         return all_vectors
 
     def write_layers(self, ouput_name):

@@ -53,10 +53,7 @@ def create_path_vectors(
     return scan_path_builder.process_vectors()
 
 
-def compute_spectral_components(
-    melt_pool_data: np.ndarray,
-    n_modes: int
-) -> np.ndarray:
+def compute_spectral_components(melt_pool_data: np.ndarray, n_modes: int) -> np.ndarray:
 
     dt = melt_pool_data[1, 0] - melt_pool_data[0, 0]
     mode0 = melt_pool_data[:, 1].mean()
@@ -81,12 +78,11 @@ def compute_spectral_components(
                 np.vstack([amplitudes[1:], frequencies[1:], phases[1:]]).transpose(),
             ]
         )
-    return np.float64(spectral_array)
+    return np.ascontiguousarray(spectral_array, dtype=np.float64)
 
 
 def create_melt_pool(
-    melt_pool_dict: Dict[str, Any],
-    enable_random_phases: bool
+    melt_pool_dict: Dict[str, Any], enable_random_phases: bool
 ) -> MeltPool:
 
     processed_components: Dict[str, Tuple[np.ndarray, float]] = {}
@@ -109,12 +105,17 @@ def create_melt_pool(
             max_dimension = np.sum(spectral_array[:, 0])
 
         else:
-            raise ValueError(f"Unsupported data shape: {data.shape}.  Must be [time, value] or [amplitude, frequency, phase]")
+            raise ValueError(
+                f"Unsupported data shape: {data.shape}.  Must be [time, value] or [amplitude, frequency, phase]"
+            )
 
         # Pad the array with zeros if it has fewer modes than the max.
         current_modes = spectral_array.shape[0]
         if current_modes < max_modes:
-            pad_array = np.zeros(shape=(max_modes - current_modes, spectral_array.shape[1]), dtype=np.float64)
+            pad_array = np.zeros(
+                shape=(max_modes - current_modes, spectral_array.shape[1]),
+                dtype=np.float64,
+            )
             spectral_array = np.vstack([spectral_array, pad_array])
 
         processed_components[key] = (spectral_array, max_dimension)
@@ -136,6 +137,7 @@ def create_melt_pool(
 
     return melt_pool
 
+
 def compute_porosity(
     grid: Grid, path_vectors: List[PathVector], melt_pool: MeltPool, bezier: Bezier
 ) -> None:
@@ -155,7 +157,6 @@ def compute_porosity(
         _ = compute_melt_mask(grid.voxels[0:1], melt_pool, path_vectors[0:1], bezier)
 
     print(f" -> JIT warmup complete ({time.time() - t_start_warmup:.8f}s).")
-
 
     print("Preparing path vectors for simulation...")
     t0_setup = time.time()
