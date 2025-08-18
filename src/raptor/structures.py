@@ -182,11 +182,17 @@ class PathVector:
         self.start_time = start_time
         self.end_time = end_time
 
-        self.distance = self.end_point - self.start_point
-        self.centroid = (self.end_point + self.start_point) / 2.0
+        #self.distance = self.end_point - self.start_point
+        #self.centroid = (self.end_point + self.start_point) / 2.0
+        
+        #print(self.start_point)#, self.end_point, self.centroid)
 
         self.duration = self.end_time - self.start_time
 
+    def set_coordinate_frame(self) -> None:
+        self.distance = self.end_point - self.start_point
+        self.centroid = (self.end_point + self.start_point) / 2.0
+            
         # Calculate local coordinate frame
         dx, dy = self.distance[0], self.distance[1]
         Lxy = np.hypot(dx, dy)
@@ -211,7 +217,7 @@ class PathVector:
         """
         Calculates and sets the OBB half-lengths and the AABB for this vector
         based on the physical properties of a given MeltPool.
-        """
+        """        
         # Unpack max dimensions from the melt pool for clarity
         width_max = melt_pool.width_max
         depth_max = melt_pool.depth_max
@@ -243,6 +249,8 @@ class PathVector:
         """
         Orchestrator to set melt pool dependent properties on the vector.
         """
+        self.set_coordinate_frame()
+        
         self.set_phases(melt_pool)
 
         self.set_bound_box(melt_pool)

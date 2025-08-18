@@ -14,7 +14,7 @@ from raptor.structures import Bezier
 min_point = np.array([0.0, 0.0, 0.0])
 max_point = np.array([5.0e-4, 5.0e-4, 5.0e-4])
 bound_box = np.array([min_point, max_point])
-voxel_resolution = 5.0e-6
+voxel_resolution = 2.5e-6
 
 grid = create_grid(voxel_resolution, bound_box=bound_box)
 
@@ -22,7 +22,7 @@ grid = create_grid(voxel_resolution, bound_box=bound_box)
 power = 370
 velocity = 1.7
 hatch_spacing = 130e-6
-layer_height = 30e-6
+layer_height = 50e-6
 rotation = 67
 scan_extension = max(max_point - min_point)
 extra_layers = 7
@@ -45,7 +45,7 @@ melt_pool_data_path = (
 )
 width_data = read_data(melt_pool_data_path)
 width_scale, depth_scale, height_scale = 1.0, 0.8, 0.4
-n_modes = 2
+n_modes = 50
 melt_pool_dict = {
     "width": (width_data, width_scale, n_modes),
     "depth": (width_data, depth_scale, n_modes),

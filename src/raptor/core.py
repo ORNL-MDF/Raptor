@@ -112,55 +112,48 @@ def compute_melt_mask_implicit(
         is_voxel_melted = False
 
         for j in range(n_vectors):
-            # 1. Check if voxel is in axis-aligned bounding box (AABB)
-            if not (
-                AABB[j, 0] <= vx <= AABB[j, 1]
-                and AABB[j, 2] <= vy <= AABB[j, 3]
-                and AABB[j, 4] <= vz <= AABB[j, 5]
-            ):
+            vec_cx = vx - centroids[j, 0]
+            vec_cy = vy - centroids[j, 1]
+            vec_cz = vz - centroids[j, 2]
+
+            dot_e1 = vec_cx * e1[j, 0] + vec_cy * e1[j, 1] + vec_cz * e1[j, 2]
+            if (dot_e1 * dot_e1) > (L1[j] * L1[j]):
                 continue
 
-            # --- Create voxel position vector ONCE for reuse ---
-            voxel_pos = np.array([vx, vy, vz])
-
-            # 2. Check if voxel is in oriented bounding box (OBB)
-            vec_centroid_to_voxel = voxel_pos - centroids[j, :]
-
-            # Project distance onto scan axis (e1)
-            dist_sq_scan = np.dot(vec_centroid_to_voxel, e1[j, :]) ** 2
-            if dist_sq_scan > L1[j] ** 2:
+            dot_e0 = vec_cx * e0[j, 0] + vec_cy * e0[j, 1] + vec_cz * e0[j, 2]
+            if (dot_e0 * dot_e0) > (L0[j] * L0[j]):
+                continue
+            
+            dot_e2 = vec_cx * e2[j, 0] + vec_cy * e2[j, 1] + vec_cz * e2[j, 2]
+            if (dot_e2 * dot_e2) > (L2[j] * L2[j]):
                 continue
 
-            # Project distance onto width axis (e0)
-            dist_sq_width = np.dot(vec_centroid_to_voxel, e0[j, :]) ** 2
-            if dist_sq_width > L0[j] ** 2:
-                continue
-
-            distance = distances[j, :]
-
-            # 3. Project voxel onto path vector
-            vec_start_to_voxel = voxel_pos - start_points[j, :]
-            dist_sqr = np.dot(distance, distance)
+            dist_sqr = (distances[j, 0] * distances[j, 0] +
+                        distances[j, 1] * distances[j, 1] +
+                        distances[j, 2] * distances[j, 2])
 
             time_fraction = 0.0
-            time_fraction = (
-                np.dot(vec_start_to_voxel, distance) / dist_sqr
-                if dist_sqr > 1e-12
-                else 0.0
-            )
-            time_fraction = max(0.0, min(1.0, time_fraction))
+            if dist_sqr > 1e-12:
+                vec_sx = vx - start_points[j, 0]
+                vec_sy = vy - start_points[j, 1]
+                vec_sz = vz - start_points[j, 2]
+                
+                dot_dist = (vec_sx * distances[j, 0] +
+                            vec_sy * distances[j, 1] +
+                            vec_sz * distances[j, 2])
+                
+                time_fraction = dot_dist / dist_sqr
 
+            time_fraction = max(0.0, min(1.0, time_fraction))
             time = start_times[j] + time_fraction * (end_times[j] - start_times[j])
 
-            # Get vector from projected point on path to voxel
-            projected_point = start_points[j, :] + time_fraction * distance
-            vec_path_to_voxel = voxel_pos - projected_point
-
-            # Project onto local frame for 2D polygon check
-            local_y = np.dot(vec_path_to_voxel, e0[j, :])  # Projection on width axis
-            local_z = np.dot(vec_path_to_voxel, e2[j, :])  # Projection on depth axis
-
-            # 4. Compute dynamic melt pool dimensions
+            vec_path_x = vx - (start_points[j, 0] + time_fraction * distances[j, 0])
+            vec_path_y = vy - (start_points[j, 1] + time_fraction * distances[j, 1])
+            vec_path_z = vz - (start_points[j, 2] + time_fraction * distances[j, 2])
+            
+            local_y = vec_path_x * e0[j, 0] + vec_path_y * e0[j, 1] + vec_path_z * e0[j, 2]
+            local_z = vec_path_x * e2[j, 0] + vec_path_y * e2[j, 1] + vec_path_z * e2[j, 2]
+            
             width, depth, height = 0.0, 0.0, 0.0
             phase = phases[j, :]
             two_pi_t = 2.0 * np.pi * time
@@ -179,11 +172,11 @@ def compute_melt_mask_implicit(
                     two_pi_t * height_frequencies[k] + phase_k
                 )
 
-            # 5. Point in polygon check
             bezier.update(width, depth, height)
             if bezier.point_in_polygon(local_y, local_z):
                 is_voxel_melted = True
                 break
 
         melt_mask[i] = is_voxel_melted
+
     return melt_mask

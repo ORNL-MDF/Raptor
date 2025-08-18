@@ -198,32 +198,52 @@ def create_scan_path_vectors(
 
 
 def compute_porosity(
-    grid: Grid, path_vectors: List[PathVector], melt_pool: MeltPool, bezier: Bezier
+    grid: Grid,
+    path_vectors: List[PathVector],
+    melt_pool: MeltPool,
+    bezier: Bezier
 ) -> None:
     """
     Main computation: computes porosity field.
     """
 
-    # 1. Assign melt pool model to path vector
-    for path_vector in path_vectors:
-        path_vector.set_melt_pool_properties(melt_pool)
+    print("JIT Warmup...")
+    t_start_warmup = time.time()
 
-    # 2. Calculate porosity from voxelized melt pool masks
+    # Warm up the vecto property assignment.
+    if path_vectors:
+        path_vectors[0].set_melt_pool_properties(melt_pool)
+
+    # Warm up the main, parallelized compute kernel.
+    if grid.n_voxels > 0 and path_vectors:
+        _ = compute_melt_mask(grid.voxels[0:1], melt_pool, path_vectors[0:1], bezier)
+    
+    print(f" -> JIT warmup complete ({time.time() - t_start_warmup:.8f}s).")
+
+    # --- Main Computation ---
+
+    # 1. Assign physics-based properties (AABB, phases) to all path vectors.
+    print("Preparing path vectors for simulation...")
+    t0_setup = time.time()
+    for vector in path_vectors:
+        vector.set_melt_pool_properties(melt_pool)
+    print(f" -> Vector preparation complete ({time.time() - t0_setup:.8f}s).")
+
     print("Running melt-mask calculation...")
-    t0 = time.time()
-
-    melted = compute_melt_mask(grid.voxels, melt_pool, path_vectors, bezier)
-
-    t_elapsed = time.time() - t0
-    n_melted = melted.sum()
-
+    t0_run = time.time()
+    melted_mask_flat = compute_melt_mask(grid.voxels, melt_pool, path_vectors, bezier)
+    t_elapsed = time.time() - t0_run
+    
+    n_melted = melted_mask_flat.sum()
     print(
-        f" -> Melt-mask computation: {t_elapsed:.1f}s. "
-        f"Melted {n_melted}/{grid.n_voxels} voxels. "
-        f"{grid.n_voxels-n_melted} unmelted voxels."
+        f" -> Melt-mask computation complete ({t_elapsed:.8f}s). "
+        f"Melted {n_melted} of {grid.n_voxels} voxels."
     )
 
-    return (~melted).astype(np.int8).reshape(grid.shape, order="C")
+    # 3. Reshape the flat mask into the final 3D porosity field.
+    porosity_field = (~melted_mask_flat).astype(np.int8).reshape(grid.shape, order="C")
+
+    return porosity_field
 
 
 def write_vtk(
