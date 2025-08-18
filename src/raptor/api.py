@@ -156,9 +156,7 @@ def compute_porosity(
 
     print(f" -> JIT warmup complete ({time.time() - t_start_warmup:.8f}s).")
 
-    # --- Main Computation ---
 
-    # 1. Assign physics-based properties (AABB, phases) to all path vectors.
     print("Preparing path vectors for simulation...")
     t0_setup = time.time()
     for vector in path_vectors:
@@ -176,7 +174,6 @@ def compute_porosity(
         f"Melted {n_melted} of {grid.n_voxels} voxels."
     )
 
-    # 3. Reshape the flat mask into the final 3D porosity field.
     porosity_field = (~melted_mask_flat).astype(np.int8).reshape(grid.shape, order="C")
 
     return porosity_field
