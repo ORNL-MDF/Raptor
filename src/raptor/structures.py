@@ -8,14 +8,14 @@ from numba import int32, int64, float64, boolean
 # Define jitclass specifications
 bezier_spec = [
     ("n_points", int64),
-    ("weights", float64[:, ::1]),
-    ("polygon", float64[:, ::1]),
+    ("weights", float64[:, :]),
+    ("polygon", float64[:, :]),
 ]
 
 melt_pool_spec = [
-    ("width_oscillations", float64[:, ::1]),
-    ("depth_oscillations", float64[:, ::1]),
-    ("height_oscillations", float64[:, ::1]),
+    ("width_oscillations", float64[:, :]),
+    ("depth_oscillations", float64[:, :]),
+    ("height_oscillations", float64[:, :]),
     ("width_max", float64),
     ("depth_max", float64),
     ("height_max", float64),
@@ -271,7 +271,7 @@ class Grid:
     def __init__(
         self,
         voxel_resolution: float,
-        bound_box: Optional[np.array] = None,
+        bound_box: Optional[np.ndarray] = None,
         path_vectors: Optional[List[PathVector]] = None,
     ):
         self.resolution = voxel_resolution

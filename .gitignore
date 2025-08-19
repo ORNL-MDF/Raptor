@@ -5,3 +5,5 @@ build
 
 # other typical case file names
 *.vti
+# vscode settings cache
+vscode

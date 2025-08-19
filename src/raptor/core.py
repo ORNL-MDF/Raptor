@@ -69,7 +69,7 @@ def compute_melt_mask(
         depth_frequencies,
         height_amplitudes,
         height_frequencies,
-        bezier,
+        bezier
     )
 
 
@@ -97,7 +97,7 @@ def compute_melt_mask_implicit(
     depth_frequencies: np.ndarray,
     height_amplitudes: np.ndarray,
     height_frequencies: np.ndarray,
-    bezier: Bezier,
+    bezier: Bezier
 ) -> np.ndarray:
     """
     Implicit compute melt mask function.
@@ -148,7 +148,7 @@ def compute_melt_mask_implicit(
             )
 
             time_fraction = 0.0
-            if dist_sqr > 1e-12:
+            if dist_sqr > 1e-24:
                 vec_sx = vx - start_points[j, 0]
                 vec_sy = vy - start_points[j, 1]
                 vec_sz = vz - start_points[j, 2]

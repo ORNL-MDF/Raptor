@@ -12,7 +12,7 @@ class ScanPathBuilder:
         self,
         bound_box: np.ndarray,
         power: float,
-        span_speed: float,
+        scan_speed: float,
         hatch_spacing: float,
         layer_height: float,
         rotation: float,
@@ -26,7 +26,7 @@ class ScanPathBuilder:
             min_point: The [x, y, z] minimum corner of the part volume.
             max_point: The [x, y, z] maximum corner of the part volume.
             power: Laser power in Watts.
-            span_speed: Scan speed in m/s.
+            scan_speed: Scan speed in m/s.
             hatch_spacing: Distance between adjacent scan vectors.
             layer_height: Thickness of each layer.
             rotation: Inter-layer rotation angle in degrees.
@@ -37,7 +37,7 @@ class ScanPathBuilder:
         self.max_point = bound_box[1]
 
         self.power = power
-        self.span_speed = span_speed
+        self.scan_speed = scan_speed
         self.hatch_spacing = hatch_spacing
         self.layer_height = layer_height
         self.rotation = np.deg2rad(rotation)
@@ -74,99 +74,67 @@ class ScanPathBuilder:
         # 2. Generate the kth layer by rotating the base layer
         for k in range(1, self.nlayers + 1):
             angle = k * self.rotation
-            rotation_maxtrix = np.array(
+            rotation_matrix = np.array(
                 [[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]]
             )
 
             starts = np.array(
                 [
-                    np.matmul(rotation_maxtrix, s - self.center_of_rotation)
+                    np.matmul(rotation_matrix, s - self.center_of_rotation)
                     + self.center_of_rotation
                     for s in self.layers[0][0]
                 ]
             )
             ends = np.array(
                 [
-                    np.matmul(rotation_maxtrix, e - self.center_of_rotation)
+                    np.matmul(rotation_matrix, e - self.center_of_rotation)
                     + self.center_of_rotation
                     for e in self.layers[0][1]
                 ]
             )
             self.layers[k] = [starts, ends]
-
-    def construct_vectors(self):
+    
+    def process_vectors(self):
         """
-        Construct timed PathVector objects from the generated raw paths.
+        Creates and processes PathVector objects from the generated layers.
         """
-        for l_key, (l_start, l_end) in self.layers.items():
-            if l_start.size == 0:
-                self.path_vector_layers[l_key] = []
+        if not self.layers.keys():
+            print("No layers generated. Aborting.")
+            return
+        time_offset = 0.0
+        rve_bound_box = np.array([self.min_point, self.max_point])
+        # constructing vectors.
+        for layer_key,(layer_start,layer_end) in self.layers.items():
+            if layer_start.size==0:
+                self.path_vector_layers[layer_key] = []
                 continue
-
             active_vectors = []
-            layer_time = 0.0
-            for start_xy, end_xy in zip(l_start, l_end):
-                start_point = np.array([start_xy[0], start_xy[1], 0.0])
-                end_point = np.array([end_xy[0], end_xy[1], 0.0])
-
-                dist = np.linalg.norm(end_point - start_point)
-                duration = dist / self.span_speed if self.span_speed > 1e-12 else 0.0
-
-                start_time = layer_time
-                end_time = start_time + duration
-
-                path_vector = PathVector(start_point, end_point, start_time, end_time)
+            layer_time = time_offset
+            for start_xy,end_xy in zip(layer_start,layer_end):
+                # defining start, end points and start, end times
+                vector_start = np.array([start_xy[0],start_xy[1],layer_key * self.layer_height])
+                vector_end = np.array([end_xy[0],end_xy[1],layer_key * self.layer_height])
+                vector_length = np.linalg.norm(vector_end - vector_start)
+                scan_duration = vector_length / self.scan_speed if self.scan_speed > 1e-12 else 0.0
+                if layer_key >=1 and not active_vectors:
+                    start_time = self.path_vector_layers[layer_key-1][-1].start_time
+                else:
+                    start_time = layer_time
+                end_time = start_time + scan_duration
+                # PathVector object instantiation
+                path_vector = PathVector(vector_start,vector_end,start_time,end_time)
                 active_vectors.append(path_vector)
                 layer_time = end_time
+            self.path_vector_layers[layer_key] = active_vectors
+            time_offset = active_vectors[-1].end_time if active_vectors else 0.0
 
-            self.path_vector_layers[l_key] = active_vectors
-
-    def process_vectors(self) -> List[PathVector]:
-        """
-        Filter vectors to keep those inside the RVE and computes global time offsets.
-        """
-        if not self.path_vector_layers:
-            raise ValueError(
-                "No path_vector constructed. Call construct_vectors() first."
-            )
-
-        rve_bound_box = np.array([self.min_point, self.max_point])
-        time_offset = 0.0
+        # condensing and returning all vectors
         all_vectors = []
-
-        print(f"Processing {len(self.path_vector_layers)} layers...")
-        for layer_key, layer_vectors in self.path_vector_layers.items():
-            if not layer_vectors:
-                continue
-
-            max_t_layer = layer_vectors[-1].end_time if layer_vectors else 0.0
-
+        for layer_key,layer_vectors in self.path_vector_layers.items():
             for vec in layer_vectors:
-                vec.start_point[2] += layer_key * self.layer_height
-                vec.end_point[2] += layer_key * self.layer_height
-                vec.start_time += time_offset
-                vec.end_time += time_offset
-
-                mid_point = (vec.start_point + vec.end_point) / 2.0
-                if np.any(mid_point < rve_bound_box[0]) or np.any(
-                    mid_point > rve_bound_box[1]
-                ):
-                    continue
-
+                # not currently filtering
+                vec.set_coordinate_frame()
                 all_vectors.append(vec)
-
-            if layer_vectors:
-                time_offset += max_t_layer
-
-        if not all_vectors:
-            raise ValueError("No path vectors found inside the specified RVE.")
-
-        print(f"Total active (exposure) vectors: {len(all_vectors)}")
-
-        # Update coordinate and time frame properties
-        for path_vector in all_vectors:
-            path_vector.set_coordinate_frame()
-
         return all_vectors
 
     def write_layers(self, ouput_name):
@@ -188,7 +156,7 @@ class ScanPathBuilder:
                                 e,
                                 l_key * self.layer_height,
                                 self.power,
-                                self.span_speed,
+                                self.scan_speed,
                             ]
                         ),
                     ]

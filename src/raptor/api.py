@@ -49,7 +49,6 @@ def create_path_vectors(
     )
 
     scan_path_builder.generate_layers()
-    scan_path_builder.construct_vectors()
     return scan_path_builder.process_vectors()
 
 
@@ -78,7 +77,7 @@ def compute_spectral_components(melt_pool_data: np.ndarray, n_modes: int) -> np.
                 np.vstack([amplitudes[1:], frequencies[1:], phases[1:]]).transpose(),
             ]
         )
-    return np.ascontiguousarray(spectral_array, dtype=np.float64)
+    return np.float64(spectral_array)
 
 
 def create_melt_pool(
@@ -98,6 +97,7 @@ def create_melt_pool(
         if data.shape[1] == 2:
             max_dimension = data[:, 1].max()
             spectral_array = compute_spectral_components(data, n_modes)
+            spectral_array[:,0] *= scale
 
         # Option B: Input data is a spectral array [amplitude, frequency, phase]
         elif data.shape[1] == 3:
@@ -158,7 +158,7 @@ def compute_porosity(
 
     print(f" -> JIT warmup complete ({time.time() - t_start_warmup:.8f}s).")
 
-    print("Preparing path vectors for simulation...")
+    print(f"Preparing {len(path_vectors)} path vectors for simulation...")
     t0_setup = time.time()
     for vector in path_vectors:
         vector.set_melt_pool_properties(melt_pool)

@@ -9,12 +9,13 @@ from raptor.api import (
     write_vtk,
 )
 from raptor.structures import Bezier
+from raptor.utilities import ScanPathBuilder
 
 # 1. Create voxel grid for the representative volume element (RVE)
 min_point = np.array([0.0, 0.0, 0.0])
 max_point = np.array([5.0e-4, 5.0e-4, 5.0e-4])
 bound_box = np.array([min_point, max_point])
-voxel_resolution = 5e-6
+voxel_resolution = 2.5e-6
 
 grid = create_grid(voxel_resolution, bound_box=bound_box)
 
@@ -27,16 +28,19 @@ rotation = 67
 scan_extension = max(max_point - min_point)
 extra_layers = 7
 
-path_vectors = create_path_vectors(
-    bound_box,
-    power,
-    velocity,
-    hatch_spacing,
-    layer_height,
-    rotation,
-    scan_extension,
-    extra_layers,
-)
+scan_path_builder = ScanPathBuilder(
+        bound_box,
+        power,
+        velocity,
+        hatch_spacing,
+        layer_height,
+        rotation,
+        scan_extension,
+        extra_layers,
+    )
+
+scan_path_builder.generate_layers()
+path_vectors = scan_path_builder.process_vectors()
 
 # 3. Create melt pools given a width sequence
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -52,14 +56,14 @@ melt_pool_dict = {
     "height": (width_data, height_scale, n_modes),
 }
 
-melt_pool = create_melt_pool(melt_pool_dict, enable_random_phases=True)
+melt_pool = create_melt_pool(melt_pool_dict, enable_random_phases=False)
 
 # 4. Compute porosity using Bezier curves for melt pool mask
 porosity = compute_porosity(
     grid,
     path_vectors,
     melt_pool,
-    Bezier(n_points=20),
+    Bezier(n_points=20)
 )
 
 # 5. Write porosity field to .VTI
