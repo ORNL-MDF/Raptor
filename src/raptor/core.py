@@ -106,10 +106,12 @@ def compute_melt_mask_implicit(
     n_voxels = voxels.shape[0]
     n_vectors = start_points.shape[0]
     n_modes = width_amplitudes.shape[0]
+    
 
     for i in prange(n_voxels):
         vx, vy, vz = voxels[i, 0], voxels[i, 1], voxels[i, 2]
         is_voxel_melted = False
+        poly_s = bezier.get_polygon()
 
         for j in range(n_vectors):
             '''
@@ -129,12 +131,12 @@ def compute_melt_mask_implicit(
             vec_cy = vy - centroids[j, 1]
             vec_cz = vz - centroids[j, 2]
 
-            dot_e1 = vec_cx * e1[j, 0] + vec_cy * e1[j, 1] + vec_cz * e1[j, 2]
-            if (dot_e1 * dot_e1) > (L1[j] * L1[j]):
-                continue
-
             dot_e0 = vec_cx * e0[j, 0] + vec_cy * e0[j, 1] + vec_cz * e0[j, 2]
             if (dot_e0 * dot_e0) > (L0[j] * L0[j]):
+                continue
+
+            dot_e1 = vec_cx * e1[j, 0] + vec_cy * e1[j, 1] + vec_cz * e1[j, 2]
+            if (dot_e1 * dot_e1) > (L1[j] * L1[j]):
                 continue
 
             dot_e2 = vec_cx * e2[j, 0] + vec_cy * e2[j, 1] + vec_cz * e2[j, 2]
@@ -193,8 +195,8 @@ def compute_melt_mask_implicit(
                     two_pi_t * height_frequencies[k] + phase_k
                 )
 
-            bezier.update(width, depth, height)
-            if bezier.point_in_polygon(local_y, local_z):
+            bezier.update(width,depth,height,poly_s)
+            if bezier.point_in_polygon(local_y,local_z,poly_s):
                 is_voxel_melted = True
                 break
 

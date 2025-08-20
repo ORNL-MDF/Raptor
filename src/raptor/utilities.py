@@ -132,7 +132,7 @@ class ScanPathBuilder:
         all_vectors = []
         for layer_key,layer_vectors in self.path_vector_layers.items():
             for vec in layer_vectors:
-                # not currently filtering
+                # not currently filtering --> OPTIMIZE HERE
                 vec.set_coordinate_frame()
                 all_vectors.append(vec)
         return all_vectors

@@ -8,8 +8,8 @@ from numba import int32, int64, float64, boolean
 # Define jitclass specifications
 bezier_spec = [
     ("n_points", int64),
-    ("weights", float64[:, :]),
-    ("polygon", float64[:, :]),
+    ("n_polygon_pts", int64),
+    ("weights", float64[:, :])
 ]
 
 melt_pool_spec = [
@@ -49,9 +49,9 @@ path_vector_spec = [
 class Bezier:
     def __init__(self, n_points: int64):
         self.n_points = n_points
-        n_polygon_pts = n_points + (n_points - 1)
+        self.n_polygon_pts = n_points + (n_points - 1)
 
-        self.polygon = np.empty((n_polygon_pts, 2), dtype=np.float64)
+        # self.polygon = np.empty((n_polygon_pts, 2), dtype=np.float64)
 
         t_p = np.linspace(0, 1, n_points)
         weights = np.empty((n_points, 4), dtype=np.float64)
@@ -63,8 +63,12 @@ class Bezier:
         weights[:, 2] = 3.0 * tsq * omt
         weights[:, 3] = tsq * t_p
         self.weights = weights
+    
+    
+    def get_polygon(self):
+        return np.empty((self.n_polygon_pts, 2), dtype=np.float64)
 
-    def update(self, width: float64, depth: float64, height: float64) -> None:
+    def update(self, width: float64, depth: float64, height: float64, polygon: np.ndarray) -> None:
         height_control = 4.0 / 3.0 * height
         depth_control = 4.0 / 3.0 * depth
 
@@ -93,14 +97,14 @@ class Bezier:
         # Update top half of the polygon
         for i in range(self.n_points):
             # dot product for the X coordinate
-            self.polygon[i, 0] = (
+            polygon[i, 0] = (
                 self.weights[i, 0] * p_top[0, 0]
                 + self.weights[i, 1] * p_top[1, 0]
                 + self.weights[i, 2] * p_top[2, 0]
                 + self.weights[i, 3] * p_top[3, 0]
             )
             # dot product for the Y coordinate
-            self.polygon[i, 1] = (
+            polygon[i, 1] = (
                 self.weights[i, 0] * p_top[0, 1]
                 + self.weights[i, 1] * p_top[1, 1]
                 + self.weights[i, 2] * p_top[2, 1]
@@ -111,36 +115,39 @@ class Bezier:
         for i in range(1, self.n_points):
             idx = self.n_points + i - 1
             # dot product for the X coordinate
-            self.polygon[idx, 0] = (
+            polygon[idx, 0] = (
                 self.weights[i, 0] * p_bottom[0, 0]
                 + self.weights[i, 1] * p_bottom[1, 0]
                 + self.weights[i, 2] * p_bottom[2, 0]
                 + self.weights[i, 3] * p_bottom[3, 0]
             )
             # dot product for the Y coordinate
-            self.polygon[idx, 1] = (
+            polygon[idx, 1] = (
                 self.weights[i, 0] * p_bottom[0, 1]
                 + self.weights[i, 1] * p_bottom[1, 1]
                 + self.weights[i, 2] * p_bottom[2, 1]
                 + self.weights[i, 3] * p_bottom[3, 1]
             )
 
-    def point_in_polygon(self, x: float64, y: float64) -> bool:
-        n_vertices = self.polygon.shape[0]
-        px0 = self.polygon[n_vertices - 1, 0]
-        py0 = self.polygon[n_vertices - 1, 1]
+
+
+
+
+    def point_in_polygon(self, x: float64, y: float64, polygon: np.ndarray) -> bool:
+        n_vertices = polygon.shape[0]
+        px0 = polygon[n_vertices - 1, 0]
+        py0 = polygon[n_vertices - 1, 1]
 
         is_inside = False
 
         for i in range(n_vertices):
-            px1, py1 = self.polygon[i, 0], self.polygon[i, 1]
+            px1, py1 = polygon[i, 0], polygon[i, 1]
             crosses_y = (py1 > y) != (py0 > y)
             left_of_edge = (x - px1) * (py0 - py1) < (px0 - px1) * (y - py1)
             is_inside += crosses_y and (left_of_edge != (py1 > py0))
             px0, py0 = px1, py1
 
         return (is_inside % 2) == 1
-
 
 @jitclass(melt_pool_spec)
 class MeltPool:
