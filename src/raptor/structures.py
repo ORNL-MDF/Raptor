@@ -50,9 +50,6 @@ class Bezier:
     def __init__(self, n_points: int64):
         self.n_points = n_points
         self.n_polygon_pts = n_points + (n_points - 1)
-
-        # self.polygon = np.empty((n_polygon_pts, 2), dtype=np.float64)
-
         t_p = np.linspace(0, 1, n_points)
         weights = np.empty((n_points, 4), dtype=np.float64)
         omt = 1.0 - t_p
