@@ -6,16 +6,13 @@ from typing import List, Optional
 from numba import int32, int64, float64, boolean
 
 # Define jitclass specifications
-bezier_spec = [
-    ("n_points", int64),
-    ("n_polygon_pts", int64),
-    ("weights", float64[:, :])
-]
 
 melt_pool_spec = [
     ("width_oscillations", float64[:, :]),
     ("depth_oscillations", float64[:, :]),
     ("height_oscillations", float64[:, :]),
+    ("height_shape_factor", float64),
+    ("depth_shape_factor", float64),
     ("width_max", float64),
     ("depth_max", float64),
     ("height_max", float64),
@@ -45,107 +42,6 @@ path_vector_spec = [
 ]
 
 
-@jitclass(bezier_spec)
-class Bezier:
-    def __init__(self, n_points: int64):
-        self.n_points = n_points
-        self.n_polygon_pts = n_points + (n_points - 1)
-        t_p = np.linspace(0, 1, n_points)
-        weights = np.empty((n_points, 4), dtype=np.float64)
-        omt = 1.0 - t_p
-        tsq = t_p * t_p
-        omtsq = omt * omt
-        weights[:, 0] = omtsq * omt
-        weights[:, 1] = 3.0 * t_p * omtsq
-        weights[:, 2] = 3.0 * tsq * omt
-        weights[:, 3] = tsq * t_p
-        self.weights = weights
-    
-    
-    def get_polygon(self):
-        return np.empty((self.n_polygon_pts, 2), dtype=np.float64)
-
-    def update(self, width: float64, depth: float64, height: float64, polygon: np.ndarray) -> None:
-        height_control = 4.0 / 3.0 * height
-        depth_control = 4.0 / 3.0 * depth
-
-        # Top control points
-        p_top = np.array(
-            [
-                [-width / 2.0, 0.0],
-                [-width / 4.0, height_control],
-                [width / 4.0, height_control],
-                [width / 2.0, 0.0],
-            ],
-            dtype=np.float64,
-        )
-
-        # Bottom control points
-        p_bottom = np.array(
-            [
-                [width / 2.0, 0.0],
-                [width / 4.0, -depth_control],
-                [-width / 4.0, -depth_control],
-                [-width / 2.0, 0.0],
-            ],
-            dtype=np.float64,
-        )
-
-        # Update top half of the polygon
-        for i in range(self.n_points):
-            # dot product for the X coordinate
-            polygon[i, 0] = (
-                self.weights[i, 0] * p_top[0, 0]
-                + self.weights[i, 1] * p_top[1, 0]
-                + self.weights[i, 2] * p_top[2, 0]
-                + self.weights[i, 3] * p_top[3, 0]
-            )
-            # dot product for the Y coordinate
-            polygon[i, 1] = (
-                self.weights[i, 0] * p_top[0, 1]
-                + self.weights[i, 1] * p_top[1, 1]
-                + self.weights[i, 2] * p_top[2, 1]
-                + self.weights[i, 3] * p_top[3, 1]
-            )
-
-        # Update bottom half of the polygon
-        for i in range(1, self.n_points):
-            idx = self.n_points + i - 1
-            # dot product for the X coordinate
-            polygon[idx, 0] = (
-                self.weights[i, 0] * p_bottom[0, 0]
-                + self.weights[i, 1] * p_bottom[1, 0]
-                + self.weights[i, 2] * p_bottom[2, 0]
-                + self.weights[i, 3] * p_bottom[3, 0]
-            )
-            # dot product for the Y coordinate
-            polygon[idx, 1] = (
-                self.weights[i, 0] * p_bottom[0, 1]
-                + self.weights[i, 1] * p_bottom[1, 1]
-                + self.weights[i, 2] * p_bottom[2, 1]
-                + self.weights[i, 3] * p_bottom[3, 1]
-            )
-
-
-
-
-
-    def point_in_polygon(self, x: float64, y: float64, polygon: np.ndarray) -> bool:
-        n_vertices = polygon.shape[0]
-        px0 = polygon[n_vertices - 1, 0]
-        py0 = polygon[n_vertices - 1, 1]
-
-        is_inside = False
-
-        for i in range(n_vertices):
-            px1, py1 = polygon[i, 0], polygon[i, 1]
-            crosses_y = (py1 > y) != (py0 > y)
-            left_of_edge = (x - px1) * (py0 - py1) < (px0 - px1) * (y - py1)
-            is_inside += crosses_y and (left_of_edge != (py1 > py0))
-            px0, py0 = px1, py1
-
-        return (is_inside % 2) == 1
-
 @jitclass(melt_pool_spec)
 class MeltPool:
     """
@@ -163,6 +59,8 @@ class MeltPool:
         width_max: float64,
         depth_max: float64,
         height_max: float64,
+        height_shape_factor: float64,
+        depth_shape_factor: float64,
         enable_random_phases: boolean,
     ):
         self.width_oscillations = width_oscillations
@@ -172,6 +70,9 @@ class MeltPool:
         self.width_max = width_max
         self.depth_max = depth_max
         self.height_max = height_max
+        
+        self.height_shape_factor = height_shape_factor
+        self.depth_shape_factor = depth_shape_factor
 
         self.enable_random_phases = enable_random_phases
 

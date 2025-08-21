@@ -8,7 +8,6 @@ from raptor.api import (
     compute_porosity,
     write_vtk,
 )
-from raptor.structures import Bezier
 from raptor.utilities import ScanPathBuilder
 
 # 1. Create voxel grid for the representative volume element (RVE)
@@ -55,15 +54,16 @@ melt_pool_dict = {
     "depth": (width_data, depth_scale, n_modes),
     "height": (width_data, height_scale, n_modes),
 }
+melt_pool_height_mode = 1 # ellipse
+melt_pool_depth_mode = 1 # ellipse
 
-melt_pool = create_melt_pool(melt_pool_dict, enable_random_phases=False)
+melt_pool = create_melt_pool(melt_pool_dict, melt_pool_height_mode, melt_pool_depth_mode, enable_random_phases=False)
 
-# 4. Compute porosity using Bezier curves for melt pool mask
+# 4. Compute porosity using conic section / superellipse curves for melt pool mask
 porosity = compute_porosity(
     grid,
     path_vectors,
     melt_pool,
-    Bezier(n_points=20)
 )
 
 # 5. Write porosity field to .VTI

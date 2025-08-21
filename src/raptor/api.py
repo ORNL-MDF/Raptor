@@ -7,7 +7,7 @@ from skimage import measure
 from skimage.morphology import remove_small_objects
 
 from .utilities import ScanPathBuilder
-from .structures import MeltPool, PathVector, Grid, Bezier
+from .structures import MeltPool, PathVector, Grid
 from .io import read_scan_path
 from .core import compute_melt_mask
 
@@ -81,7 +81,7 @@ def compute_spectral_components(melt_pool_data: np.ndarray, n_modes: int) -> np.
 
 
 def create_melt_pool(
-    melt_pool_dict: Dict[str, Any], enable_random_phases: bool
+    melt_pool_dict: Dict[str, Any], melt_pool_height_shape_factor: float, melt_pool_depth_shape_factor: float, enable_random_phases: bool
 ) -> MeltPool:
 
     processed_components: Dict[str, Tuple[np.ndarray, float]] = {}
@@ -131,6 +131,8 @@ def create_melt_pool(
         width_oscillations[:,0].sum(axis=0),
         depth_oscillations[:,0].sum(axis=0),
         height_oscillations[:,0].sum(axis=0),
+        melt_pool_height_shape_factor,
+        melt_pool_depth_shape_factor,
         enable_random_phases,
     )
 
@@ -138,7 +140,7 @@ def create_melt_pool(
 
 
 def compute_porosity(
-    grid: Grid, path_vectors: List[PathVector], melt_pool: MeltPool, bezier: Bezier
+    grid: Grid, path_vectors: List[PathVector], melt_pool: MeltPool
 ) -> None:
     """
     Main computation: computes porosity field.
@@ -153,7 +155,7 @@ def compute_porosity(
 
     # Warm up the main, parallelized compute kernel.
     if grid.n_voxels > 0 and path_vectors:
-        _ = compute_melt_mask(grid.voxels[0:1], melt_pool, path_vectors[0:1], bezier)
+        _ = compute_melt_mask(grid.voxels[0:1], melt_pool, path_vectors[0:1])
 
     print(f" -> JIT warmup complete ({time.time() - t_start_warmup:.8f}s).")
 
@@ -165,7 +167,7 @@ def compute_porosity(
 
     print("Running melt-mask calculation...")
     t0_run = time.time()
-    melted_mask_flat = compute_melt_mask(grid.voxels, melt_pool, path_vectors, bezier)
+    melted_mask_flat = compute_melt_mask(grid.voxels, melt_pool, path_vectors)
     t_elapsed = time.time() - t0_run
 
     n_melted = melted_mask_flat.sum()

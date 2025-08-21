@@ -1,29 +1,26 @@
 import numpy as np
 from numba import njit, prange
 from typing import List, Tuple
-from .structures import MeltPool, PathVector, Bezier
+from .structures import MeltPool, PathVector
 
 
 @njit(inline='always',fastmath=True)
-def is_inside(local_y: float, local_z: float, width:float, height:float, mode:int) -> float:
+def is_inside(local_y: float, local_z: float, width:float, height:float, shape_factor:int) -> float:
     """
     Checks if a voxel at (local_y,local_z) is inside the (half) melt pool cross section.
-    Based on the superellipsoid equation.
-    Accepts a mode which can freely vary between
-    0.5 -> ellipse
-    1 -> parabola
-    2 -> gaussian
+    Based on the superellipsoid equation:
+    (y/a)^2 + (z/h)^(1/shape_factor) = 1
+    z = h * (1 - (y/a)^2)^(shape_factor)
+    h = height or depth, depending on if local_z is positive or negative.
     """
     a = width / 2.0
     b =  np.maximum(1 - (local_y / a)**2, 0)
-    return np.abs(local_z) <= np.abs(height * np.power(b,mode))
-
+    return np.abs(local_z) <= np.abs(height * np.power(b, shape_factor))
 
 def compute_melt_mask(
     voxels: np.ndarray,
     melt_pool: MeltPool,
-    path_vectors: List[PathVector],
-    bezier: Bezier,
+    path_vectors: List[PathVector]
 ):
     """
     Unpacks jitclasses into arrays to pass to compute_melt_mask_implicit().
@@ -40,6 +37,9 @@ def compute_melt_mask(
 
     height_amplitudes = melt_pool.height_oscillations[:, 0]
     height_frequencies = melt_pool.height_oscillations[:, 1]
+
+    height_shape_factor = melt_pool.height_shape_factor
+    depth_shape_factor = melt_pool.depth_shape_factor
 
     # --- Unpack the list of PathVector objects ---
     start_points = np.array([p.start_point for p in path_vectors])
@@ -84,7 +84,8 @@ def compute_melt_mask(
         depth_frequencies,
         height_amplitudes,
         height_frequencies,
-        bezier
+        height_shape_factor,
+        depth_shape_factor
     )
 
 
@@ -112,7 +113,8 @@ def compute_melt_mask_implicit(
     depth_frequencies: np.ndarray,
     height_amplitudes: np.ndarray,
     height_frequencies: np.ndarray,
-    bezier: Bezier
+    height_shape_factor: np.float64,
+    depth_shape_factor: np.float64
 ) -> np.ndarray:
     """
     Implicit compute melt mask function.
@@ -126,7 +128,6 @@ def compute_melt_mask_implicit(
     for i in prange(n_voxels):
         vx, vy, vz = voxels[i, 0], voxels[i, 1], voxels[i, 2]
         is_voxel_melted = False
-        poly_s = bezier.get_polygon()
 
         for j in range(n_vectors):
             if (
@@ -206,11 +207,11 @@ def compute_melt_mask_implicit(
                 )
 
             if local_z > 0:
-                is_voxel_melted = is_inside(local_y,local_z,width,height,1)
+                is_voxel_melted = is_inside(local_y,local_z,width,height,height_shape_factor)
                 if is_voxel_melted:
                     break
             elif local_z < 0:
-                is_voxel_melted = is_inside(local_y,local_z,width,depth,1)
+                is_voxel_melted = is_inside(local_y,local_z,width,depth,depth_shape_factor)
                 if is_voxel_melted:
                     break
             else:
