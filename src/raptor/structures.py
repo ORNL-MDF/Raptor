@@ -170,8 +170,8 @@ class MeltPool:
         self.height_oscillations = height_oscillations
 
         self.width_max = width_max
-        self.depth_max = width_max
-        self.height_max = width_max
+        self.depth_max = depth_max
+        self.height_max = height_max
 
         self.enable_random_phases = enable_random_phases
 
@@ -215,34 +215,24 @@ class PathVector:
             self.e1 = np.array([dx / Lxy, dy / Lxy, 0.0], dtype=np.float64)
         self.e2 = np.array([0.0, 0.0, 1.0], dtype=np.float64)
 
-    def set_phases(self, melt_pool: MeltPool) -> None:
-        if melt_pool.enable_random_phases:
+    def set_melt_pool_properties(self, melt_pool: MeltPool) -> None:
+        """
+        Sets melt pool dependent properties on the vector.
+        """
+        # Setting cosine expansion phases for the vector.
+        if  melt_pool.enable_random_phases:
             size = melt_pool.width_oscillations.shape[0] - 1
             random_phase = np.random.uniform(0.0, 2.0 * np.pi, size)
             zero_phase = np.array([0.0], dtype=np.float64)
             self.phases = np.hstack((zero_phase, random_phase)).astype(np.float64)
         else:
-            self.phases = melt_pool.width_oscillations[:, 2].astype(np.float64)
+            self.phases = melt_pool.width_oscillations[:,2].astype(np.float64)
 
-    def set_bound_box(self, melt_pool: MeltPool) -> None:
-        """
-        Calculates and sets the OBB half-lengths and the AABB for this vector
-        based on the physical properties of a given MeltPool.
-        """
-        # Unpack max dimensions from the melt pool for clarity
-        width_max = melt_pool.width_max
-        depth_max = melt_pool.depth_max
-        height_max = melt_pool.height_max
-
-        # --- Calculate Oriented Bounding Box (OBB) half-lengths ---
-        self.L0 = width_max / 2.0
-        self.L1 = np.hypot(self.distance[0], self.distance[1]) / 2.0
-        self.L2 = max(height_max, depth_max) / 2.0
-
-        # --- Calculate Axis-Aligned Bounding Box (AABB) ---
+        # Setting bounding box properties for the vector.
+        # 1. --- Calculate Axis-Aligned Bounding Box (AABB) ---
+        width_max, depth_max, height_max = melt_pool.width_max, melt_pool.depth_max, melt_pool.height_max
         p_min = np.minimum(self.start_point, self.end_point)
         p_max = np.maximum(self.start_point, self.end_point)
-
         pad_xy = width_max / 2.0
         self.AABB = np.array(
             [
@@ -256,12 +246,10 @@ class PathVector:
             dtype=np.float64,
         )
 
-    def set_melt_pool_properties(self, melt_pool: MeltPool) -> None:
-        """
-        Orchestrator to set melt pool dependent properties on the vector.
-        """
-        self.set_phases(melt_pool)
-        self.set_bound_box(melt_pool)
+        # 2. --- Calculate Oriented Bounding Box (OBB) half-lengths ---
+        self.L0 = width_max / 2.0
+        self.L1 = np.hypot(p_max[0] - p_min[0], p_max[1] - p_min[1]) / 2.0
+        self.L2 = max(height_max, depth_max)
 
 
 class Grid:

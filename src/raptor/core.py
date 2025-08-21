@@ -4,6 +4,21 @@ from typing import List, Tuple
 from .structures import MeltPool, PathVector, Bezier
 
 
+@njit(inline='always',fastmath=True)
+def is_inside(local_y: float, local_z: float, width:float, height:float, mode:int) -> float:
+    """
+    Checks if a voxel at (local_y,local_z) is inside the (half) melt pool cross section.
+    Based on the superellipsoid equation.
+    Accepts a mode which can freely vary between
+    0.5 -> ellipse
+    1 -> parabola
+    2 -> gaussian
+    """
+    a = width / 2.0
+    b =  np.maximum(1 - (local_y / a)**2, 0)
+    return np.abs(local_z) <= np.abs(height * np.power(b,mode))
+
+
 def compute_melt_mask(
     voxels: np.ndarray,
     melt_pool: MeltPool,
@@ -114,8 +129,6 @@ def compute_melt_mask_implicit(
         poly_s = bezier.get_polygon()
 
         for j in range(n_vectors):
-            '''
-            TODO: Check this
             if (
                 vx < AABB[j, 0]
                 or vx > AABB[j, 1]
@@ -125,7 +138,7 @@ def compute_melt_mask_implicit(
                 or vz > AABB[j, 5]
             ):
                 continue
-            '''
+            
         
             vec_cx = vx - centroids[j, 0]
             vec_cy = vy - centroids[j, 1]
@@ -139,9 +152,6 @@ def compute_melt_mask_implicit(
             if (dot_e1 * dot_e1) > (L1[j] * L1[j]):
                 continue
 
-            dot_e2 = vec_cx * e2[j, 0] + vec_cy * e2[j, 1] + vec_cz * e2[j, 2]
-            if (dot_e2 * dot_e2) > (L2[j] * L2[j]):
-                continue
 
             dist_sqr = (
                 distances[j, 0] * distances[j, 0]
@@ -195,10 +205,18 @@ def compute_melt_mask_implicit(
                     two_pi_t * height_frequencies[k] + phase_k
                 )
 
-            bezier.update(width,depth,height,poly_s)
-            if bezier.point_in_polygon(local_y,local_z,poly_s):
-                is_voxel_melted = True
-                break
+            if local_z > 0:
+                is_voxel_melted = is_inside(local_y,local_z,width,height,1)
+                if is_voxel_melted:
+                    break
+            elif local_z < 0:
+                is_voxel_melted = is_inside(local_y,local_z,width,depth,1)
+                if is_voxel_melted:
+                    break
+            else:
+                is_voxel_melted = np.abs(local_y) < width/2.0
+                if is_voxel_melted:
+                    break
 
         melt_mask[i] = is_voxel_melted
 

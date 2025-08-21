@@ -95,14 +95,12 @@ def create_melt_pool(
     for key, (data, scale, n_modes) in melt_pool_dict.items():
         # Option A: Input data is a raw time-series [time, value]
         if data.shape[1] == 2:
-            max_dimension = data[:, 1].max()
             spectral_array = compute_spectral_components(data, n_modes)
             spectral_array[:,0] *= scale
 
         # Option B: Input data is a spectral array [amplitude, frequency, phase]
         elif data.shape[1] == 3:
             spectral_array = data.copy()
-            max_dimension = np.sum(spectral_array[:, 0])
 
         else:
             raise ValueError(
@@ -118,20 +116,21 @@ def create_melt_pool(
             )
             spectral_array = np.vstack([spectral_array, pad_array])
 
-        processed_components[key] = (spectral_array, max_dimension)
+
+        processed_components[key] = spectral_array
 
     # 3. Create the MeltPool object
-    width_oscillations, width_max = processed_components["width"]
-    depth_oscillations, depth_max = processed_components["depth"]
-    height_oscillations, height_max = processed_components["height"]
+    width_oscillations = processed_components["width"]
+    depth_oscillations = processed_components["depth"]
+    height_oscillations = processed_components["height"]
 
     melt_pool = MeltPool(
         width_oscillations,
         depth_oscillations,
         height_oscillations,
-        width_max,
-        depth_max,
-        height_max,
+        width_oscillations[:,0].sum(axis=0),
+        depth_oscillations[:,0].sum(axis=0),
+        height_oscillations[:,0].sum(axis=0),
         enable_random_phases,
     )
 
@@ -148,7 +147,7 @@ def compute_porosity(
     print("JIT Warmup...")
     t_start_warmup = time.time()
 
-    # Warm up the vecto property assignment.
+    # Warm up the vector property assignment.
     if path_vectors:
         path_vectors[0].set_melt_pool_properties(melt_pool)
 

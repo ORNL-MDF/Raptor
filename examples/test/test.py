@@ -13,7 +13,7 @@ from raptor.utilities import ScanPathBuilder
 
 # 1. Create voxel grid for the representative volume element (RVE)
 min_point = np.array([0.0, 0.0, 0.0])
-max_point = np.array([5.0e-4, 5.0e-4, 50e-6])
+max_point = np.array([5.0e-4, 5.0e-4, 5.0e-4])
 bound_box = np.array([min_point, max_point])
 voxel_resolution = 2.5e-6
 
@@ -22,9 +22,9 @@ grid = create_grid(voxel_resolution, bound_box=bound_box)
 # 2. Create path vectors through the representative volume element (RVE)
 power = 370
 velocity = 1.7
-hatch_spacing = 250e-6
+hatch_spacing = 130e-6
 layer_height = 50e-6
-rotation = 0
+rotation = 67
 scan_extension = max(max_point - min_point)
 extra_layers = 0
 
@@ -41,8 +41,6 @@ scan_path_builder = ScanPathBuilder(
 
 scan_path_builder.generate_layers()
 path_vectors = scan_path_builder.process_vectors()
-
-# print('\n'.join([f'r0:{vec.start_point} r1:{vec.end_point} t0:{vec.start_time:.8f} t1:{vec.end_time:.8f} dt:{vec.end_time - vec.start_time : .8f}' for vec in path_vectors]))
 
 # 3. Create melt pools given a width sequence
 SCRIPT_DIR = Path(__file__).resolve().parent
