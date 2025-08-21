@@ -54,6 +54,7 @@ melt_pool_dict = {
     "depth": (width_data, depth_scale, n_modes),
     "height": (width_data, height_scale, n_modes),
 }
+print(melt_pool_dict['width'])
 melt_pool_height_mode = 1 # ellipse
 melt_pool_depth_mode = 1 # ellipse
 
