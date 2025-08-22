@@ -11,20 +11,21 @@ melt_pool_data:
       type: "time_series"
       file_name: "../data/meltPoolData/ULI_v1700_theta0_widths.txt"
       nmodes: 50.
-      scale: 1.
+      scale: 1.0
 
   depth:
       type: "time_series"
       file_name: "../data/meltPoolData/ULI_v1700_theta0_widths.txt"
       nmodes: 50.
       scale: 0.71
-      shape: 1
+      shape: 1.0    # parabola
+
   height:
       type: "time_series"
       file_name: "../data/meltPoolData/ULI_v1700_theta0_widths.txt"
       nmodes: 5.
       scale: 0.45
-      shape: 2
+      shape: 2.0    # ellipse
 
 
 rve:
