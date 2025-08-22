@@ -58,7 +58,12 @@ def main() -> int:
                     filepath = melt_pool_dict[key]["file_name"]
                     scale = melt_pool_dict[key]["scale"]
                     nmodes = int(melt_pool_dict[key]["nmodes"])
-                    melt_pool_data[key] = (read_data(filepath), scale, nmodes)
+                    if key =='width':
+                        shape_factor = 2
+                        melt_pool_data[key] = (read_data(filepath), nmodes, scale, shape_factor)
+                    else:
+                        shape_factor = melt_pool_dict[key]["shape"]
+                        melt_pool_data[key] = (read_data(filepath), nmodes, scale, shape_factor)
                 except:
                     print(
                         "Error reading the specified {} {} data format.".format(
@@ -159,18 +164,11 @@ def main() -> int:
         for scan_path_file in scan_path_files:
             scan_vectors = read_scan_path(scan_path_file)
             for vector in scan_vectors:
+                vector.set_coordinate_frame()
                 all_vectors.append(vector)
 
 
-        # construct melt pools
-        width_data = read_data(melt_pool_dict["width"]["file_name"])
-        width_scale, depth_scale, height_scale = 1.0, 0.8, 0.4
-        n_modes = 50
-        melt_pool_dict = {
-            "width": (width_data, width_scale, n_modes),
-            "depth": (width_data, depth_scale, n_modes),
-            "height": (width_data, height_scale, n_modes)}        
-        melt_pool = create_melt_pool(melt_pool_dict, 1, 1, enable_random_phases)
+        melt_pool = create_melt_pool(melt_pool_data, enable_random_phases)
 
         # instantiate voxel grid
         grid = create_grid(voxel_resolution, bound_box=bounding_box)
@@ -179,8 +177,7 @@ def main() -> int:
         porosity = compute_porosity(
             grid,all_vectors,melt_pool
         )
-        print('got here')
-
+        
         # write VTK (optional)
         if vtk_dict:
             write_vtk(grid.origin, grid.resolution, porosity, vtk_file)

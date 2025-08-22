@@ -18,11 +18,13 @@ melt_pool_data:
       file_name: "../data/meltPoolData/ULI_v1700_theta0_widths.txt"
       nmodes: 50.
       scale: 0.71
+      shape: 1
   height:
       type: "time_series"
       file_name: "../data/meltPoolData/ULI_v1700_theta0_widths.txt"
       nmodes: 5.
-      scale: 0.45  
+      scale: 0.45
+      shape: 2
 
 
 rve:

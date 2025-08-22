@@ -9,13 +9,16 @@ def is_inside(local_y: float, local_z: float, width:float, height:float, shape_f
     """
     Checks if a voxel at (local_y,local_z) is inside the (half) melt pool cross section.
     Based on the superellipsoid equation:
-    (y/a)^2 + (z/h)^(1/shape_factor) = 1
-    z = h * (1 - (y/a)^2)^(shape_factor)
+
+    (y/a)^2 + (z/h)^(shape_factor) = 1
+
+    z = h * (1 - (y/a)^2)^(1/shape_factor)
+
     h = height or depth, depending on if local_z is positive or negative.
     """
     a = width / 2.0
     b =  np.maximum(1 - (local_y / a)**2, 0)
-    return np.abs(local_z) <= np.abs(height * np.power(b, shape_factor))
+    return np.abs(local_z) <= np.abs(height * (b ** (1/shape_factor)))
 
 def compute_melt_mask(
     voxels: np.ndarray,
@@ -210,12 +213,14 @@ def compute_melt_mask_implicit(
                 is_voxel_melted = is_inside(local_y,local_z,width,height,height_shape_factor)
                 if is_voxel_melted:
                     break
+            
             elif local_z < 0:
                 is_voxel_melted = is_inside(local_y,local_z,width,depth,depth_shape_factor)
                 if is_voxel_melted:
                     break
-            else:
-                is_voxel_melted = np.abs(local_y) < width/2.0
+            
+            elif local_z == 0:
+                is_voxel_melted = local_y <= width/2.0
                 if is_voxel_melted:
                     break
 
