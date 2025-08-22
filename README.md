@@ -2,11 +2,11 @@
 
 RAPTOR is a Python-based simulation tool for estimating porosity-related defects in Laser Powder Bed Fusion (LPBF) additive manufacturing processes. It uses a computationally efficient geometric approach to model the dynamic melt pool and identify regions of unmelted powder, which correspond to lack-of-fusion pores. The core of RAPTOR is a geometric model of the melt pool cross-section whose dimensions (width, depth, and height) oscillate over time. By analyzing the volume swept by this dynamic melt pool along the laser scan paths, RAPTOR generates a 3D map of the final part's porosity.
 
+Copyright (C) 2025, Oak Ridge National Laboratory
+
 ## License
 
 This project is licensed under the BSD 3-Clause [License](LICENSE).
-
-Copyright (C) 2025, Oak Ridge National Laboratory
 
 ## Contributors
 
