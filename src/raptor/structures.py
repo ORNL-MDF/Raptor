@@ -15,6 +15,7 @@ from numba.typed import List as numbaList
 from typing import List, Optional
 from numba import int32, int64, float64, boolean
 
+
 # Define jitclass specifications
 melt_pool_spec = [
     ("width_oscillations", float64[:, :]),
