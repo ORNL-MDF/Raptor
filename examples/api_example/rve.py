@@ -28,15 +28,15 @@ scan_extension = max(max_point - min_point)
 extra_layers = 0
 
 scan_path_builder = ScanPathBuilder(
-        bound_box,
-        power,
-        velocity,
-        hatch_spacing,
-        layer_height,
-        rotation,
-        scan_extension,
-        extra_layers,
-    )
+    bound_box,
+    power,
+    velocity,
+    hatch_spacing,
+    layer_height,
+    rotation,
+    scan_extension,
+    extra_layers,
+)
 
 scan_path_builder.generate_layers()
 path_vectors = scan_path_builder.process_vectors()
@@ -49,8 +49,8 @@ melt_pool_data_path = (
 width_data = read_data(melt_pool_data_path)
 width_scale, depth_scale, height_scale = 1.0, 0.8, 0.4
 n_modes = 50
-height_shape = 1 # parabola
-depth_shape = 1 # parabola
+height_shape = 1  # parabola
+depth_shape = 1  # parabola
 melt_pool_dict = {
     "width": (width_data, n_modes, width_scale, 2),
     "depth": (width_data, n_modes, depth_scale, depth_shape),

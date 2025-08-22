@@ -14,7 +14,7 @@ from .api import (
     compute_morphology,
     write_morphology,
 )
-from .io import read_data,read_scan_path
+from .io import read_data, read_scan_path
 from .structures import MeltPool
 
 
@@ -58,12 +58,22 @@ def main() -> int:
                     filepath = melt_pool_dict[key]["file_name"]
                     scale = melt_pool_dict[key]["scale"]
                     nmodes = int(melt_pool_dict[key]["nmodes"])
-                    if key =='width':
+                    if key == "width":
                         shape_factor = 2
-                        melt_pool_data[key] = (read_data(filepath), nmodes, scale, shape_factor)
+                        melt_pool_data[key] = (
+                            read_data(filepath),
+                            nmodes,
+                            scale,
+                            shape_factor,
+                        )
                     else:
                         shape_factor = melt_pool_dict[key]["shape"]
-                        melt_pool_data[key] = (read_data(filepath), nmodes, scale, shape_factor)
+                        melt_pool_data[key] = (
+                            read_data(filepath),
+                            nmodes,
+                            scale,
+                            shape_factor,
+                        )
                 except:
                     print(
                         "Error reading the specified {} {} data format.".format(
@@ -167,17 +177,14 @@ def main() -> int:
                 vector.set_coordinate_frame()
                 all_vectors.append(vector)
 
-
         melt_pool = create_melt_pool(melt_pool_data, enable_random_phases)
 
         # instantiate voxel grid
         grid = create_grid(voxel_resolution, bound_box=bounding_box)
 
         # compute porosity
-        porosity = compute_porosity(
-            grid,all_vectors,melt_pool
-        )
-        
+        porosity = compute_porosity(grid, all_vectors, melt_pool)
+
         # write VTK (optional)
         if vtk_dict:
             write_vtk(grid.origin, grid.resolution, porosity, vtk_file)

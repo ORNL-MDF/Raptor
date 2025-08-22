@@ -4,26 +4,54 @@ from typing import List, Tuple
 from .structures import MeltPool, PathVector
 
 
-@njit(inline='always',fastmath=True)
-def is_inside(local_y: float, local_z: float, width:float, height:float, shape_factor:int) -> float:
+@njit(inline="always", fastmath=True)
+def is_inside(
+    y: float,
+    z: float,
+    width: float,
+    height: float,
+    depth: float,
+    height_shape_factor: float,
+    depth_shape_factor: float,
+) -> bool:
     """
-    Checks if a voxel at (local_y,local_z) is inside the (half) melt pool cross section.
-    Based on the superellipsoid equation:
+    Checks if a point (y, z) is inside a modified Lamé curve cross-section:
+    (y/a)^2 + (|z|/b)^n <= 1
 
-    (y/a)^2 + (z/h)^(shape_factor) = 1
+    Args:
+        y (float): The y-coordinate of the point (horizontal axis).
+        z (float): The z-coordinate of the point (vertical axis).
+        width (float): The full width of the shape along the y-axis (shared).
+        height (float): The maximum height of the top half of the shape (for z > 0).
+        depth (float): The maximum depth of the bottom half of the shape (for z < 0).
+        height_shape_factor (float): The shape exponent 'n' for the top half.
+        depth_shape_factor (float): The shape exponent 'n' for the bottom half.
+            - n=2:   Ellipse
+            - n=1:   Parabola
+            - n=0.5: Bell-shaped
+            - n=10:  Box-shaped
 
-    z = h * (1 - (y/a)^2)^(1/shape_factor)
-
-    h = height or depth, depending on if local_z is positive or negative.
+    Returns:
+        bool: True if the point is inside or on the boundary, False otherwise.
     """
+
     a = width / 2.0
-    b =  np.maximum(1 - (local_y / a)**2, 0)
-    return np.abs(local_z) <= np.abs(height * (b ** (1/shape_factor)))
+
+    b_choices = (depth, height)
+    n_choices = (depth_shape_factor, height_shape_factor)
+
+    selector = int(z >= 0)
+
+    b = b_choices[selector]
+    n = n_choices[selector]
+
+    test_value = (y / a) ** 2 + (np.abs(z) / b) ** n
+
+    return test_value <= 1.0
+
 
 def compute_melt_mask(
-    voxels: np.ndarray,
-    melt_pool: MeltPool,
-    path_vectors: List[PathVector]
+    voxels: np.ndarray, melt_pool: MeltPool, path_vectors: List[PathVector]
 ):
     """
     Unpacks jitclasses into arrays to pass to compute_melt_mask_implicit().
@@ -88,7 +116,7 @@ def compute_melt_mask(
         height_amplitudes,
         height_frequencies,
         height_shape_factor,
-        depth_shape_factor
+        depth_shape_factor,
     )
 
 
@@ -117,7 +145,7 @@ def compute_melt_mask_implicit(
     height_amplitudes: np.ndarray,
     height_frequencies: np.ndarray,
     height_shape_factor: np.float64,
-    depth_shape_factor: np.float64
+    depth_shape_factor: np.float64,
 ) -> np.ndarray:
     """
     Implicit compute melt mask function.
@@ -126,7 +154,6 @@ def compute_melt_mask_implicit(
     n_voxels = voxels.shape[0]
     n_vectors = start_points.shape[0]
     n_modes = width_amplitudes.shape[0]
-    
 
     for i in prange(n_voxels):
         vx, vy, vz = voxels[i, 0], voxels[i, 1], voxels[i, 2]
@@ -142,8 +169,7 @@ def compute_melt_mask_implicit(
                 or vz > AABB[j, 5]
             ):
                 continue
-            
-        
+
             vec_cx = vx - centroids[j, 0]
             vec_cy = vy - centroids[j, 1]
             vec_cz = vz - centroids[j, 2]
@@ -155,7 +181,6 @@ def compute_melt_mask_implicit(
             dot_e1 = vec_cx * e1[j, 0] + vec_cy * e1[j, 1] + vec_cz * e1[j, 2]
             if (dot_e1 * dot_e1) > (L1[j] * L1[j]):
                 continue
-
 
             dist_sqr = (
                 distances[j, 0] * distances[j, 0]
@@ -209,20 +234,18 @@ def compute_melt_mask_implicit(
                     two_pi_t * height_frequencies[k] + phase_k
                 )
 
-            if local_z > 0:
-                is_voxel_melted = is_inside(local_y,local_z,width,height,height_shape_factor)
-                if is_voxel_melted:
-                    break
-            
-            elif local_z < 0:
-                is_voxel_melted = is_inside(local_y,local_z,width,depth,depth_shape_factor)
-                if is_voxel_melted:
-                    break
-            
-            elif local_z == 0:
-                is_voxel_melted = local_y <= width/2.0
-                if is_voxel_melted:
-                    break
+            is_voxel_melted = is_inside(
+                local_y,
+                local_z,
+                width,
+                height,
+                depth,
+                height_shape_factor,
+                depth_shape_factor,
+            )
+
+            if is_voxel_melted:
+                break
 
         melt_mask[i] = is_voxel_melted
 
