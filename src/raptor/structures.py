@@ -11,6 +11,7 @@ melt_pool_spec = [
     ("width_oscillations", float64[:, :]),
     ("depth_oscillations", float64[:, :]),
     ("height_oscillations", float64[:, :]),
+    ("width_shape_factor", float64),
     ("height_shape_factor", float64),
     ("depth_shape_factor", float64),
     ("width_max", float64),
@@ -59,6 +60,7 @@ class MeltPool:
         width_max: float64,
         depth_max: float64,
         height_max: float64,
+        width_shape_factor: float64,
         height_shape_factor: float64,
         depth_shape_factor: float64,
         enable_random_phases: boolean,
@@ -70,7 +72,7 @@ class MeltPool:
         self.width_max = width_max
         self.depth_max = depth_max
         self.height_max = height_max
-        
+
         self.height_shape_factor = height_shape_factor
         self.depth_shape_factor = depth_shape_factor
 
@@ -121,17 +123,21 @@ class PathVector:
         Sets melt pool dependent properties on the vector.
         """
         # Setting cosine expansion phases for the vector.
-        if  melt_pool.enable_random_phases:
+        if melt_pool.enable_random_phases:
             size = melt_pool.width_oscillations.shape[0] - 1
             random_phase = np.random.uniform(0.0, 2.0 * np.pi, size)
             zero_phase = np.array([0.0], dtype=np.float64)
             self.phases = np.hstack((zero_phase, random_phase)).astype(np.float64)
         else:
-            self.phases = melt_pool.width_oscillations[:,2].astype(np.float64)
+            self.phases = melt_pool.width_oscillations[:, 2].astype(np.float64)
 
         # Setting bounding box properties for the vector.
         # 1. --- Calculate Axis-Aligned Bounding Box (AABB) ---
-        width_max, depth_max, height_max = melt_pool.width_max, melt_pool.depth_max, melt_pool.height_max
+        width_max, depth_max, height_max = (
+            melt_pool.width_max,
+            melt_pool.depth_max,
+            melt_pool.height_max,
+        )
         p_min = np.minimum(self.start_point, self.end_point)
         p_max = np.maximum(self.start_point, self.end_point)
         pad_xy = width_max / 2.0

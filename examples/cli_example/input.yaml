@@ -3,27 +3,29 @@ scan_paths:
 
 parameters:
   layer_height: 50.0e-6              # (meters)
-  voxel_resolution: 5.0e-6           # (meters)
-  bezier_points_per_half: 20.        # number of bezier points
+  voxel_resolution: 2.5e-6           # (meters)
   enable_random_segment_phase: false # Default: true
 
 melt_pool_data:
   width:
       type: "time_series"
       file_name: "../data/meltPoolData/ULI_v1700_theta0_widths.txt"
-      nmodes: 10.
+      nmodes: 50.
       scale: 1.
 
   depth:
       type: "time_series"
       file_name: "../data/meltPoolData/ULI_v1700_theta0_widths.txt"
-      nmodes: 10.
-      scale: 0.7
-  hump:
+      nmodes: 50.
+      scale: 0.71
+      shape: 1
+  height:
       type: "time_series"
       file_name: "../data/meltPoolData/ULI_v1700_theta0_widths.txt"
       nmodes: 5.
-      scale: 0.3
+      scale: 0.45
+      shape: 2
+
 
 rve:
   min_point: [0.002, -500.0e-6, -500.0e-6]

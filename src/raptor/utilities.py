@@ -93,7 +93,7 @@ class ScanPathBuilder:
                 ]
             )
             self.layers[k] = [starts, ends]
-    
+
     def process_vectors(self):
         """
         Creates and processes PathVector objects from the generated layers.
@@ -104,25 +104,31 @@ class ScanPathBuilder:
         time_offset = 0.0
         rve_bound_box = np.array([self.min_point, self.max_point])
         # constructing vectors.
-        for layer_key,(layer_start,layer_end) in self.layers.items():
-            if layer_start.size==0:
+        for layer_key, (layer_start, layer_end) in self.layers.items():
+            if layer_start.size == 0:
                 self.path_vector_layers[layer_key] = []
                 continue
             active_vectors = []
             layer_time = time_offset
-            for start_xy,end_xy in zip(layer_start,layer_end):
+            for start_xy, end_xy in zip(layer_start, layer_end):
                 # defining start, end points and start, end times
-                vector_start = np.array([start_xy[0],start_xy[1],layer_key * self.layer_height])
-                vector_end = np.array([end_xy[0],end_xy[1],layer_key * self.layer_height])
+                vector_start = np.array(
+                    [start_xy[0], start_xy[1], layer_key * self.layer_height]
+                )
+                vector_end = np.array(
+                    [end_xy[0], end_xy[1], layer_key * self.layer_height]
+                )
                 vector_length = np.linalg.norm(vector_end - vector_start)
-                scan_duration = vector_length / self.scan_speed if self.scan_speed > 1e-12 else 0.0
-                if layer_key >=1 and not active_vectors:
-                    start_time = self.path_vector_layers[layer_key-1][-1].start_time
+                scan_duration = (
+                    vector_length / self.scan_speed if self.scan_speed > 1e-12 else 0.0
+                )
+                if layer_key >= 1 and not active_vectors:
+                    start_time = self.path_vector_layers[layer_key - 1][-1].start_time
                 else:
                     start_time = layer_time
                 end_time = start_time + scan_duration
                 # PathVector object instantiation
-                path_vector = PathVector(vector_start,vector_end,start_time,end_time)
+                path_vector = PathVector(vector_start, vector_end, start_time, end_time)
                 active_vectors.append(path_vector)
                 layer_time = end_time
             self.path_vector_layers[layer_key] = active_vectors
@@ -130,7 +136,7 @@ class ScanPathBuilder:
 
         # condensing and returning all vectors
         all_vectors = []
-        for layer_key,layer_vectors in self.path_vector_layers.items():
+        for layer_key, layer_vectors in self.path_vector_layers.items():
             for vec in layer_vectors:
                 # not currently filtering --> OPTIMIZE HERE
                 vec.set_coordinate_frame()

@@ -81,22 +81,22 @@ def compute_spectral_components(melt_pool_data: np.ndarray, n_modes: int) -> np.
 
 
 def create_melt_pool(
-    melt_pool_dict: Dict[str, Any], melt_pool_height_shape_factor: float, melt_pool_depth_shape_factor: float, enable_random_phases: bool
+    melt_pool_dict: Dict[str, Any], enable_random_phases: bool
 ) -> MeltPool:
 
     processed_components: Dict[str, Tuple[np.ndarray, float]] = {}
     max_modes = 0
 
     # 1. Determine the maximum number of modes required.
-    for _, _, n_modes in melt_pool_dict.values():
-        max_modes = max(max_modes, n_modes)
+    for _, nmodes, _, _ in melt_pool_dict.values():
+        max_modes = max(max_modes, nmodes)
 
     # 2. Process each component into its spectral format
-    for key, (data, scale, n_modes) in melt_pool_dict.items():
+    for key, (data, n_modes, scale, shape_factor) in melt_pool_dict.items():
         # Option A: Input data is a raw time-series [time, value]
         if data.shape[1] == 2:
             spectral_array = compute_spectral_components(data, n_modes)
-            spectral_array[:,0] *= scale
+            spectral_array[:, 0] *= scale
 
         # Option B: Input data is a spectral array [amplitude, frequency, phase]
         elif data.shape[1] == 3:
@@ -116,7 +116,6 @@ def create_melt_pool(
             )
             spectral_array = np.vstack([spectral_array, pad_array])
 
-
         processed_components[key] = spectral_array
 
     # 3. Create the MeltPool object
@@ -124,15 +123,21 @@ def create_melt_pool(
     depth_oscillations = processed_components["depth"]
     height_oscillations = processed_components["height"]
 
+    # 4. Unpack shape factors
+    width_shape_factor = melt_pool_dict["width"][-1]
+    depth_shape_factor = melt_pool_dict["depth"][-1]
+    height_shape_factor = melt_pool_dict["height"][-1]
+
     melt_pool = MeltPool(
         width_oscillations,
         depth_oscillations,
         height_oscillations,
-        width_oscillations[:,0].sum(axis=0),
-        depth_oscillations[:,0].sum(axis=0),
-        height_oscillations[:,0].sum(axis=0),
-        melt_pool_height_shape_factor,
-        melt_pool_depth_shape_factor,
+        width_oscillations[:, 0].sum(axis=0),
+        depth_oscillations[:, 0].sum(axis=0),
+        height_oscillations[:, 0].sum(axis=0),
+        width_shape_factor,
+        height_shape_factor,
+        depth_shape_factor,
         enable_random_phases,
     )
 

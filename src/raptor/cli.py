@@ -4,16 +4,17 @@ import sys
 import traceback
 import yaml
 import numpy as np
+from pathlib import Path
 
 from .api import (
-    compute_scanpath_vectors,
-    construct_meltpool,
+    create_grid,
+    create_melt_pool,
     compute_porosity,
     write_vtk,
     compute_morphology,
     write_morphology,
 )
-from .io import read_data
+from .io import read_data, read_scan_path
 from .structures import MeltPool
 
 
@@ -42,11 +43,10 @@ def main() -> int:
         scan_paths = config.get("scan_paths", {})
 
         # read simulation parameter dictionary
-        parameters = config.get("parameters", {})
-        layer_height = parameters["layer_height"]
-        n_bezier_pts_half = int(parameters["bezier_points_per_half"])
-        voxel_resolution = parameters["voxel_resolution"]
-        en_rand_ph = parameters["enable_random_segment_phase"]
+        scan_pattern_parameters = config.get("parameters", {})
+        layer_height = scan_pattern_parameters["layer_height"]
+        voxel_resolution = scan_pattern_parameters["voxel_resolution"]
+        enable_random_phases = scan_pattern_parameters["enable_random_segment_phase"]
 
         # read melt pool dictionary (time series or spectral components)
         melt_pool_dict = config.get("melt_pool_data", {})
@@ -56,9 +56,24 @@ def main() -> int:
             if datatype == "time_series":
                 try:
                     filepath = melt_pool_dict[key]["file_name"]
-                    nmodes = int(melt_pool_dict[key]["nmodes"])
                     scale = melt_pool_dict[key]["scale"]
-                    melt_pool_data[key] = (read_data(filepath), scale, nmodes)
+                    nmodes = int(melt_pool_dict[key]["nmodes"])
+                    if key == "width":
+                        shape_factor = 2
+                        melt_pool_data[key] = (
+                            read_data(filepath),
+                            nmodes,
+                            scale,
+                            shape_factor,
+                        )
+                    else:
+                        shape_factor = melt_pool_dict[key]["shape"]
+                        melt_pool_data[key] = (
+                            read_data(filepath),
+                            nmodes,
+                            scale,
+                            shape_factor,
+                        )
                 except:
                     print(
                         "Error reading the specified {} {} data format.".format(
@@ -68,8 +83,8 @@ def main() -> int:
             elif datatype == "spectral_components":
                 try:
                     filepath = melt_pool_dict[key]["file_name"]
-                    nmodes = int(melt_pool_dict[key]["nmodes"])
                     scale = melt_pool_dict[key]["scale"]
+                    nmodes = int(melt_pool_dict[key]["nmodes"])
                     print("Scaling the zeroth mode (mean) of {} spectral array.")
                     spec_array = read_data(filepath)
                     melt_pool_data[key] = (spec_array, scale, nmodes)
@@ -112,7 +127,7 @@ def main() -> int:
         if not os.path.isabs(vtk_file_name)
         else vtk_file_name
     )
-    morpholopy_file = (
+    morphology_file = (
         os.path.join(config_dir, morphology_file_name)
         if not os.path.isabs(morphology_file_name)
         else morphology_file_name
@@ -122,12 +137,11 @@ def main() -> int:
     print("\n--- Simulation Parameters ---")
     param_summary = {
         "Scan Paths": scan_path_files,
-        "Random Phases": f"{en_rand_ph}",
+        "Random Phases": f"{enable_random_phases}",
         "Layer Height": f"{layer_height:.2e} m",
         "VTK Output": vtk_file,
-        "Morphology Output": morpholopy_file,
+        "Morphology Output": morphology_file,
         "Voxel Res": f"{voxel_resolution:.2e} m",
-        "Bezier Pts/Half": n_bezier_pts_half,
     }
 
     for k, v_item in param_summary.items():
@@ -156,32 +170,31 @@ def main() -> int:
     try:
 
         # compute scan vectors
-        all_vectors = compute_scanpath_vectors(
-            scan_path_files, layer_height, bounding_box
-        )
+        all_vectors = []
+        for scan_path_file in scan_path_files:
+            scan_vectors = read_scan_path(scan_path_file)
+            for vector in scan_vectors:
+                vector.set_coordinate_frame()
+                all_vectors.append(vector)
 
-        # construct melt pools
-        melt_pool = construct_meltpool(melt_pool_data, en_rand_ph)
+        melt_pool = create_melt_pool(melt_pool_data, enable_random_phases)
+
+        # instantiate voxel grid
+        grid = create_grid(voxel_resolution, bound_box=bounding_box)
 
         # compute porosity
-        centroid, porosity = compute_porosity(
-            all_vectors,
-            voxel_resolution,
-            n_bezier_pts_half,
-            melt_pool,
-            bounding_box,
-        )
+        porosity = compute_porosity(grid, all_vectors, melt_pool)
 
         # write VTK (optional)
         if vtk_dict:
-            write_vtk(centroid, voxel_resolution, porosity, vtk_file)
+            write_vtk(grid.origin, grid.resolution, porosity, vtk_file)
 
         # write morphology metrics (optional)
         if morphology_fields:
             write_morphology
             (
                 compute_morphology(porosity, voxel_resolution, morphology_fields),
-                morpholopy_file,
+                morphology_file,
             )
 
     except FileNotFoundError as e:
