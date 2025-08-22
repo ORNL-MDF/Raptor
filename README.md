@@ -1,53 +1,76 @@
 # RAPTOR - Rapid Geometric-based Porosity Prediction for LPBF
 
-RAPTOR (Rapid Geometric-based Porosity Prediction) is a Python-based simulation tool for estimating porosity-related defects in Laser Powder Bed Fusion (LPBF) additive manufacturing processes. It uses a computationally efficient geometric approach to model the dynamic melt pool and identify regions of unmelted powder, which correspond to lack-of-fusion pores.
-
-The core of RAPTOR is a geometric model of the melt pool cross-section whose dimensions (width, depth, and height) oscillate over time. By analyzing the volume swept by this dynamic melt pool along the laser scan paths, the tool generates a 3D map of the final part's porosity.
-
-## Features
-
-*   **Geometric Melt Pool Modeling**: Models the melt pool cross-section using a modified Lamé curve. The width, depth, and height of the melt pool are dynamic, driven by a Fourier series representation derived from experimental data or other simulations.
-*   **Flexible Input**: Reads scan path data from standard text files and accepts melt pool dimension data as either raw time-series or pre-computed spectral components (amplitude, frequency, phase).
-*   **Stochastic Simulation**: Supports random phase shifts for each scan vector's melt pool oscillations, enabling the simulation of stochastic process variations.
-*   **High Performance**: Utilizes Numba for Just-In-Time (JIT) compilation and parallel execution of the core computational kernel, enabling rapid analysis of large domains.
-*   **Porosity and Morphology Analysis**:
-    *   Outputs a 3D porosity map in the binary VTK ImageData format (`.vti`), which can be visualized in software like [ParaView](https://www.paraview.org/) or [VisIt](https://visit.llnl.gov/).
-    *   Identifies individual pores and calculates their morphological properties (e.g., volume, surface area, equivalent diameter) using `scikit-image`, exporting the results to a `.csv` file.
-*   **Scan Path Generation**: Includes a utility class (`ScanPathBuilder`) to programmatically generate island or stripe scan strategies with inter-layer rotation.
+RAPTOR is a Python-based simulation tool for estimating porosity-related defects in Laser Powder Bed Fusion (LPBF) additive manufacturing processes. It uses a computationally efficient geometric approach to model the dynamic melt pool and identify regions of unmelted powder, which correspond to lack-of-fusion pores. The core of RAPTOR is a geometric model of the melt pool cross-section whose dimensions (width, depth, and height) oscillate over time. By analyzing the volume swept by this dynamic melt pool along the laser scan paths, RAPTOR generates a 3D map of the final part's porosity.
 
 ## How It Works
 
-RAPTOR predicts porosity by following a multi-step computational process:
+**RAPTOR predicts porosity by following a multi-step process:**
 
-1.  **Domain Voxelization**: A 3D bounding box, or Representative Volume Element (RVE), is defined and discretized into a uniform grid of voxels.
-2.  **Scan Path Ingestion**: The tool reads scan path data from input files, calculating the precise timing and trajectory of the laser for each vector.
-3.  **Dynamic Melt Pool Definition**: For each dimension (width, depth, height), the input time-series data is converted into a Fourier series (a sum of cosine functions). This creates a dynamic, time-dependent model of the melt pool's cross-sectional shape.
-4.  **Melt Mask Calculation**: The core of the simulation iterates through each voxel in the domain. For each scan vector that passes nearby, it calculates the exact melt pool shape at that moment in time and determines if the voxel's center falls inside it. This process is heavily accelerated with Numba.
-5.  **Porosity Prediction**: Any voxel that is not melted by the end of the simulation is flagged as porosity.
-6.  **Analysis and Output**: The final 3D porosity field is saved as a `.vti` file. If requested, the tool then identifies contiguous pore regions and computes their geometric characteristics, saving them to a `.csv` file.
+*  **Domain Voxelization**: A 3D bounding box, or Representative Volume Element (RVE), is defined and discretized into a uniform grid of voxels.
+*  **Scan Path Ingestion**: The tool reads scan path data from input files, calculating the timing and trajectory of the laser for each vector.
+*  **Dynamic Melt Pool Definition**: For each melt pool dimension (width, depth, height), the input time-series data is converted into a Fourier series (a sum of cosine functions). This creates a dynamic, time-dependent model of the melt pool's cross-sectional shape, which is modeled using modified Lamé curves. To capture stochastic process variations, a random phase shift can be applied to the Fourier series for each scan vector. 
+*  **Melt Mask Calculation**: The core of the simulation iterates through each voxel in the domain. For each scan vector that passes near the voxel, it calculates the instantaneous melt pool shape and determines if the voxel is inside the melt pool mask. This process, is executed with a high-performance parallel kernel, Just-In-Time (JIT) compiled with Numba. This enables the rapid analysis of large, industrially-relevant domains.
+*  **Porosity Prediction**: Any voxel that is not melted by the end of the simulation is flagged as porosity.
+*  **Analysis and Output**: The final 3D porosity field is saved in the binary VTK ImageData (`.vti`) format. The morphological characteristics (e.g., volume, surface area, equivalent diameter) of contiguous pore structures can be quantified using the `scikit-image` library, and saved to a `.csv` file.
 
-## Dependencies
+## Installation
 
-This script requires Python 3 (tested with Python 3.8+). The following packages are necessary:
+RAPTOR requires requires Python 3 (tested with Python 3.8+). The following Python packages are necessary:
 
-*   **NumPy**: For numerical operations.
-*   **Numba**: For JIT compilation and performance.
-*   **PyYAML**: For parsing the YAML configuration file.
-*   **VTK**: For writing the output `.vti` file.
-*   **scikit-image**: For calculating pore morphology and features.
+*   **NumPy**: For numerical operations and array manipulation.
+    ```bash
+    pip install numpy
+    ```
+*   **Numba**: For JIT compilation and performance acceleration.
+    ```bash
+    pip install numba
+    ```
+*   **PyYAML**: For reading and parsing YAML configuration files.
+    ```bash
+    pip install pyyaml
+    ```
+*   **VTK**: For writing the output porosity map in `.vti` format.
+    ```bash
+    pip install vtk
+    ```
 
-You can install all dependencies using pip. It is highly recommended to use a virtual environment (`venv` or `conda`).
+*   **scikit-image**: For calculating pore morphologies.
+    ```bash
+    pip install scikit-image
+    ```
 
-## Input Data
+You can install all dependencies using pip:
+```bash
+pip install numpy numba pyyaml vtk scikit-image
+```
+It's highly recommended to use a virtual environment (e.g., `venv` or `conda`) to manage these dependencies.
 
-RAPTOR is controlled by a single YAML configuration file.
+## Usage
 
-### 1. Configuration File (`config.yaml`)
+RAPTOR can be used in two primary ways: through its Command-Line Interface (CLI) for quick, configuration-driven simulations, or as a Python Library (API) for integration into custom scripts and more complex workflows.
 
-The YAML file specifies all simulation parameters, input file paths, and output settings.
+### 1. Command-Line Interface (CLI)
+
+The CLI is the simplest way to run a simulation. It is controlled by a single YAML configuration file that defines all inputs, parameters, and outputs.
+
+**How to Run (CLI):**
+
+1.  **Prepare Inputs**: Create scan path files, melt pool data files, and a `config.yaml` file (detailed below).
+2.  **Execute Script**: Run the following command from your terminal, providing the path to your configuration file:
+    ```bash
+    raptor path/to/your/config.yaml
+    ```
+3.  **Check Outputs**:
+    *   Progress will be printed to the console.
+    *   The 3D porosity map is saved to the `.vti` file specified in the config.
+    *   The pore morphology data is saved to the `.csv` file (if configured).
+
+#### CLI Input: The `config.yaml` File
+
+Running RAPTOR from the CLI requires a YAML configuration file to specify all parameters.
 
 **Example `config.yaml`:**
-
+```yaml
 # List of scan path files (relative to this config file's location)
 scan_paths:
   - "scan_paths/layer_01.txt"
@@ -70,7 +93,7 @@ melt_pool_data:
     file_name: "melt_pool_data/depth_timeseries.txt"
     nmodes: 10
     scale: 1.0
-    shape: 2.0          # Shape factor n for the Lame curve (n=2 is elliptical)
+    shape: 2.0          # Shape factor 'n' for the Lame curve (n=2 is elliptical)
   height:
     type: "time_series"
     file_name: "melt_pool_data/height_timeseries.txt"
@@ -96,57 +119,35 @@ output:
       - "area"
       - "equivalent_diameter_area"
       - "extent"
-      
-### 2. Scan Path Files
-
-Each file in `scan_paths` should be a space-delimited text file. **The first line is treated as a header and is skipped.**
-
-**Format per line:**
-`mode x y z power parameter`
-
-*   `mode`: Integer (`0` for line raster, `1` for point source/delay).
-*   `x, y, z`: Float endpoint coordinates in meters.
-*   `power`: Float laser power in Watts (for information, not used in the geometry model).
-*   `parameter`: Float (`mode=0`: scanning speed in m/s; `mode=1`: duration in seconds).
-
-**Example `layer_01.txt`:**
-```
-# Mode X_end(m) Y_end(m) Z_end(m) Power(W) Speed(m/s)_or_Time(s)
-1 0.000 0.000 0.000 0   0.00001
-0 0.001 0.000 0.000 200 0.8
-0 0.001 0.0001 0.000 200 0.8
 ```
 
-### 3. Melt Pool Data Files
+#### Configuration Details:
+* **Scan Path Files**: Each file in `scan_paths` should be a space-delimited text file. **The first line is treated as a header and is skipped.**
+   **Format per line:**
+   `mode x y z power parameter`
+   
+   *   `mode`: Integer (`0` for line raster, `1` for point source/delay).
+   *   `x, y, z`: Float endpoint coordinates in meters.
+   *   `power`: Float laser power in Watts (for information, not used in the geometry model).
+   *   `parameter`: Float (`mode=0`: scanning speed in m/s; `mode=1`: duration in seconds).
+   
+   **Example `layer_01.txt`:**
+   ```
+   # Mode X_end(m) Y_end(m) Z_end(m) Power(W) Speed(m/s)_or_Time(s)
+   1 0.000 0.000 0.000 0   0.00001
+   0 0.001 0.000 0.000 200 0.8
+   0 0.001 0.0001 0.000 200 0.8
+   ```
 
-These files provide the data for the `melt_pool_data` section of the config.
+* **Melt Pool Data Files**: These files provide the data for the `melt_pool_data` section of the config.
+   *   If `type: "time_series"`, the file should be a two-column text or CSV file: `[time, value]`.
+   *   If `type: "spectral_components"`, the file should be a three-column text or CSV file: `[amplitude, frequency, phase]`.
 
-*   If `type: "time_series"`, the file should be a two-column text or CSV file: `[time, value]`.
-*   If `type: "spectral_components"`, the file should be a three-column text or CSV file: `[amplitude, frequency, phase]`.
+### 2. Python Library (API)
 
-## How to Run
+For advanced use cases, RAPTOR's core functions can be imported directly into your Python scripts. This allows for programmatic parameter studies, custom workflows, and integration with other tools. An example is provided in examples/api_example/rve.py.
 
-# Using RAPTOR from the command line (CLI)
-
-1.  **Prepare Inputs**: Create your scan path files, melt pool data files, and a `config.yaml` file to orchestrate the simulation.
-2.  **Activate Environment**: Activate the Python virtual environment where the dependencies are installed.
-3.  **Execute Script**: Run the script from the command line, providing the path to your configuration file. Assuming the entry point is `raptor`:
-    ```bash
-    raptor path/to/your/config.yaml
-    ```
-4.  **Check Outputs**:
-    *   Progress will be printed to the console.
-    *   The 3D porosity map will be saved to the `.vti` file specified in the config.
-    *   If configured, the pore morphology data will be saved to the `.csv` file.
-
-# Using RAPTOR as a Python Library (API)
-In addition to the command-line interface, RAPTOR is designed to be used as a Python library. You can import its functions into your own scripts to build custom workflows, perform parameter studies, or integrate porosity prediction into a larger simulation chain.
-
-An example demonstrating this usage is provided in `examples/api_example/rve.py`.
-
-### API Usage Example
-
-The following is a breakdown of the `rve.py` example, which shows the main steps for running a simulation programmatically.
+The following is a breakdown of the main steps for running a simulation programmatically.
 
 #### Step 1: Create the Voxel Grid
 First, define the simulation domain (RVE) by specifying its minimum and maximum coordinates and the desired voxel resolution. The `create_grid` function then generates the grid object.
@@ -266,9 +267,7 @@ The project is organized into several modules:
 ## License
 
 This project is licensed under the BSD 3-Clause [License](LICENSE).
-
-Copyright (C) 2025, Oak Ridge National Laboratory    
-All rights reserved.
+Copyright (C) 2025, Oak Ridge National Laboratory
 
 ## Contributors
 
