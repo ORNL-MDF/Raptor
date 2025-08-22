@@ -7,7 +7,7 @@ RAPTOR is a Python-based simulation tool for estimating porosity-related defects
 **RAPTOR predicts porosity by following a multi-step process:**
 
 *  **Domain Voxelization**: A 3D bounding box, or Representative Volume Element (RVE), is defined and discretized into a uniform grid of voxels.
-*  **Scan Path Ingestion**: The tool reads scan path data from input files, calculating the timing and trajectory of the laser for each vector.
+*  **Scan Path Ingestion**: Scan path data is used to calculating the timing and trajectory for each laser vector.
 *  **Dynamic Melt Pool Definition**: For each melt pool dimension (width, depth, height), the input time-series data is converted into a Fourier series (a sum of cosine functions). This creates a dynamic, time-dependent model of the melt pool's cross-sectional shape, which is modeled using modified Lamé curves. To capture stochastic process variations, a random phase shift can be applied to the Fourier series for each scan vector. 
 *  **Melt Mask Calculation**: The core of the simulation iterates through each voxel in the domain. For each scan vector that passes near the voxel, it calculates the instantaneous melt pool shape and determines if the voxel is inside the melt pool mask. This process, is executed with a high-performance parallel kernel, Just-In-Time (JIT) compiled with Numba. This enables the rapid analysis of large, industrially-relevant domains.
 *  **Porosity Prediction**: Any voxel that is not melted by the end of the simulation is flagged as porosity.
@@ -272,4 +272,6 @@ Copyright (C) 2025, Oak Ridge National Laboratory
 ## Contributors
 
 *   Vamsi Subraveti, Vanderbilt University, vamsi.r.subraveti@vanderbilt.edu
-*   John Coleman, ORNL, colemanjs@ornl.gov
+*   John Coleman, Oak Ridge National Laboratory, colemanjs@ornl.gov
+*   Çağlar Oskay, Vanderbilt University, caglar.oskay@vanderbilt.edu
+*   Alex Plotkowski, Oak Ridge National Laboratory, plotkowskiaj@ornl.gov
