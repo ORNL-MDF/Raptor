@@ -1,0 +1,49 @@
+scan_paths:
+  - "../data/scanPathData/scanPath_ULI"
+
+parameters:
+  layer_height: 50.0e-6              # (meters)
+  voxel_resolution: 5.0e-6           # (meters)
+  enable_random_segment_phase: false # Default: true
+
+melt_pool_data:
+  width:
+      type: "time_series"
+      file_name: "../data/meltPoolData/ULI_v1700_theta0_widths.txt"
+      nmodes: 50.
+      scale: 1.0
+
+  depth:
+      type: "time_series"
+      file_name: "../data/meltPoolData/ULI_v1700_theta0_widths.txt"
+      nmodes: 50.
+      scale: 0.71
+      shape: 1.0    # parabola
+
+  height:
+      type: "time_series"
+      file_name: "../data/meltPoolData/ULI_v1700_theta0_widths.txt"
+      nmodes: 5.
+      scale: 0.45
+      shape: 2.0    # ellipse
+
+
+rve:
+  min_point: [0.002, -500.0e-6, -500.0e-6]
+  max_point: [0.006, 500.0e-6, 500.0e-6]
+
+output:
+  vtk:
+    file_name: "ULI_porosity.vti"
+  morphology:
+    file_name: "ULI_morphology.csv"
+    fields:
+    #  - "label"
+    #  - "bbox"
+    #  - "area"
+    #  - "area_bbox"
+    #  - "area_filled"
+    #  - "centroid"
+    #  - "equivalent_diameter_area"
+    #  - "euler_number"
+    #  - "extent"
