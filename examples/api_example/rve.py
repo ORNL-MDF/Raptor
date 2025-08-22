@@ -14,7 +14,7 @@ from raptor.utilities import ScanPathBuilder
 min_point = np.array([0.0, 0.0, 0.0])
 max_point = np.array([5.0e-4, 5.0e-4, 5.0e-4])
 bound_box = np.array([min_point, max_point])
-voxel_resolution = 2.5e-6
+voxel_resolution = 5.0e-6
 
 grid = create_grid(voxel_resolution, bound_box=bound_box)
 
@@ -47,16 +47,23 @@ melt_pool_data_path = (
     SCRIPT_DIR / ".." / "data" / "meltPoolData" / "ULI_v1700_theta0_widths.txt"
 )
 width_data = read_data(melt_pool_data_path)
-width_scale, depth_scale, height_scale = 1.0, 0.8, 0.4
 n_modes = 50
-height_shape = 1  # parabola
-depth_shape = 1  # parabola
+
+# scale melt pool data by constant factor
+width_scale = 1.0
+depth_scale = 0.8
+height_scale = 0.4
+
+# assign shape to melt pool and cap (1 = parabola, 2 = ellipse)
+width_shape = 2     # placeholder
+height_shape = 1
+depth_shape = 1
+
 melt_pool_dict = {
-    "width": (width_data, n_modes, width_scale, 2),
+    "width": (width_data, n_modes, width_scale, width_shape),
     "depth": (width_data, n_modes, depth_scale, depth_shape),
     "height": (width_data, n_modes, height_scale, height_shape),
 }
-
 
 melt_pool = create_melt_pool(melt_pool_dict, enable_random_phases=False)
 
