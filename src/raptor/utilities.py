@@ -108,6 +108,7 @@ class ScanPathBuilder:
         """
         Creates and processes PathVector objects from the generated layers.
         """
+
         if not self.layers.keys():
             print("No layers generated. Aborting.")
             return
