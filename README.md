@@ -13,6 +13,19 @@ RAPTOR is a Python-based simulation tool for estimating porosity-related defects
 *  **Porosity Prediction**: Any voxel that is not melted by the end of the simulation is flagged as porosity.
 *  **Analysis and Output**: The final 3D porosity field is saved in the binary VTK ImageData (`.vti`) format. The morphological characteristics (e.g., volume, surface area, equivalent diameter) of contiguous pore structures can be quantified using the `scikit-image` library, and saved to a `.csv` file.
 
+## License
+
+This project is licensed under the BSD 3-Clause [License](LICENSE).
+
+Copyright (C) 2025, Oak Ridge National Laboratory
+
+## Contributors
+
+*   Vamsi Subraveti, Vanderbilt University, vamsi.r.subraveti@vanderbilt.edu
+*   John Coleman, Oak Ridge National Laboratory, colemanjs@ornl.gov
+*   Çağlar Oskay, Vanderbilt University, caglar.oskay@vanderbilt.edu
+*   Alex Plotkowski, Oak Ridge National Laboratory, plotkowskiaj@ornl.gov
+
 ## Installation
 
 RAPTOR requires requires Python 3 (tested with Python 3.8+). The following Python packages are necessary:
@@ -46,6 +59,15 @@ pip install numpy numba pyyaml vtk scikit-image
 It's highly recommended to use a virtual environment (e.g., `venv` or `conda`) to manage these dependencies.
 
 ## Usage
+
+The project is organized into several modules:
+
+*   `cli.py`: Handles command-line argument parsing and manages the main simulation workflow.
+*   `api.py`: Provides high-level functions for creating the grid, melt pool, running the simulation, and writing output files.
+*   `core.py`: Contains the core Numba-accelerated functions for calculating the melt mask.
+*   `structures.py`: Defines the main data structures for the simulation (`Grid`, `MeltPool`, `PathVector`).
+*   `io.py`: Contains functions for reading and parsing input files (scan paths, melt pool data).
+*   `utilities.py`: Includes helper classes, such as the `ScanPathBuilder` for generating scan strategies.
 
 RAPTOR can be used in two primary ways: through its Command-Line Interface (CLI) for quick, configuration-driven simulations, or as a Python Library (API) for integration into custom scripts and more complex workflows.
 
@@ -252,26 +274,3 @@ from raptor.api import write_vtk
 # 5. Write porosity field to .VTI
 write_vtk(grid.origin, grid.resolution, porosity, "rve.vti")
 ```
-
-## Code Structure
-
-The project is organized into several modules:
-
-*   `cli.py`: Handles command-line argument parsing and manages the main simulation workflow.
-*   `api.py`: Provides high-level functions for creating the grid, melt pool, running the simulation, and writing output files.
-*   `core.py`: Contains the core Numba-accelerated functions for calculating the melt mask.
-*   `structures.py`: Defines the main data structures for the simulation (`Grid`, `MeltPool`, `PathVector`).
-*   `io.py`: Contains functions for reading and parsing input files (scan paths, melt pool data).
-*   `utilities.py`: Includes helper classes, such as the `ScanPathBuilder` for generating scan strategies.
-
-## License
-
-This project is licensed under the BSD 3-Clause [License](LICENSE).
-Copyright (C) 2025, Oak Ridge National Laboratory
-
-## Contributors
-
-*   Vamsi Subraveti, Vanderbilt University, vamsi.r.subraveti@vanderbilt.edu
-*   John Coleman, Oak Ridge National Laboratory, colemanjs@ornl.gov
-*   Çağlar Oskay, Vanderbilt University, caglar.oskay@vanderbilt.edu
-*   Alex Plotkowski, Oak Ridge National Laboratory, plotkowskiaj@ornl.gov
