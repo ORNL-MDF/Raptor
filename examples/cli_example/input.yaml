@@ -3,7 +3,7 @@ scan_paths:
 
 parameters:
   layer_height: 50.0e-6              # (meters)
-  voxel_resolution: 2.5e-6           # (meters)
+  voxel_resolution: 5.0e-6           # (meters)
   enable_random_segment_phase: false # Default: true
 
 melt_pool_data:
