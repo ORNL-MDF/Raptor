@@ -1,6 +1,6 @@
 # RAPTOR - Rapid Geometric-based Porosity Prediction for LPBF
 
-RAPTOR is a Python-based simulation tool for estimating porosity-related defects in Laser Powder Bed Fusion (LPBF) additive manufacturing processes. It uses a computationally efficient geometric approach to model the dynamic melt pool and identify regions of unmelted powder, which correspond to lack-of-fusion pores. The core of RAPTOR is a geometric model of the melt pool cross-section whose dimensions (width, depth, and height) oscillate over time. By analyzing the volume swept by this dynamic melt pool along the laser scan paths, RAPTOR generates a 3D map of the final part's porosity.
+RAPTOR is a Python-based simulation tool for estimating porosity-related defects in Laser Powder Bed Fusion (LPBF) additive manufacturing processes. It uses a computationally efficient geometric approach to model the dynamic melt pool and identify regions of unmelted material, which correspond to lack-of-fusion pores. The core of RAPTOR is a geometric model of the melt pool cross-section whose dimensions (width, depth, and height) oscillate over time. By analyzing the volume swept by this dynamic melt pool along the laser scan paths, RAPTOR generates a 3D map of the final part's porosity.
 
 ## License
 
@@ -255,7 +255,7 @@ With the grid, path vectors, and melt pool defined, call the main compute_porosi
 ```python
 from raptor.api import compute_porosity
 
-# 4. Compute porosity using conic section / superellipse curves for melt pool mask
+# 4. Compute porosity using melt pool mask
 porosity = compute_porosity(
     grid,
     path_vectors,
