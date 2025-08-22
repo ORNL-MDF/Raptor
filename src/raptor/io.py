@@ -2,7 +2,7 @@ import os
 import numpy as np
 from typing import List, Tuple
 
-from .structures import PathSegment, PathVector
+from .structures import PathVector
 
 
 def read_data(fname: str) -> np.ndarray:
@@ -18,20 +18,19 @@ def read_data(fname: str) -> np.ndarray:
     return np.loadtxt(fname, delimiter=",", dtype=np.float32)
 
 
-def read_scan_path(fname: str) -> Tuple[List[PathSegment], List[PathVector]]:
+def read_scan_path(fname: str) -> List[PathVector]:
     """
     Reads scan path data from a file.
     """
-    segments: List[PathSegment] = []
-    segment_mode: List[int] = []
-    segment_position: List[np.ndarray] = []
-    segment_parameter: List[float] = []
+    path_vector_mode: List[int] = []
+    path_vector_position: List[np.ndarray] = []
+    path_vector_parameter: List[float] = []
     if not os.path.exists(fname):
         raise FileNotFoundError(f"Scan path file not found: {fname}")
 
     with open(fname, "r") as f:
         try:
-            next(f)  # Skip header line
+            next(f)
         except StopIteration:
             return []
 
@@ -44,54 +43,48 @@ def read_scan_path(fname: str) -> Tuple[List[PathSegment], List[PathVector]]:
             mode = int(float(m_str))
             position = np.array([float(x_str), float(y_str), float(z_str)])
             parameter = float(pr_str)
-            segment_mode.append(mode)
-            segment_position.append(position)
-            segment_parameter.append(parameter)
-            try:
-                segment = PathSegment(
-                    mode=np.int32(m_str),
-                    position=np.array(
-                        [float(x_str), float(y_str), float(z_str)], dtype=np.float64
-                    ),
-                    power=float(p_str),
-                    parameter=float(pr_str),
-                )
-                segments.append(segment)
-            except ValueError:
-                continue
+            path_vector_mode.append(mode)
+            path_vector_position.append(position)
+            path_vector_parameter.append(parameter)
 
-    segment_time: List[float] = []
+    path_vector_time: List[float] = []
     start_t: List[float] = []
     end_t: List[float] = []
     start_pos: List[np.ndarray] = []
     end_pos: List[np.ndarray] = []
 
-    if segment_mode[0] == 1:
-        segment_time.append(segment_parameter[0])
+    if path_vector_mode[0] == 1:
+        path_vector_time.append(path_vector_parameter[0])
     else:
-        segment_time.append(0.0)
-    for i in range(1, len(segment_mode)):
+        path_vector_time.append(0.0)
+    for i in range(1, len(path_vector_mode)):
         i_prev = i - 1
-        if segment_mode[i] == 1:
-            dt = segment_parameter[i]
+        if path_vector_mode[i] == 1:
+            dt = path_vector_parameter[i]
         else:
-            dist = np.linalg.norm(segment_position[i] - segment_position[i_prev])
-            dt = dist / segment_parameter[i] if segment_parameter[i] > 1e-12 else 0.0
-        segment_time.append(segment_time[i_prev] + dt)
+            dist = np.linalg.norm(
+                path_vector_position[i] - path_vector_position[i_prev]
+            )
+            dt = (
+                dist / path_vector_parameter[i]
+                if path_vector_parameter[i] > 1e-12
+                else 0.0
+            )
+        path_vector_time.append(path_vector_time[i_prev] + dt)
 
-    for i in range(len(segment_time)):
-        if segment_mode[i] == 0:
+    for i in range(len(path_vector_time)):
+        if path_vector_mode[i] == 0:
             if i == 0:
                 print("exposure on first segment. skipping.")
                 continue
-            start_pos.append(segment_position[i - 1].copy())
-            end_pos.append(segment_position[i].copy())
-            start_t.append(segment_time[i - 1])
-            end_t.append(segment_time[i])
+            start_pos.append(path_vector_position[i - 1].copy())
+            end_pos.append(path_vector_position[i].copy())
+            start_t.append(path_vector_time[i - 1])
+            end_t.append(path_vector_time[i])
 
-    active_vectors = []
+    path_vectors = []
     for sc, ec, st, et in zip(start_pos, end_pos, start_t, end_t):
         vec = PathVector(sc, ec, st, et)
-        active_vectors.append(vec)
+        path_vectors.append(vec)
 
-    return active_vectors
+    return path_vectors

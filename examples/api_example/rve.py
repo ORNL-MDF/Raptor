@@ -1,66 +1,78 @@
 import numpy as np
+from pathlib import Path
 from raptor.io import read_data
 from raptor.api import (
-    generate_scanpaths,
-    construct_meltpool,
+    create_path_vectors,
+    create_melt_pool,
+    create_grid,
     compute_porosity,
     write_vtk,
 )
+from raptor.utilities import ScanPathBuilder
 
-"""
-This script is a backbone for the api usage of Raptor to generate RVE ensembles.
-Loosely, the procedure can be broken down as follows:
- 1. Define scan strategy (RVE size, hatch spacing, layer thickness ...)
- 2. Define melt pool from a data source
- 3. Compute defect structures
- 4. Output desired data
-"""
+# 1. Create voxel grid for the representative volume element (RVE)
+min_point = np.array([0.0, 0.0, 0.0])
+max_point = np.array([5.0e-4, 5.0e-4, 5.0e-4])
+bound_box = np.array([min_point, max_point])
+voxel_resolution = 5.0e-6
 
-# 1. Defining RVE parameters; scan strategy is
-rvedims = np.array([500e-6, 500e-6, 500e-6])  # 0.5 mm edge cube.
-power = 370  # Laser power (W)
-velocity = 1.7  # Laser velocity (m/s)
-hatch = 130e-6  # Hatch spacing (m)
-layer_thickness = 30e-6  # Layer height (m)
-rotation = 67  # Inter-layer rotation (degrees)
-overhang_hatch = 500e-6  # Distance from edge of RVE
-# that scanpaths are extended(m)
-additional_layers = 7  # Additional layers built past
-# zmax of RVE(none)
-voxel_res = 5.0e-6  # Voxel resolution (m)
-n_bezier = 20  # Number of points used in Bezier curve evaluaton
-# Passing in a dummy filename since we won't write any files in this example.
-ssb = generate_scanpaths(
-    rvedims,
+grid = create_grid(voxel_resolution, bound_box=bound_box)
+
+# 2. Create path vectors through the representative volume element (RVE)
+power = 370
+velocity = 1.7
+hatch_spacing = 130e-6
+layer_height = 50e-6
+rotation = 67
+scan_extension = max(max_point - min_point)
+extra_layers = 0
+
+scan_path_builder = ScanPathBuilder(
+    bound_box,
     power,
     velocity,
-    hatch,
-    layer_thickness,
+    hatch_spacing,
+    layer_height,
     rotation,
-    overhang_hatch,
-    additional_layers,
-    "foo",
+    scan_extension,
+    extra_layers,
 )
-# All vectors available for RVE
-ssb.construct_vectors()
-# Downselect and compute local times
-active_vectors = ssb.process_vectors()
 
-# 2. Defining melt pool from data
-mp_datapath = "../data/meltPoolData/ULI_v1700_theta0_widths.txt"
-width_data = read_data(mp_datapath)
-dw, hw = 0.8, 0.4
-# Defining the cap and depth as the same here; will get rescaled in construct_meltpool
-nmodes = 2
-mp_data_dict = {
-    "width": (width_data, 1, nmodes),
-    "depth": (width_data, dw, nmodes),
-    "hump": (width_data, hw, int(nmodes / 2)),
-}
-mp = construct_meltpool(mp_data_dict, en_rand_ph=True)
-# Compute porosity
-origin, porosity = compute_porosity(
-    active_vectors, voxel_res, n_bezier, mp, ssb.rveBoundBox
+scan_path_builder.generate_layers()
+path_vectors = scan_path_builder.process_vectors()
+
+# 3. Create melt pools given a width sequence
+SCRIPT_DIR = Path(__file__).resolve().parent
+melt_pool_data_path = (
+    SCRIPT_DIR / ".." / "data" / "meltPoolData" / "ULI_v1700_theta0_widths.txt"
 )
-# Write vti
-write_vtk(origin, voxel_res, porosity, "rve.vti")
+width_data = read_data(melt_pool_data_path)
+n_modes = 50
+
+# scale melt pool data by constant factor
+width_scale = 1.0
+depth_scale = 0.8
+height_scale = 0.4
+
+# assign shape to melt pool and cap (1 = parabola, 2 = ellipse)
+width_shape = 2  # placeholder
+height_shape = 1
+depth_shape = 1
+
+melt_pool_dict = {
+    "width": (width_data, n_modes, width_scale, width_shape),
+    "depth": (width_data, n_modes, depth_scale, depth_shape),
+    "height": (width_data, n_modes, height_scale, height_shape),
+}
+
+melt_pool = create_melt_pool(melt_pool_dict, enable_random_phases=False)
+
+# 4. Compute porosity using conic section / superellipse curves for melt pool mask
+porosity = compute_porosity(
+    grid,
+    path_vectors,
+    melt_pool,
+)
+
+# 5. Write porosity field to .VTI
+write_vtk(grid.origin, grid.resolution, porosity, "rve.vti")
