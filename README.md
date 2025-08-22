@@ -19,7 +19,7 @@ This project is licensed under the BSD 3-Clause [License](LICENSE).
 
 *  **Domain Voxelization**: A 3D bounding box, or Representative Volume Element (RVE), is defined and discretized into a uniform grid of voxels.
 *  **Scan Path Ingestion**: Scan path data is used to calculating the timing and trajectory for each laser vector.
-*  **Dynamic Melt Pool Definition**: For each melt pool dimension (width, depth, height), the input time-series data is converted into a Fourier series (a sum of cosine functions). This creates a dynamic, time-dependent model of the melt pool's cross-sectional shape, which is modeled using modified Lamé curves. To capture stochastic process variations, a random phase shift can be applied to the Fourier series for each scan vector. 
+*  **Dynamic Melt Pool Definition**: For each melt pool dimension (width, depth, height), the input time-series data is converted into a Fourier series (a sum of cosine functions). This creates a dynamic, time-dependent model of the melt pool's cross-sectional shape, which is modeled using modified Lamé curves. To capture stochastic process variations, a random phase shift can be applied to the Fourier series for each scan vector.
 *  **Melt Mask Calculation**: The core of the simulation iterates through each voxel in the domain. For each scan vector that passes near the voxel, it calculates the instantaneous melt pool shape and determines if the voxel is inside the melt pool mask. This process, is executed with a high-performance parallel kernel, Just-In-Time (JIT) compiled with Numba. This enables the rapid analysis of large, industrially-relevant domains.
 *  **Porosity Prediction**: Any voxel that is not melted by the end of the simulation is flagged as porosity.
 *  **Analysis and Output**: The final 3D porosity field is saved in the binary VTK ImageData (`.vti`) format. The morphological characteristics (e.g., volume, surface area, equivalent diameter) of contiguous pore structures can be quantified using the `scikit-image` library, and saved to a `.csv` file.
@@ -145,12 +145,12 @@ output:
 * **Scan Path Files**: Each file in `scan_paths` should be a space-delimited text file. **The first line is treated as a header and is skipped.**
    **Format per line:**
    `mode x y z power parameter`
-   
+
    *   `mode`: Integer (`0` for line raster, `1` for point source/delay).
    *   `x, y, z`: Float endpoint coordinates in meters.
    *   `power`: Float laser power in Watts (for information, not used in the geometry model).
    *   `parameter`: Float (`mode=0`: scanning speed in m/s; `mode=1`: duration in seconds).
-   
+
    **Example `layer_01.txt`:**
    ```
    # Mode X_end(m) Y_end(m) Z_end(m) Power(W) Speed(m/s)_or_Time(s)
