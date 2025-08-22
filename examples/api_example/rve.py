@@ -55,7 +55,7 @@ depth_scale = 0.8
 height_scale = 0.4
 
 # assign shape to melt pool and cap (1 = parabola, 2 = ellipse)
-width_shape = 2     # placeholder
+width_shape = 2  # placeholder
 height_shape = 1
 depth_shape = 1
 
