@@ -2,17 +2,6 @@
 
 RAPTOR is a Python-based simulation tool for estimating porosity-related defects in Laser Powder Bed Fusion (LPBF) additive manufacturing processes. It uses a computationally efficient geometric approach to model the dynamic melt pool and identify regions of unmelted powder, which correspond to lack-of-fusion pores. The core of RAPTOR is a geometric model of the melt pool cross-section whose dimensions (width, depth, and height) oscillate over time. By analyzing the volume swept by this dynamic melt pool along the laser scan paths, RAPTOR generates a 3D map of the final part's porosity.
 
-## How It Works
-
-**RAPTOR predicts porosity by following a multi-step process:**
-
-*  **Domain Voxelization**: A 3D bounding box, or Representative Volume Element (RVE), is defined and discretized into a uniform grid of voxels.
-*  **Scan Path Ingestion**: Scan path data is used to calculating the timing and trajectory for each laser vector.
-*  **Dynamic Melt Pool Definition**: For each melt pool dimension (width, depth, height), the input time-series data is converted into a Fourier series (a sum of cosine functions). This creates a dynamic, time-dependent model of the melt pool's cross-sectional shape, which is modeled using modified Lamé curves. To capture stochastic process variations, a random phase shift can be applied to the Fourier series for each scan vector. 
-*  **Melt Mask Calculation**: The core of the simulation iterates through each voxel in the domain. For each scan vector that passes near the voxel, it calculates the instantaneous melt pool shape and determines if the voxel is inside the melt pool mask. This process, is executed with a high-performance parallel kernel, Just-In-Time (JIT) compiled with Numba. This enables the rapid analysis of large, industrially-relevant domains.
-*  **Porosity Prediction**: Any voxel that is not melted by the end of the simulation is flagged as porosity.
-*  **Analysis and Output**: The final 3D porosity field is saved in the binary VTK ImageData (`.vti`) format. The morphological characteristics (e.g., volume, surface area, equivalent diameter) of contiguous pore structures can be quantified using the `scikit-image` library, and saved to a `.csv` file.
-
 ## License
 
 This project is licensed under the BSD 3-Clause [License](LICENSE).
@@ -25,6 +14,17 @@ Copyright (C) 2025, Oak Ridge National Laboratory
 *   John Coleman, Oak Ridge National Laboratory, colemanjs@ornl.gov
 *   Çağlar Oskay, Vanderbilt University, caglar.oskay@vanderbilt.edu
 *   Alex Plotkowski, Oak Ridge National Laboratory, plotkowskiaj@ornl.gov
+
+## How It Works
+
+**RAPTOR predicts porosity by following a multi-step process:**
+
+*  **Domain Voxelization**: A 3D bounding box, or Representative Volume Element (RVE), is defined and discretized into a uniform grid of voxels.
+*  **Scan Path Ingestion**: Scan path data is used to calculating the timing and trajectory for each laser vector.
+*  **Dynamic Melt Pool Definition**: For each melt pool dimension (width, depth, height), the input time-series data is converted into a Fourier series (a sum of cosine functions). This creates a dynamic, time-dependent model of the melt pool's cross-sectional shape, which is modeled using modified Lamé curves. To capture stochastic process variations, a random phase shift can be applied to the Fourier series for each scan vector. 
+*  **Melt Mask Calculation**: The core of the simulation iterates through each voxel in the domain. For each scan vector that passes near the voxel, it calculates the instantaneous melt pool shape and determines if the voxel is inside the melt pool mask. This process, is executed with a high-performance parallel kernel, Just-In-Time (JIT) compiled with Numba. This enables the rapid analysis of large, industrially-relevant domains.
+*  **Porosity Prediction**: Any voxel that is not melted by the end of the simulation is flagged as porosity.
+*  **Analysis and Output**: The final 3D porosity field is saved in the binary VTK ImageData (`.vti`) format. The morphological characteristics (e.g., volume, surface area, equivalent diameter) of contiguous pore structures can be quantified using the `scikit-image` library, and saved to a `.csv` file.
 
 ## Installation
 
