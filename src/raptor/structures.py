@@ -1,3 +1,13 @@
+# =============================================================================
+# Copyright (c) 2025 Oak Ridge National Laboratory
+#
+# All rights reserved.
+#
+# This file is part of Raptor.
+#
+# For details, see the top-level LICENSE file at:
+# https://github.com/ORNL-MDF/Raptor/LICENSE
+# =============================================================================
 from dataclasses import dataclass
 import numpy as np
 from numba.experimental import jitclass
@@ -5,8 +15,8 @@ from numba.typed import List as numbaList
 from typing import List, Optional
 from numba import int32, int64, float64, boolean
 
-# Define jitclass specifications
 
+# Define jitclass specifications
 melt_pool_spec = [
     ("width_oscillations", float64[:, :]),
     ("depth_oscillations", float64[:, :]),
