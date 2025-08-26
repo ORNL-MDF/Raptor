@@ -75,7 +75,9 @@ melt_pool_dict = {
     "height": (width_data, n_modes, height_scale, height_shape),
 }
 
-melt_pool = create_melt_pool(melt_pool_dict, enable_random_phases=False)
+melt_pool = create_melt_pool(melt_pool_dict, enable_random_phases=True)
+for path_vector in path_vectors:
+    path_vector.set_melt_pool_properties(melt_pool)
 
 # 4. Compute porosity using conic section / superellipse curves for melt pool mask
 porosity = compute_porosity(
