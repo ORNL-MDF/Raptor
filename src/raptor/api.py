@@ -155,24 +155,26 @@ def create_melt_pool(
 
 
 def compute_porosity(
-    grid: Grid, path_vectors: List[PathVector], melt_pool: MeltPool
+    grid: Grid, path_vectors: List[PathVector], melt_pool: MeltPool, warmup:bool
 ) -> None:
     """
     Main computation: computes porosity field.
     """
 
-    print("JIT Warmup...")
-    t_start_warmup = time.time()
+    if warmup:
+        print("JIT Warmup...")
+        t_start_warmup = time.time()
 
-    # Warm up the vector property assignment.
-    if path_vectors:
-        path_vectors[0].set_melt_pool_properties(melt_pool)
+        # Warm up the vector property assignment.
+        if path_vectors:
+            path_vectors[0].set_melt_pool_properties(melt_pool)
 
-    # Warm up the main, parallelized compute kernel.
-    if grid.n_voxels > 0 and path_vectors:
-        _ = compute_melt_mask(grid.voxels[0:1], melt_pool, path_vectors[0:1])
+        # Warm up the main, parallelized compute kernel.
+        if grid.n_voxels > 0 and path_vectors:
+            _ = compute_melt_mask(grid.voxels[0:1], melt_pool, path_vectors[0:1])
 
-    print(f" -> JIT warmup complete ({time.time() - t_start_warmup:.8f}s).")
+        print(f" -> JIT warmup complete ({time.time() - t_start_warmup:.8f}s).")
+    
 
     print(f"Preparing {len(path_vectors)} path vectors for simulation...")
     t0_setup = time.time()

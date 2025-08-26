@@ -76,14 +76,13 @@ melt_pool_dict = {
 }
 
 melt_pool = create_melt_pool(melt_pool_dict, enable_random_phases=True)
-for vec in path_vectors:
-    vec.set_melt_pool_properties(melt_pool)
 
 # 4. Compute porosity using conic section / superellipse curves for melt pool mask
 porosity = compute_porosity(
     grid,
     path_vectors,
     melt_pool,
+    warmup=True
 )
 
 # 5. Write porosity field to .VTI
