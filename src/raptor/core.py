@@ -164,6 +164,8 @@ def compute_melt_mask_implicit(
     n_voxels = voxels.shape[0]
     n_vectors = start_points.shape[0]
     n_modes = width_amplitudes.shape[0]
+    half_width = 0.5 * width_amplitudes[0]
+    attenuation_factor = 1.0
 
     for i in prange(n_voxels):
         vx, vy, vz = voxels[i, 0], voxels[i, 1], voxels[i, 2]
@@ -243,6 +245,18 @@ def compute_melt_mask_implicit(
                 height += height_amplitudes[k] * np.cos(
                     two_pi_t * height_frequencies[k] + phase_k
                 )
+
+            if time_fraction < half_width / (distances[j,0] + 1e-12):
+                local_x = time_fraction * distances[j,0]
+                attenuation_factor = np.sqrt(1 - pow(1 - local_x / half_width, 2))
+            elif time_fraction > 1 - half_width / (distances[j,0] + 1e-12):
+                local_x = (1 - time_fraction) * distances[j,0]
+                attenuation_factor = np.sqrt(1 - pow(1 - local_x / half_width, 2))
+            else:
+                attenuation_factor = 1.0
+            width *= attenuation_factor
+            depth *= attenuation_factor
+            height *= attenuation_factor
 
             is_voxel_melted = is_inside(
                 local_y,

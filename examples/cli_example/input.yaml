@@ -29,8 +29,8 @@ melt_pool_data:
 
 
 rve:
-  min_point: [0.002, -500.0e-6, -500.0e-6]
-  max_point: [0.006, 500.0e-6, 500.0e-6]
+  min_point: [0.000, -500.0e-6, -500.0e-6]
+  max_point: [0.008, 500.0e-6, 500.0e-6]
 
 output:
   vtk:
