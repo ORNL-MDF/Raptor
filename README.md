@@ -275,10 +275,3 @@ write_vtk(grid.origin, grid.resolution, porosity, "rve.vti")
 ## References
 The melt pool measurements in the examples are scans performed in Ti6Al4V from the following study:
 * Miner, Justin; Narra, Sneha Prabha (2024). Dataset of Melt Pool Variability Measurements for Powder Bed Fusion - Laser Beam of Ti-6Al-4V. Carnegie Mellon University. Dataset. https://doi.org/10.1184/R1/25696293.v1
-
-
-
-
-
-
-```
