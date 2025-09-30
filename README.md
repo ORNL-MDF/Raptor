@@ -27,33 +27,19 @@ This project is licensed under the BSD 3-Clause [License](LICENSE).
 ## Installation
 
 RAPTOR requires requires Python 3 (tested with Python 3.8+). The following Python packages are necessary:
+```bash
+    numpy, numba, pyyaml, vtk, scikit-image
+```
 
 *   **NumPy**: For numerical operations and array manipulation.
-    ```bash
-    pip install numpy
-    ```
+    
 *   **Numba**: For JIT compilation and performance acceleration.
-    ```bash
-    pip install numba
-    ```
-*   **PyYAML**: For reading and parsing YAML configuration files.
-    ```bash
-    pip install pyyaml
-    ```
-*   **VTK**: For writing the output porosity map in `.vti` format.
-    ```bash
-    pip install vtk
-    ```
-
+*   **PyYAML**: For reading and parsing YAML configuration files
+*   **VTK**: For writing the output porosity map in `.vti` format
 *   **scikit-image**: For calculating pore morphologies.
-    ```bash
-    pip install scikit-image
-    ```
 
-You can install all dependencies using pip:
-```bash
-pip install numpy numba pyyaml vtk scikit-image
-```
+You can install all dependencies and Raptor itself by running ```pip install .``` in the cloned Raptor directory.
+
 It's highly recommended to use a virtual environment (e.g., `venv` or `conda`) to manage these dependencies.
 
 ## Usage
