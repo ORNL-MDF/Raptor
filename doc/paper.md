@@ -5,13 +5,13 @@ tags:
   - Additive Manufacturing
 authors:
   - name: Vamsi Subraveti
-    orcid: 0000-0000-0000-0000
+    orcid: 0000-0002-9205-8212
     affiliation: 1
   - name: John Coleman
-    orcid: 0000-0000-0000-0000
+    orcid: 0000-0002-7261-3143
     affiliation: 2
   - name: Alex Plotkowski
-    orcid: 0000-0000-0000-0000
+    orcid: 0000-0001-5471-8681
     affiliation: 2
   - name: Çağlar Oskay
     orcid: 0000-0000-0000-0000
