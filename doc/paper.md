@@ -14,7 +14,7 @@ authors:
     orcid: 0000-0001-5471-8681
     affiliation: 2
   - name: Çağlar Oskay
-    orcid: 0000-0000-0000-0000
+    orcid:
     affiliation: 1    
 affiliations:
  - name: Vanderbilt University, Nashville, TN, USA
