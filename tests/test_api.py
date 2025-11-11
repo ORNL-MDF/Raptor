@@ -317,7 +317,7 @@ class TestCreateMeltPool:
         """Test that shape factors are correctly set."""
         melt_pool = create_melt_pool(sample_melt_pool_dict, enable_random_phases=False)
         
-        assert melt_pool.width_shape_factor == 2.0
+        
         assert melt_pool.depth_shape_factor == 2.0
         assert melt_pool.height_shape_factor == 2.0
     

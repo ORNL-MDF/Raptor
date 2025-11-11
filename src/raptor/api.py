@@ -250,7 +250,7 @@ def compute_morphology(
     minsize = 2
     filtered_defects = remove_small_objects(labeled_defects, minsize)
 
-    return measure.regionproperties_table(
+    return measure.regionprops_table(
         filtered_defects, spacing=voxel_resolution, properties=morphology_fields
     )
 
