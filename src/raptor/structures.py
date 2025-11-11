@@ -183,15 +183,34 @@ class Grid:
         bound_box: Optional[np.ndarray] = None,
         path_vectors: Optional[List[PathVector]] = None,
     ):
+        if voxel_resolution <= 0.0:
+            raise ValueError(
+                "Voxel resolution must be a positive non-zero value."
+            )
         self.resolution = voxel_resolution
 
         if bound_box is not None:
             # Option 1: Grid is constructed from a user-defined bounding box.
+            if bound_box.shape != (2, 3):
+                raise ValueError(
+                    "Bounding box must be of shape (2, 3) "
+                    "representing [[x0, y0, z0], [x1, y1, z1]]."
+                )
+            if np.any(bound_box[1] <= bound_box[0]):
+                raise ValueError(
+                    "Invalid bounding box: "
+                    "Maximum corner must be greater than minimum corner."
+                )
             gx0, gy0, gz0 = bound_box[0]
             gx1, gy1, gz1 = bound_box[1]
 
         elif path_vectors is not None:
             # Option 2: Grid is constructed from boundaries of path vectors.
+            for pv in path_vectors:
+                if not isinstance(pv, PathVector):
+                    raise ValueError(
+                        "All elements in 'path_vectors' must be of type PathVector."
+                    )
             all_points = np.vstack(
                 [p.start_point for p in path_vectors]
                 + [p.end_point for p in path_vectors]
