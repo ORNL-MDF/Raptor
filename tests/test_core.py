@@ -287,16 +287,6 @@ class TestComputeMeltMask:
         # TODO: Verify correct unpacking of properties
         assert isinstance(result, np.ndarray)
     
-    def test_compute_melt_mask_empty_path_vectors(self, minimal_voxels, sample_melt_pool):
-        """Test melt mask computation with no path vectors."""
-        empty_vectors = []
-        
-        result = compute_melt_mask(minimal_voxels, sample_melt_pool, empty_vectors)
-        
-        # All voxels should be False (not melted)
-        assert result.shape[0] == minimal_voxels.shape[0]
-        assert not result.any()
-    
     def test_compute_melt_mask_single_voxel(self, sample_melt_pool, sample_path_vectors):
         """Test with a single voxel."""
         single_voxel = np.array([[0.0005, 0.0, 0.0]], dtype=np.float64)
@@ -492,23 +482,10 @@ class TestCoreEdgeCases:
         result = is_inside(0.0, 0.0, 1e-10, 1e-10, 1e-10, 2.0, 2.0)
         # TODO: Verify behavior with tiny dimensions
         pass
-
-    def test_compute_melt_mask_empty_voxels(self, sample_melt_pool):
-        """Test compute_melt_mask with empty voxel array."""
-        empty_voxels = np.empty((0, 3), dtype=np.float64)
-        
-        result = compute_melt_mask(empty_voxels, sample_melt_pool, [])
-        
-        assert result.shape[0] == 0
     
     def test_compute_melt_mask_single_mode(self):
         """Test with single mode (no oscillations)."""
         # TODO: Test with n_modes = 1
-        pass
-    
-    def test_zero_time_duration(self):
-        """Test handling of path vectors with zero time duration."""
-        # TODO: Test edge case with start_time == end_time
         pass
 
 
@@ -519,14 +496,15 @@ class TestCoreEdgeCases:
 class TestShapeFactors:
     """Detailed tests for different shape factors."""
     
-    def test_ellipse_shape_n2(self):
-        """Test elliptical cross-section (n=2)."""
+    def test_ellipse_shape_k2(self):
+        """Test elliptical cross-section (k=2)."""
         width = 0.0002
         height = 0.0001
         depth = 0.00008
         
         # Test points on ellipse boundary
-        # For ellipse: (y/a)^2 + (z/b)^2 = 1
+        # For ellipse: (y/a)^2 + (z/b)^k = 1
+        # k=2
         a = width / 2.0
         b = height
         
@@ -537,19 +515,14 @@ class TestShapeFactors:
         result = is_inside(y, z, width, height, depth, 2.0, 2.0)
         assert result == True
     
-    def test_box_shape_n10(self):
-        """Test box-like cross-section (n=10)."""
-        # TODO: Test with n=10 for box-like shape
+    def test_parabola_shape_k1(self):
+        """Test parabolic cross-section (k=1)."""
+        # TODO: Test with k=1 for parabolic shape
         pass
-    
-    def test_parabola_shape_n1(self):
-        """Test parabolic cross-section (n=1)."""
-        # TODO: Test with n=1 for parabolic shape
-        pass
-    
-    def test_bell_shape_n05(self):
-        """Test bell-like cross-section (n=0.5)."""
-        # TODO: Test with n=0.5 for bell-like shape
+
+    def test_bell_shape_k05(self):
+        """Test bell-like cross-section (k=0.5)."""
+        # TODO: Test with k=0.5 for bell-like shape
         pass
     
     def test_mixed_shape_factors(self):

@@ -317,7 +317,7 @@ class TestCreateMeltPool:
         """Test that shape factors are correctly set."""
         melt_pool = create_melt_pool(sample_melt_pool_dict, enable_random_phases=False)
         
-        
+
         assert melt_pool.depth_shape_factor == 2.0
         assert melt_pool.height_shape_factor == 2.0
     
@@ -357,11 +357,6 @@ class TestComputePorosity:
     def test_compute_porosity_output_dtype(self):
         """Test that output porosity field has correct dtype."""
         # TODO: Verify output dtype is int8
-        pass
-    
-    def test_compute_porosity_empty_path_vectors(self):
-        """Test porosity computation with no path vectors."""
-        # TODO: Test edge case with empty path vector list
         pass
     
     def test_compute_porosity_single_vector(self):
@@ -462,11 +457,6 @@ class TestComputeMorphology:
     def test_compute_morphology_all_fields(self):
         """Test morphology computation with all available fields."""
         # TODO: Test with comprehensive list of morphology fields
-        pass
-    
-    def test_compute_morphology_small_object_removal(self):
-        """Test that small objects are correctly removed."""
-        # TODO: Test filtering of small pores
         pass
 
 
