@@ -184,9 +184,7 @@ class Grid:
         path_vectors: Optional[List[PathVector]] = None,
     ):
         if voxel_resolution <= 0.0:
-            raise ValueError(
-                "Voxel resolution must be a positive non-zero value."
-            )
+            raise ValueError("Voxel resolution must be a positive non-zero value.")
         self.resolution = voxel_resolution
 
         if bound_box is not None:

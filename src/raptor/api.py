@@ -76,7 +76,9 @@ def compute_spectral_components(melt_pool_data: np.ndarray, n_modes: int) -> np.
             F[i] = fft_resolution[i]
             F[n_fft - i] = fft_resolution[n_fft - i]
 
-        frequencies = np.float64(1 / (dt * n_fft)) * np.arange(n_modes, dtype=np.float64)
+        frequencies = np.float64(1 / (dt * n_fft)) * np.arange(
+            n_modes, dtype=np.float64
+        )
         phases = np.float64(np.angle(F[:n_modes]))
         amplitudes = np.float64(np.abs(F[:n_modes]) / n_fft)
         spectral_array = np.vstack(
