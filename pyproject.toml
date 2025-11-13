@@ -25,7 +25,8 @@ dependencies = [
     "numba",
     "PyYAML",
     "vtk",
-    "scikit-image"
+    "scikit-image",
+    "pytest"
 ]
 
 [project.scripts]

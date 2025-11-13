@@ -32,7 +32,7 @@ RAPTOR requires requires Python 3 (tested with Python 3.8+). The following Pytho
 ```
 
 *   **NumPy**: For numerical operations and array manipulation.
-    
+
 *   **Numba**: For JIT compilation and performance acceleration.
 *   **PyYAML**: For reading and parsing YAML configuration files
 *   **VTK**: For writing the output porosity map in `.vti` format

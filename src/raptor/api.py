@@ -69,18 +69,18 @@ def compute_spectral_components(melt_pool_data: np.ndarray, n_modes: int) -> np.
     fft_resolution = np.fft.fft(melt_pool_data[:, 1])
     F = np.zeros_like(fft_resolution)
     n_fft = len(fft_resolution)
-
-    for i in range(1, n_modes):
-        F[i] = fft_resolution[i]
-        F[n_fft - i] = fft_resolution[n_fft - i]
-
-    frequencies = np.float64(1 / (dt * n_fft)) * np.arange(n_modes, dtype=np.float64)
-    phases = np.float64(np.angle(F[:n_modes]))
-    amplitudes = np.float64(np.abs(F[:n_modes]) / n_fft)
-
     if n_modes == 1:
         spectral_array = np.array([[mode0, 0, 0]])
     else:
+        for i in range(1, n_modes):
+            F[i] = fft_resolution[i]
+            F[n_fft - i] = fft_resolution[n_fft - i]
+
+        frequencies = np.float64(1 / (dt * n_fft)) * np.arange(
+            n_modes, dtype=np.float64
+        )
+        phases = np.float64(np.angle(F[:n_modes]))
+        amplitudes = np.float64(np.abs(F[:n_modes]) / n_fft)
         spectral_array = np.vstack(
             [
                 np.array([mode0, 0, 0]),
@@ -250,7 +250,7 @@ def compute_morphology(
     minsize = 2
     filtered_defects = remove_small_objects(labeled_defects, minsize)
 
-    return measure.regionproperties_table(
+    return measure.regionprops_table(
         filtered_defects, spacing=voxel_resolution, properties=morphology_fields
     )
 
