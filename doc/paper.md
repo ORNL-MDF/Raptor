@@ -29,7 +29,7 @@ header-includes:
 
 # Summary
 
-Raptor is an efficient Python library for simulating stochastic lack-of-fusion (sLoF) defects in additive manufacturing (AM) processes. These defects arise from stochastic variations in the melt pool boundary leading to undermelting from insufficient overlap between adjacent melt pools or successive layers [@khairallah_physics_2016, @grasso_insitu_2017]. Performance variability of AM parts is a pressing challenge in qualification and certification of AM parts; this is in part due to the poorly understood formation rate and statistics of sLoF defects. Raptor is designed to capture the explicit morphologies of sLoF defects and their statistics to accelerate qualification and certification efforts of AM parts in critical applications.
+Raptor is an efficient Python library for simulating stochastic lack-of-fusion (sLoF) defects in additive manufacturing (AM) processes. These defects arise from stochastic variations in the melt pool boundary leading to undermelting from insufficient overlap between adjacent melt pools or successive layers [@khairallah_physics_2016 @grasso_insitu_2017]. Performance variability of AM parts is a pressing challenge in qualification and certification of AM parts; this is in part due to the poorly understood formation rate and statistics of sLoF defects. Raptor is designed to capture the explicit morphologies of sLoF defects and their statistics to accelerate qualification and certification efforts of AM parts in critical applications.
 
 # Statement of need
 
