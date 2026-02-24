@@ -16,6 +16,7 @@ from raptor.api import (
     create_melt_pool,
     create_grid,
     compute_porosity,
+    compute_morphology,
     write_vtk,
 )
 from raptor.utilities import ScanPathBuilder
@@ -25,6 +26,7 @@ min_point = np.array([0.0, 0.0, 0.0])
 max_point = np.array([5.0e-4, 5.0e-4, 5.0e-4])
 bound_box = np.array([min_point, max_point])
 voxel_resolution = 5.0e-6
+query_volume = 1000 # millimeters cubed, standard PBF volume units
 
 grid = create_grid(voxel_resolution, bound_box=bound_box)
 
@@ -77,8 +79,23 @@ melt_pool_dict = {
 
 melt_pool = create_melt_pool(melt_pool_dict, enable_random_phases=True)
 
-# 4. Compute porosity using conic section / superellipse curves for melt pool mask
-porosity = compute_porosity(grid, path_vectors, melt_pool, jit_warmup=True)
+# Compute number of RVEs required
+num_rves = int(np.ceil(query_volume / (1e3 * (max_point - min_point)).prod())) # convert from microns to millimeters
+print(f"Number of RVEs required to fill query volume: {num_rves}")
 
-# 5. Write porosity field to .VTI
-write_vtk(grid.origin, grid.resolution, porosity, "rve.vti")
+# Initializing container for defect metrics
+defect_metrics = []
+for i in range(num_rves):
+    print(f"Processing RVE {i+1}/{num_rves}...")
+    # 4. Compute porosity using conic section / superellipse curves for melt pool mask
+    if i==0:
+        # JIT warmup for the first RVE
+        porosity = compute_porosity(grid, path_vectors, melt_pool, jit_warmup=True)
+    else:
+        porosity = compute_porosity(grid, path_vectors, melt_pool, jit_warmup=False)
+
+    # 5. Compute morphology metrics
+    metrics = compute_morphology(porosity, grid.resolution, ['equivalent_diameter_area'])
+    defect_metrics.append(metrics['equivalent_diameter_area'])
+
+defect_metrics = np.concatenate(defect_metrics)
