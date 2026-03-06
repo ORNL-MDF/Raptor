@@ -95,15 +95,13 @@ def defects_model(
         porosity = compute_porosity(
             grid, path_vectors, melt_pool, (i == 0)  # jit warmup
         )
-        metrics = compute_morphology(
-            porosity, grid.resolution, metric_names
-        )
+        metrics = compute_morphology(porosity, grid.resolution, metric_names)
         defect_metrics.append(metrics)
 
     combined_metrics = {}
     for name in metric_names:
         arrays_to_concat = [m[name] for m in defect_metrics if name in m]
-        
+
         if arrays_to_concat:
             combined_metrics[name] = np.concatenate(arrays_to_concat)
         else:
@@ -125,8 +123,8 @@ if __name__ == "__main__":
 
     for i in range(x0.size):
         defects = defects_model(x0.flat[i], x1.flat[i])
-        
-        target_metric = defects["equivalent_diameter_area"]       
+
+        target_metric = defects["equivalent_diameter_area"]
         y.flat[i], yerr.flat[i] = compute_mean_and_std(target_metric)
 
     print("Mean Defects:", y)
