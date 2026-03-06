@@ -25,11 +25,14 @@ def compute_mean_and_std(defects: np.ndarray):
 
 
 def defects_model(
-    hatch_spacing_m: float, layer_thickness_m: float, query_volume_mm3: float = 1.0
+    hatch_spacing_m: float,
+    layer_thickness_m: float,
+    query_volume_mm3: float = 1.0,
+    voxel_resolution_m: float = 5e-6,
+    metric_names: list[str] = ["equivalent_diameter_area"],
 ) -> np.ndarray:
 
     # Create the 3D voxel grid for the RVE
-    voxel_resolution_m = 5e-6
     rve_min_point = np.array([0.0, 0.0, 0.0])
     rve_max_point = np.array([5e-4, 5e-4, 5e-4])
     rve_bounding_box = np.array([rve_min_point, rve_max_point])
@@ -93,13 +96,20 @@ def defects_model(
             grid, path_vectors, melt_pool, (i == 0)  # jit warmup
         )
         metrics = compute_morphology(
-            porosity, grid.resolution, ["equivalent_diameter_area"]
+            porosity, grid.resolution, metric_names
         )
-        defect_metrics.append(metrics["equivalent_diameter_area"])
+        defect_metrics.append(metrics)
 
-    defect_metrics = np.concatenate(defect_metrics)
+    combined_metrics = {}
+    for name in metric_names:
+        arrays_to_concat = [m[name] for m in defect_metrics if name in m]
+        
+        if arrays_to_concat:
+            combined_metrics[name] = np.concatenate(arrays_to_concat)
+        else:
+            combined_metrics[name] = np.array([])
 
-    return np.array(defect_metrics)
+    return combined_metrics
 
 
 # --- Run example ---
@@ -115,8 +125,9 @@ if __name__ == "__main__":
 
     for i in range(x0.size):
         defects = defects_model(x0.flat[i], x1.flat[i])
-
-        y.flat[i], yerr.flat[i] = compute_mean_and_std(defects)
+        
+        target_metric = defects["equivalent_diameter_area"]       
+        y.flat[i], yerr.flat[i] = compute_mean_and_std(target_metric)
 
     print("Mean Defects:", y)
     print("Standard Errors:", yerr)
