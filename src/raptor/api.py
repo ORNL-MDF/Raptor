@@ -11,6 +11,7 @@
 import time
 from typing import List, Tuple, Optional, Dict, Any
 import numpy as np
+import pandas as pd
 import vtk
 from vtk.util import numpy_support
 from skimage import measure
@@ -251,7 +252,7 @@ def compute_morphology(
     filtered_defects = remove_small_objects(labeled_defects, minsize)
 
     return measure.regionprops_table(
-        filtered_defects, spacing=voxel_resolution, properties=morphology_fields
+        labeled_defects, spacing=voxel_resolution, properties=morphology_fields
     )
 
 
@@ -259,15 +260,11 @@ def write_morphology(properties: dict, morphology_output_path: str) -> None:
     """
     Writes morphology output as a .csv.
     """
-    columns = ",".join([key for key in properties.keys()])
 
-    morphology = np.vstack([properties[key] for key in properties.keys()]).transpose()
-
-    np.savetxt(
-        morphology_output_path, morphology, header=columns, delimiter=",", comments=""
-    )
+    morphology_df = pd.DataFrame(properties, index=None)
+    morphology_df.to_csv(morphology_output_path, index=False)
 
     print(
-        f"Morphology features of {morphology.shape[0]} "
+        f"Morphology features of {len(morphology_df)} "
         f"defects written to: {morphology_output_path}"
     )

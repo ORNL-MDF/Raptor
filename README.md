@@ -34,11 +34,11 @@ RAPTOR requires requires Python 3 (tested with Python 3.8+). The following Pytho
 ```
 
 *   **NumPy**: For numerical operations and array manipulation.
-
 *   **Numba**: For JIT compilation and performance acceleration.
 *   **PyYAML**: For reading and parsing YAML configuration files
 *   **VTK**: For writing the output porosity map in `.vti` format
 *   **scikit-image**: For calculating pore morphologies.
+*   **pandas**: For writing morphology information to .csv
 
 You can install all dependencies and Raptor itself by running ```pip install .``` in the cloned Raptor directory.
 
@@ -71,7 +71,7 @@ The CLI is the simplest way to run a simulation. It is controlled by a single YA
 3.  **Check Outputs**:
     *   Progress will be printed to the console.
     *   The 3D porosity map is saved to the `.vti` file specified in the config.
-    *   The pore morphology data is saved to the `.csv` file (if configured -- the CLI examples are set to not output morphology due to large domain bounding boxes).
+    *   The pore morphology data is saved to the `.csv` file (if configured -- some CLI examples are set to not output morphology due to large domain bounding boxes).
 
 #### CLI Input: The `config.yaml` File
 
@@ -126,7 +126,6 @@ output:
       - "label"
       - "area"
       - "equivalent_diameter_area"
-      - "extent"
 ```
 
 #### Configuration Details:
@@ -153,7 +152,7 @@ output:
 
 ### 2. Python Library (API)
 
-For advanced use cases, RAPTOR's core functions can be imported directly into your Python scripts. This allows for programmatic parameter studies, custom workflows, and integration with other tools. An example is provided in examples/api_example/rve.py.
+For advanced use cases, RAPTOR's core functions can be imported directly into your Python scripts. This allows for programmatic parameter studies, custom workflows, and integration with other tools. An example is provided in `examples/api_example/rve.py`.
 
 The following is a breakdown of the main steps for running a simulation programmatically.
 
@@ -181,8 +180,8 @@ from raptor.utilities import ScanPathBuilder
 # 2. Create path vectors through the representative volume element (RVE)
 power = 370
 velocity = 1.7
-hatch_spacing = 130e-6
-layer_height = 50e-6
+hatch_spacing = 140e-6
+layer_height = 30e-6
 rotation = 67
 scan_extension = max(max_point - min_point)
 extra_layers = 0
@@ -252,7 +251,7 @@ porosity = compute_porosity(
 ```
 
 #### Step 5:  Write Results to a VTK File
-Use the write_vtk helper function to save the resulting porosity NumPy array to a .vti file for visualization in tools like ParaView. Note that this .vti will contain 0 for the voxels that are melted, and 1 for unmelted voxels. Paraview's contour feature can be used to isolate the defects within the RVE.
+Use the write_vtk helper function to save the resulting porosity NumPy array to a `.vti` file for visualization in tools like ParaView. Note that this `.vti` will contain 0 for the voxels that are melted, and 1 for unmelted voxels. Paraview's contour feature can be used to isolate the defects within the RVE.
 
 ```python
 from raptor.api import write_vtk

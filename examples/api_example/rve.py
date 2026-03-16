@@ -18,7 +18,7 @@ from raptor.api import (
     compute_porosity,
     write_vtk,
     compute_morphology,
-    write_morphology
+    write_morphology,
 )
 from raptor.utilities import ScanPathBuilder
 
@@ -86,5 +86,7 @@ porosity = compute_porosity(grid, path_vectors, melt_pool, jit_warmup=True)
 write_vtk(grid.origin, grid.resolution, porosity, "rve.vti")
 
 # 6. Compute morphology
-morphology = compute_morphology(porosity, voxel_resolution, ['area', 'equivalent_diameter_area'])
+morphology = compute_morphology(
+    porosity, voxel_resolution, ["area", "equivalent_diameter_area"]
+)
 write_morphology(morphology, "rve_morphology.csv")
