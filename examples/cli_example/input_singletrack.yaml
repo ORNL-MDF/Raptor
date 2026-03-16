@@ -36,14 +36,5 @@ output:
   vtk:
     file_name: "ULI_singletrack.vti"
   morphology:
-    file_name: "ULI_morphology.csv"
+    file_name: 
     fields:
-    #  - "label"
-    #  - "bbox"
-    #  - "area"
-    #  - "area_bbox"
-    #  - "area_filled"
-    #  - "centroid"
-    #  - "equivalent_diameter_area"
-    #  - "euler_number"
-    #  - "extent"

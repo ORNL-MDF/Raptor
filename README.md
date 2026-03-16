@@ -71,7 +71,7 @@ The CLI is the simplest way to run a simulation. It is controlled by a single YA
 3.  **Check Outputs**:
     *   Progress will be printed to the console.
     *   The 3D porosity map is saved to the `.vti` file specified in the config.
-    *   The pore morphology data is saved to the `.csv` file (if configured).
+    *   The pore morphology data is saved to the `.csv` file (if configured -- the CLI examples are set to not output morphology due to large domain bounding boxes).
 
 #### CLI Input: The `config.yaml` File
 
@@ -252,7 +252,7 @@ porosity = compute_porosity(
 ```
 
 #### Step 5:  Write Results to a VTK File
-Finally, use the write_vtk helper function to save the resulting porosity NumPy array to a .vti file for visualization in tools like ParaView.
+Use the write_vtk helper function to save the resulting porosity NumPy array to a .vti file for visualization in tools like ParaView. Note that this .vti will contain 0 for the voxels that are melted, and 1 for unmelted voxels. Paraview's contour feature can be used to isolate the defects within the RVE.
 
 ```python
 from raptor.api import write_vtk
@@ -260,6 +260,18 @@ from raptor.api import write_vtk
 # 5. Write porosity field to .VTI
 write_vtk(grid.origin, grid.resolution, porosity, "rve.vti")
 ```
+
+#### Step 6:  Compute and Write Morphology Descriptors
+Finally, optionally use the compute_morphology and write_morphology functions to compute global descriptors such as volume, equivalent diameter, etc. For a full list of possible descriptors, see https://scikit-image.org/docs/stable/api/skimage.measure.html#skimage.measure.regionprops.
+
+```python
+from raptor.api import compute_morphology, write_morphology
+
+# 6. Compute morphology
+morphology = compute_morphology(porosity, voxel_resolution, ['area', 'equivalent_diameter_area'])
+write_morphology(morphology, "rve_morphology.csv")
+```
+
 ## References
 The melt pool measurements in the examples are scans performed in Ti6Al4V from the following study:
 * Miner, Justin; Narra, Sneha Prabha (2024). Dataset of Melt Pool Variability Measurements for Powder Bed Fusion - Laser Beam of Ti-6Al-4V. Carnegie Mellon University. Dataset. https://doi.org/10.1184/R1/25696293.v1

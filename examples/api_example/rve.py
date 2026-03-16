@@ -82,10 +82,9 @@ melt_pool = create_melt_pool(melt_pool_dict, enable_random_phases=True)
 # 4. Compute porosity using conic section / superellipse curves for melt pool mask
 porosity = compute_porosity(grid, path_vectors, melt_pool, jit_warmup=True)
 
-# 5. Compute morphology
+# 5. Write porosity field to .VTI
+write_vtk(grid.origin, grid.resolution, porosity, "rve.vti")
+
+# 6. Compute morphology
 morphology = compute_morphology(porosity, voxel_resolution, ['area', 'equivalent_diameter_area'])
 write_morphology(morphology, "rve_morphology.csv")
-
-
-# 6. Write porosity field to .VTI
-write_vtk(grid.origin, grid.resolution, porosity, "rve.vti")

@@ -38,12 +38,5 @@ output:
   morphology:
     file_name: "ULI_morphology.csv"
     fields:
-    #  - "label"
-    #  - "bbox"
-    #  - "area"
-    #  - "area_bbox"
-    #  - "area_filled"
-    #  - "centroid"
-    #  - "equivalent_diameter_area"
-    #  - "euler_number"
-    #  - "extent"
+     - "area"
+     - "equivalent_diameter_area"
