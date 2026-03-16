@@ -30,7 +30,7 @@ This project is licensed under the BSD 3-Clause [License](LICENSE).
 
 RAPTOR requires requires Python 3 (tested with Python 3.8+). The following Python packages are necessary:
 ```bash
-    numpy, numba, pyyaml, vtk, scikit-image
+    numpy, numba, pyyaml, vtk, scikit-image, pandas
 ```
 
 *   **NumPy**: For numerical operations and array manipulation.
