@@ -154,11 +154,16 @@ class ScanPathBuilder:
                 all_vectors.append(vec)
         return all_vectors
 
-    def write_layers(self, ouput_name):
+    def write_layers(self, output_name, mode="layers"):
         """
         Writes the generated raw scan paths to text files.
-        """
 
+        Args:
+            output_name: Base name for the output files.
+            mode: "layers" to write separate files for each layer, "all" to write a single file with all layers.
+        """
+        if mode == "all":
+            all_layers = []
         for l_key, (l_start, l_end) in self.layers.items():
             if l_start.size == 0:
                 continue
@@ -181,13 +186,30 @@ class ScanPathBuilder:
                 for s, e in zip(l_start, l_end)
             ]
 
-            allpaths = np.vstack(se_pairs)
+            all_paths = np.vstack(se_pairs)
+            if mode == "all":
+                all_layers.append(all_paths)
+                continue
             header_str = "Mode X(m) Y(m) Z(m) Power(W) tParam"
             filename = f"{output_name}_layer_{l_key}.txt"
 
             np.savetxt(
                 filename,
-                allpaths,
+                all_paths,
+                fmt="%.6f",
+                delimiter=" ",
+                header=header_str,
+                comments="",
+            )
+            print(f"Wrote file {filename}")
+
+        if mode == "all" and all_layers:
+            all_layers = np.vstack(all_layers)
+            header_str = "Mode X(m) Y(m) Z(m) Power(W) tParam"
+            filename = f"{output_name}.txt"
+            np.savetxt(
+                filename,
+                all_layers,
                 fmt="%.6f",
                 delimiter=" ",
                 header=header_str,

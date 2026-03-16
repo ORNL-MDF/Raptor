@@ -1,10 +1,10 @@
 scan_paths:
-  - "../data/scanPathData/ULI_simple_scanpath"
+  - "../data/scanPathData/ULI_layered_scanpath"
 
 parameters:
   layer_height: 50.0e-6              # (meters)
   voxel_resolution: 5.0e-6           # (meters)
-  enable_random_segment_phase: false # Default: true
+  enable_random_segment_phase: true # Default: true
 
 melt_pool_data:
   width:
@@ -29,8 +29,8 @@ melt_pool_data:
 
 
 rve:
-  min_point: [0.002, -500.0e-6, -500.0e-6]
-  max_point: [0.006, 500.0e-6, 500.0e-6]
+  min_point: [-750.0e-6, -750.0e-6, -100.0e-6]
+  max_point: [1250.0e-6, 1250.0e-6, 200.0e-6]
 
 output:
   vtk:
