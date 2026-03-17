@@ -19,6 +19,7 @@ from raptor.api import (
     write_vtk,
     compute_morphology,
     write_morphology,
+    visualize,
 )
 from raptor.utilities import ScanPathBuilder
 
@@ -90,3 +91,6 @@ morphology = compute_morphology(
     porosity, voxel_resolution, ["area", "equivalent_diameter_area"]
 )
 write_morphology(morphology, "rve_morphology.csv")
+
+# 7. Visualize using PyVista
+visualize("./rve.vti")

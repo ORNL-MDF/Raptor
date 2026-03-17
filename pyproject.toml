@@ -27,7 +27,8 @@ dependencies = [
     "vtk",
     "scikit-image",
     "pytest",
-    "pandas"
+    "pandas",
+    "pyvista"
 ]
 
 [project.scripts]
