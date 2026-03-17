@@ -253,7 +253,7 @@ def compute_morphology(
     filtered_defects = remove_small_objects(labeled_defects, minsize)
 
     return measure.regionprops_table(
-        labeled_defects, spacing=voxel_resolution, properties=morphology_fields
+        filtered_defects, spacing=voxel_resolution, properties=morphology_fields
     )
 
 
@@ -276,9 +276,6 @@ def visualize(vtk_output_path: str, scaling=1e6) -> None:
     Visualizes porosity field using PyVista. Defaults to scaling from meters to microns for better labeling.
     """
     rve = pv.read(vtk_output_path)
-    rve.scale(
-        [scaling, scaling, scaling], inplace=True
-    )  # Scale for better visualization
     isosurface = rve.contour(isosurfaces=5)
 
     # Outline of the original domain
@@ -292,7 +289,7 @@ def visualize(vtk_output_path: str, scaling=1e6) -> None:
         "font_size": 12,
         "color": "black",
         "font_family": "arial",
-        "fmt": "%.0f",
+        "fmt": "%.0e",
     }
     pl.show_grid(
         xtitle="X (um)",
