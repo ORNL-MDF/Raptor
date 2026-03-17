@@ -287,6 +287,7 @@ from raptor.api import visualize
 #7. Visualize using PyVista
 visualize("./rve.vti")
 ```
+To visualize the example output, uncomment the `visualize("./rve.vti")` line.
 
 
 ## References
