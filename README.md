@@ -2,7 +2,7 @@
 
 ---
 
-RAPTOR is a Python-based simulation tool for estimating porosity-related defects in Laser Powder Bed Fusion (LPBF) additive manufacturing processes. It uses a computationally efficient geometric approach to model the dynamic melt pool and identify regions of unmelted material, which correspond to lack-of-fusion pores. The core of RAPTOR is a geometric model of the melt pool cross-section whose dimensions (width, depth, and height) oscillate over time. By analyzing the volume swept by this dynamic melt pool along the laser scan paths, RAPTOR generates a 3D map of the final part's porosity.
+Raptor is a Python-based simulation tool for estimating porosity-related defects in Laser Powder Bed Fusion (LPBF) additive manufacturing processes. It uses a computationally efficient geometric approach to model the dynamic melt pool and identify regions of unmelted material, which correspond to lack-of-fusion pores. The core of Raptor is a geometric model of the melt pool cross-section whose dimensions (width, depth, and height) oscillate over time. By analyzing the volume swept by this dynamic melt pool along the laser scan paths, Raptor generates a 3D map of the final part's porosity.
 
 ## License
 
@@ -17,7 +17,7 @@ This project is licensed under the BSD 3-Clause [License](LICENSE).
 
 ## How It Works
 
-**RAPTOR predicts porosity by following a multi-step process:**
+**Raptor predicts porosity by following a multi-step process:**
 
 *  **Domain Voxelization**: A 3D bounding box, or Representative Volume Element (RVE), is defined and discretized into a uniform grid of voxels.
 *  **Scan Path Ingestion**: Scan path data is used to calculating the timing and trajectory for each laser vector.
@@ -26,9 +26,14 @@ This project is licensed under the BSD 3-Clause [License](LICENSE).
 *  **Porosity Prediction**: Any voxel that is not melted by the end of the simulation is flagged as porosity.
 *  **Analysis and Output**: The final 3D porosity field is saved in the binary VTK ImageData (`.vti`) format. The morphological characteristics (e.g., volume, surface area, equivalent diameter) of contiguous pore structures can be quantified using the `scikit-image` library, and saved to a `.csv` file.
 
+<figure>
+  <img src="https://raw.githubusercontent.com/ORNL-MDF/raptor-media/main/images/example_defects.png" alt="example figure">
+  <figcaption>Stochastic undermelting defects occurring between tracks due to melt pool fluctuations.</figcaption>
+</figure>
+
 ## Installation
 
-RAPTOR requires requires Python 3 (tested with Python 3.8+). The following Python packages are necessary:
+Raptor requires requires Python 3 (tested with Python 3.8+). The following Python packages are necessary:
 ```bash
     numpy, numba, pyyaml, vtk, scikit-image, pandas, pyvista
 ```
@@ -56,7 +61,7 @@ The project is organized into several modules:
 *   `io.py`: Contains functions for reading and parsing input files (scan paths, melt pool data).
 *   `utilities.py`: Includes helper classes, such as the `ScanPathBuilder` for generating scan strategies.
 
-RAPTOR can be used in two primary ways: through its Command-Line Interface (CLI) for quick, configuration-driven simulations, or as a Python Library (API) for integration into custom scripts and simulation workflows.
+Raptor can be used in two primary ways: through its Command-Line Interface (CLI) for quick, configuration-driven simulations, or as a Python Library (API) for integration into custom scripts and simulation workflows.
 
 ### 1. Command-Line Interface (CLI)
 
@@ -76,7 +81,7 @@ The CLI usage requires scan path files corresponding to build information. These
 
 #### CLI Input: The `input.yaml` File
 
-Running RAPTOR from the CLI requires a YAML input file to specify all parameters.
+Running Raptor from the CLI requires a YAML input file to specify all parameters.
 
 **Example `input.yaml`:**
 ```yaml
@@ -155,7 +160,7 @@ output:
 
 ### 2. Python Library (API)
 
-The API allows for programmatic parameter studies, custom workflows, and integration with other tools. The core functionality of RAPTOR can be called by scripting with the API library. An example is provided in `examples/api_example/rve.py`, which is an RVE simulation of defects in 500µm edge length cube.
+The API allows for programmatic parameter studies, custom workflows, and integration with other tools. The core functionality of Raptor can be called by scripting with the API library. An example is provided in `examples/api_example/rve.py`, which is an RVE simulation of defects in 500µm edge length cube.
 
 The following is a breakdown of the main steps for running a simulation programmatically.
 
