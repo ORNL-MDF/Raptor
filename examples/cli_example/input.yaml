@@ -36,5 +36,5 @@ output:
   vtk:
     file_name: "ULI_singletrack.vti"
   morphology:
-    file_name:
+    file_name: "ULI_singletrack_morphology.txt"
     fields:
