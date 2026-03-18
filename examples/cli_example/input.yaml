@@ -1,5 +1,5 @@
 scan_paths:
-  - "../data/scanPathData/ULI_single_scanpath"
+  - "../data/scanPathData/scanPath_ULI"
 
 parameters:
   layer_height: 50.0e-6              # (meters)
