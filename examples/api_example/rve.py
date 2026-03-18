@@ -17,6 +17,9 @@ from raptor.api import (
     create_grid,
     compute_porosity,
     write_vtk,
+    compute_morphology,
+    write_morphology,
+    visualize,
 )
 from raptor.utilities import ScanPathBuilder
 
@@ -31,8 +34,8 @@ grid = create_grid(voxel_resolution, bound_box=bound_box)
 # 2. Create path vectors through the representative volume element (RVE)
 power = 370
 velocity = 1.7
-hatch_spacing = 130e-6
-layer_height = 50e-6
+hatch_spacing = 140e-6
+layer_height = 30e-6
 rotation = 67
 scan_extension = max(max_point - min_point)
 extra_layers = 0
@@ -82,3 +85,12 @@ porosity = compute_porosity(grid, path_vectors, melt_pool, jit_warmup=True)
 
 # 5. Write porosity field to .VTI
 write_vtk(grid.origin, grid.resolution, porosity, "rve.vti")
+
+# 6. Compute morphology
+morphology = compute_morphology(
+    porosity, voxel_resolution, ["area", "equivalent_diameter_area"]
+)
+write_morphology(morphology, "rve_morphology.csv")
+
+# 7. Visualize using PyVista
+# visualize("./rve.vti")

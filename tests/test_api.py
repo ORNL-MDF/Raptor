@@ -117,6 +117,12 @@ def sample_melt_pool_dict(sample_time_series_data):
 
 
 @pytest.fixture
+def sample_morphology_fields():
+    """Fixture providing sample morphology fields."""
+    return ["area", "centroid"]
+
+
+@pytest.fixture
 def temp_output_dir():
     """Fixture providing a temporary directory for output files."""
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -532,17 +538,46 @@ class TestWriteMorphology:
 class TestApiIntegration:
     """Integration tests combining multiple API functions."""
 
-    def test_full_workflow_basic(self, temp_output_dir):
+    def test_full_workflow_basic(
+        self,
+        sample_voxel_resolution,
+        sample_bound_box,
+        sample_process_parameters,
+        sample_melt_pool_dict,
+        temp_output_dir,
+    ):
         """Test complete workflow from grid creation to VTK output."""
-        # TODO: Create end-to-end test
-        pass
+        grid = create_grid(sample_voxel_resolution, bound_box=sample_bound_box)
+        path_vectors = create_path_vectors(
+            sample_bound_box, **sample_process_parameters
+        )
+        melt_pool = create_melt_pool(sample_melt_pool_dict, enable_random_phases=False)
+        porosity = compute_porosity(grid, path_vectors, melt_pool, jit_warmup=True)
+        output_path = temp_output_dir / "full_workflow.vti"
+        write_vtk(grid.origin, grid.resolution, porosity, str(output_path))
+        assert output_path.exists()
+        assert output_path.stat().st_size > 0
 
-    def test_full_workflow_with_morphology(self, temp_output_dir):
+    def test_full_workflow_with_morphology(
+        self,
+        sample_voxel_resolution,
+        sample_bound_box,
+        sample_process_parameters,
+        sample_melt_pool_dict,
+        sample_morphology_fields,
+        temp_output_dir,
+    ):
         """Test complete workflow including morphology analysis."""
-        # TODO: Create end-to-end test with morphology
-        pass
-
-    def test_grid_to_porosity_pipeline(self):
-        """Test pipeline from grid creation through porosity computation."""
-        # TODO: Test combined workflow
-        pass
+        grid = create_grid(sample_voxel_resolution, bound_box=sample_bound_box)
+        path_vectors = create_path_vectors(
+            sample_bound_box, **sample_process_parameters
+        )
+        melt_pool = create_melt_pool(sample_melt_pool_dict, enable_random_phases=False)
+        porosity = compute_porosity(grid, path_vectors, melt_pool, jit_warmup=True)
+        morphology = compute_morphology(
+            porosity, sample_voxel_resolution, sample_morphology_fields
+        )
+        morphology_output_path = temp_output_dir / "morphology.csv"
+        write_morphology(morphology, str(morphology_output_path))
+        assert morphology_output_path.exists()
+        assert morphology_output_path.stat().st_size > 0
