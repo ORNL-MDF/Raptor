@@ -34,7 +34,16 @@ rve:
 
 output:
   vtk:
-    file_name: "ULI_singletrack.vti"
+    file_name: "ULI_porosity.vti"
   morphology:
-    file_name: "ULI_singletrack_morphology.txt"
+    file_name: "ULI_morphology.csv"
     fields:
+    #  - "label"
+    #  - "bbox"
+    #  - "area"
+    #  - "area_bbox"
+    #  - "area_filled"
+    #  - "centroid"
+    #  - "equivalent_diameter_area"
+    #  - "euler_number"
+    #  - "extent"
