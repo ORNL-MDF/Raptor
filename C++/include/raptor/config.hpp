@@ -18,7 +18,7 @@ struct SimulationParameters {
   bool enable_random_segment_phase = true;
   std::size_t repeats = 1;
   std::optional<std::uint64_t> random_seed;
-  PorosityKernelVariant porosity_variant = PorosityKernelVariant::auto_select;
+  PorosityKernelVariant porosity_variant = PorosityKernelVariant::baseline;
   FloatingPrecision floating_precision = FloatingPrecision::double_precision;
 };
 

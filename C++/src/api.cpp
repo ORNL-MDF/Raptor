@@ -251,7 +251,7 @@ std::vector<std::uint8_t> computePorosity(const GridT<Real>& grid,
   {
     Kokkos::Profiling::ScopedRegion run_region("raptor::compute_porosity_run");
     summary = computePorosityRuns<Real>(grid, path_vectors, melt_pool, 1, base_seed, true, {},
-                                        PorosityKernelVariant::auto_select);
+                                        PorosityKernelVariant::baseline);
   }
   return summary.final_porosity;
 }

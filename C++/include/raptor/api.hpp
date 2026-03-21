@@ -16,6 +16,11 @@ struct PorosityRunSummary {
   PorosityKernelVariant variant_used = PorosityKernelVariant::baseline;
 };
 
+struct TeamBitpackedSizeBounds {
+  int recommended = 1;
+  int maximum = 1;
+};
+
 // Build a voxel grid from either an explicit RVE or an inferred path-vector extent.
 template <typename Real = double>
 GridT<Real> createGrid(Real voxel_resolution,
@@ -58,7 +63,19 @@ PorosityRunSummary computePorosityRuns(
     const GridT<Real>& grid, const std::vector<PathVectorT<Real>>& path_vectors,
     const MeltPoolT<Real>& melt_pool, std::size_t repeats, std::uint64_t base_seed,
     bool copy_final_porosity, const std::vector<std::string>& morphology_fields = {},
-    PorosityKernelVariant variant = PorosityKernelVariant::auto_select);
+    PorosityKernelVariant variant = PorosityKernelVariant::baseline);
+
+// Run the team-bitpacked workflow with an explicit power-of-two team size for benchmarking.
+template <typename Real = double>
+PorosityRunSummary computePorosityRunsTeamBitpacked(
+    const GridT<Real>& grid, const std::vector<PathVectorT<Real>>& path_vectors,
+    const MeltPoolT<Real>& melt_pool, std::size_t repeats, std::uint64_t base_seed,
+    int team_size, bool copy_final_porosity,
+    const std::vector<std::string>& morphology_fields = {});
+
+// Query Kokkos-reported team-size bounds for the team-bitpacked kernel on the active backend.
+template <typename Real = double>
+TeamBitpackedSizeBounds queryTeamBitpackedSizeBounds();
 
 // Write the porosity field as VTK ImageData without requiring the VTK C++ library.
 template <typename Real = double>

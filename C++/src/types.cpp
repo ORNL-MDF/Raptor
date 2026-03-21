@@ -22,11 +22,14 @@ std::size_t computeAxisLength(Real lower, Real upper, Real step) {
 PorosityKernelVariant parsePorosityKernelVariant(std::string_view value) {
   // Parse the shared kernel-selector strings used by the CLI config and RVE benchmark app.
   const std::string lowered(value);
-  if (lowered == "baseline") {
+  if (lowered == "baseline" || lowered == "auto") {
     return PorosityKernelVariant::baseline;
   }
   if (lowered == "cached") {
     return PorosityKernelVariant::cached;
+  }
+  if (lowered == "bitpacked_repeats" || lowered == "bitpacked" || lowered == "bitmask") {
+    return PorosityKernelVariant::bitpacked_repeats;
   }
   if (lowered == "seed_batch4") {
     return PorosityKernelVariant::seed_batch4;
@@ -34,8 +37,8 @@ PorosityKernelVariant parsePorosityKernelVariant(std::string_view value) {
   if (lowered == "team_tile_seed_batch4") {
     return PorosityKernelVariant::team_tile_seed_batch4;
   }
-  if (lowered == "auto") {
-    return PorosityKernelVariant::auto_select;
+  if (lowered == "team_bitpacked_repeat64" || lowered == "team_repeat64") {
+    return PorosityKernelVariant::team_bitpacked_repeat64;
   }
   throw std::invalid_argument("Unknown porosity kernel variant: " + std::string(value));
 }
@@ -47,12 +50,14 @@ const char* toString(PorosityKernelVariant variant) {
       return "baseline";
     case PorosityKernelVariant::cached:
       return "cached";
+    case PorosityKernelVariant::bitpacked_repeats:
+      return "bitpacked_repeats";
     case PorosityKernelVariant::seed_batch4:
       return "seed_batch4";
     case PorosityKernelVariant::team_tile_seed_batch4:
       return "team_tile_seed_batch4";
-    case PorosityKernelVariant::auto_select:
-      return "auto";
+    case PorosityKernelVariant::team_bitpacked_repeat64:
+      return "team_bitpacked_repeat64";
   }
   throw std::invalid_argument("Invalid porosity kernel variant enum value.");
 }

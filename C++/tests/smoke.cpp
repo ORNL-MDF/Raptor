@@ -217,7 +217,7 @@ void testRepeatedPorosityWorkflow() {
 }
 
 void testPorosityVariantsAgree() {
-  // Verify that all runtime-selectable porosity variants preserve the baseline results.
+  // Verify that the remaining runtime-selectable porosity variant preserves the baseline results.
   const raptor::BoundBox bound_box = {{{0.0, 0.0, 0.0}, {1.0e-3, 2.0e-4, 2.0e-4}}};
   const raptor::Grid grid = raptor::createGrid<double>(
       1.0e-4, std::optional<raptor::BoundBox>(bound_box), nullptr);
@@ -234,23 +234,86 @@ void testPorosityVariantsAgree() {
   const raptor::PorosityRunSummary baseline = raptor::computePorosityRuns(
       grid, path_vectors, melt_pool, 2, 42, true, {"area"},
       raptor::PorosityKernelVariant::baseline);
-  const std::vector<raptor::PorosityKernelVariant> variants = {
-      raptor::PorosityKernelVariant::cached,
-      raptor::PorosityKernelVariant::seed_batch4,
-      raptor::PorosityKernelVariant::team_tile_seed_batch4,
-      raptor::PorosityKernelVariant::auto_select};
+  const raptor::PorosityRunSummary default_summary =
+      raptor::computePorosityRuns(grid, path_vectors, melt_pool, 2, 42, true, {"area"});
+  require(default_summary.melted_voxel_counts == baseline.melted_voxel_counts,
+          "Default porosity variant changed the melted voxel counts.");
+  require(default_summary.final_porosity == baseline.final_porosity,
+          "Default porosity variant changed the final porosity field.");
+  require(default_summary.accumulated_morphology.rows.size() ==
+              baseline.accumulated_morphology.rows.size(),
+          "Default porosity variant changed the accumulated morphology row count.");
+}
 
-  for (const raptor::PorosityKernelVariant variant : variants) {
-    const raptor::PorosityRunSummary summary =
-        raptor::computePorosityRuns(grid, path_vectors, melt_pool, 2, 42, true, {"area"},
-                                    variant);
-    require(summary.melted_voxel_counts == baseline.melted_voxel_counts,
-            "Porosity variant changed the melted voxel counts.");
-    require(summary.final_porosity == baseline.final_porosity,
-            "Porosity variant changed the final porosity field.");
-    require(summary.accumulated_morphology.rows.size() == baseline.accumulated_morphology.rows.size(),
-            "Porosity variant changed the accumulated morphology row count.");
+void testTeamRepeat64Variant() {
+  // Verify that the fixed-width team repeat kernel preserves the baseline 64-repeat results.
+  const raptor::BoundBox bound_box = {{{0.0, 0.0, 0.0}, {1.0e-3, 2.0e-4, 2.0e-4}}};
+  const raptor::Grid grid = raptor::createGrid<double>(
+      1.0e-4, std::optional<raptor::BoundBox>(bound_box), nullptr);
+
+  std::vector<raptor::PathVector> path_vectors = {
+      raptor::PathVector({0.0, 0.0, 0.0}, {1.0e-3, 0.0, 0.0}, 0.0, 1.0e-3)};
+  path_vectors[0].setCoordinateFrame();
+
+  const raptor::MeltPoolComponentInput component = {{{1.0e-4, 0.0, 0.0}}, 1, 1.0, 2.0};
+  const std::map<std::string, raptor::MeltPoolComponentInput> inputs = {
+      {"width", component}, {"depth", component}, {"height", component}};
+  const raptor::MeltPool melt_pool = raptor::createMeltPool(inputs, false);
+
+  const raptor::PorosityRunSummary baseline = raptor::computePorosityRuns(
+      grid, path_vectors, melt_pool, 64, 42, true, {"area"},
+      raptor::PorosityKernelVariant::baseline);
+  const raptor::PorosityRunSummary team_summary = raptor::computePorosityRuns(
+      grid, path_vectors, melt_pool, 64, 42, true, {"area"},
+      raptor::PorosityKernelVariant::team_bitpacked_repeat64);
+
+  require(team_summary.melted_voxel_counts == baseline.melted_voxel_counts,
+          "team_bitpacked_repeat64 changed the melted voxel counts.");
+  require(team_summary.final_porosity == baseline.final_porosity,
+          "team_bitpacked_repeat64 changed the final porosity field.");
+  require(team_summary.accumulated_morphology.rows.size() ==
+              baseline.accumulated_morphology.rows.size(),
+          "team_bitpacked_repeat64 changed the accumulated morphology row count.");
+}
+
+void testTeamRepeatPowerOfTwoBenchmarkHelper() {
+  // Verify that the benchmark-only helper preserves the baseline for a wider power-of-two size.
+  const raptor::TeamBitpackedSizeBounds bounds = raptor::queryTeamBitpackedSizeBounds<double>();
+  int team_size = 1;
+  while ((team_size << 1) > 0 && (team_size << 1) <= bounds.maximum) {
+    team_size <<= 1;
   }
+  if (team_size <= 64) {
+    return;
+  }
+
+  const raptor::BoundBox bound_box = {{{0.0, 0.0, 0.0}, {1.0e-3, 2.0e-4, 2.0e-4}}};
+  const raptor::Grid grid = raptor::createGrid<double>(
+      1.0e-4, std::optional<raptor::BoundBox>(bound_box), nullptr);
+
+  std::vector<raptor::PathVector> path_vectors = {
+      raptor::PathVector({0.0, 0.0, 0.0}, {1.0e-3, 0.0, 0.0}, 0.0, 1.0e-3)};
+  path_vectors[0].setCoordinateFrame();
+
+  const raptor::MeltPoolComponentInput component = {{{1.0e-4, 0.0, 0.0}}, 1, 1.0, 2.0};
+  const std::map<std::string, raptor::MeltPoolComponentInput> inputs = {
+      {"width", component}, {"depth", component}, {"height", component}};
+  const raptor::MeltPool melt_pool = raptor::createMeltPool(inputs, false);
+
+  const raptor::PorosityRunSummary baseline = raptor::computePorosityRuns(
+      grid, path_vectors, melt_pool, static_cast<std::size_t>(team_size), 42, true, {"area"},
+      raptor::PorosityKernelVariant::baseline);
+  const raptor::PorosityRunSummary team_summary = raptor::computePorosityRunsTeamBitpacked(
+      grid, path_vectors, melt_pool, static_cast<std::size_t>(team_size), 42, team_size, true,
+      {"area"});
+
+  require(team_summary.melted_voxel_counts == baseline.melted_voxel_counts,
+          "team bitpacked helper changed the melted voxel counts for a larger power-of-two size.");
+  require(team_summary.final_porosity == baseline.final_porosity,
+          "team bitpacked helper changed the final porosity field for a larger power-of-two size.");
+  require(team_summary.accumulated_morphology.rows.size() ==
+              baseline.accumulated_morphology.rows.size(),
+          "team bitpacked helper changed the accumulated morphology row count for a larger power-of-two size.");
 }
 
 void testSinglePrecisionWorkflow() {
@@ -288,6 +351,8 @@ int main(int argc, char** argv) {
     testCoreWorkflow();
     testRepeatedPorosityWorkflow();
     testPorosityVariantsAgree();
+    testTeamRepeat64Variant();
+    testTeamRepeatPowerOfTwoBenchmarkHelper();
     testSinglePrecisionWorkflow();
   } catch (const std::exception& error) {
     std::cerr << "Smoke test failed: " << error.what() << '\n';

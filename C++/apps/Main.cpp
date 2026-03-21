@@ -13,6 +13,11 @@
 
 namespace {
 
+// Report the active Kokkos execution space so runs make the backend explicit up front.
+void printExecutionSpace() {
+  std::cout << "Kokkos execution space: " << Kokkos::DefaultExecutionSpace::name() << '\n';
+}
+
 std::filesystem::path resolvePath(const std::filesystem::path& base,
                                   const std::filesystem::path& candidate) {
   return candidate.is_absolute() ? candidate : base / candidate;
@@ -165,6 +170,7 @@ int runMain(const std::string& config_file) {
 int main(int argc, char** argv) {
   Kokkos::initialize(argc, argv);
   try {
+    printExecutionSpace();
     if (argc != 2) {
       std::cerr << "Usage: Main <config.yaml>\n";
       Kokkos::finalize();

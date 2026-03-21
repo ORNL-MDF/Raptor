@@ -30,9 +30,10 @@ using BoundBoxT = std::array<Vec3T<Real>, 2>;
 enum class PorosityKernelVariant {
   baseline,
   cached,
+  bitpacked_repeats,
   seed_batch4,
   team_tile_seed_batch4,
-  auto_select
+  team_bitpacked_repeat64
 };
 
 template <typename Real>

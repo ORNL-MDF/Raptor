@@ -14,6 +14,11 @@
 namespace raptor {
 namespace {
 
+// Report the active Kokkos execution space so benchmark logs show the actual backend in use.
+void printExecutionSpace() {
+  std::cout << "Kokkos execution space: " << Kokkos::DefaultExecutionSpace::name() << '\n';
+}
+
 // Read a boolean benchmark override from the environment using 0/1 or true/false strings.
 bool readEnvBool(const char* name, bool fallback) {
   const char* value = std::getenv(name);
@@ -134,7 +139,7 @@ int runRVETyped(FloatingPrecision precision) {
   const std::size_t repeats = readEnvSizeT("RAPTOR_RVE_REPEATS", 1);
   const std::uint64_t base_seed = readEnvUint64("RAPTOR_RVE_BASE_SEED", 7);
   const PorosityKernelVariant variant =
-      readEnvVariant("RAPTOR_POROSITY_VARIANT", PorosityKernelVariant::auto_select);
+      readEnvVariant("RAPTOR_POROSITY_VARIANT", PorosityKernelVariant::baseline);
   const std::vector<std::string> morphology_fields =
       write_morphology ? std::vector<std::string>{"area", "equivalent_diameter_area"}
                        : std::vector<std::string>{};
@@ -192,6 +197,7 @@ int runRVE() {
 int main(int argc, char** argv) {
   Kokkos::initialize(argc, argv);
   try {
+    raptor::printExecutionSpace();
     const int result = raptor::runRVE();
     Kokkos::finalize();
     return result;
