@@ -1,0 +1,106 @@
+# =============================================================================
+# Copyright (c) 2025 Oak Ridge National Laboratory
+#
+# All rights reserved.
+#
+# This file is part of Raptor.
+#
+# For details, see the top-level LICENSE file at:
+# https://github.com/ORNL-MDF/Raptor/LICENSE
+# =============================================================================
+import numpy as np
+from pathlib import Path
+from raptor.io import read_data
+from raptor.api import (
+    create_path_vectors,
+    create_melt_pool,
+    create_grid,
+    compute_porosity,
+    write_vtk,
+    compute_morphology,
+    write_morphology,
+    visualize,
+)
+from raptor.utilities import ScanPathBuilder, MeltPoolFilter
+
+# 1. Create voxel grid for the representative volume element (RVE)
+min_point = np.array([0.0, 0.0, 0.0])
+max_point = np.array([5.0e-4, 5.0e-4, 5.0e-4])
+bound_box = np.array([min_point, max_point])
+voxel_resolution = 5.0e-6
+
+grid = create_grid(voxel_resolution, bound_box=bound_box)
+
+# 2. Create path vectors through the representative volume element (RVE)
+power = 370
+velocity = 1.7
+hatch_spacing = 140e-6
+layer_height = 30e-6
+rotation = 67
+scan_extension = max(max_point - min_point)
+extra_layers = 0
+
+scan_path_builder = ScanPathBuilder(
+    bound_box,
+    power,
+    velocity,
+    hatch_spacing,
+    layer_height,
+    rotation,
+    scan_extension,
+    extra_layers,
+)
+
+scan_path_builder.generate_layers()
+path_vectors = scan_path_builder.process_vectors()
+
+# 3. Create melt pools from convolution filter
+mean = 148.0e-6
+std_dev = 18.0e-6
+frequency = 250000
+duration = 0.08
+
+# Instantiate object
+mp_filter = MeltPoolFilter(mean, std_dev, velocity, [frequency, duration])
+
+# Define physical scales
+mp_filter.add_effect("melt_pool", [800e-6, None, 1])
+
+# Generate stochastic melt pool
+mp_filter.initialize()
+width_data = mp_filter.generate_fluctuations(1)
+
+n_modes = 50
+
+# scale melt pool data by constant factor
+width_scale = 1.0
+depth_scale = 0.8
+height_scale = 0.4
+
+# assign shape to melt pool and cap (1 = parabola, 2 = ellipse)
+width_shape = 2  # placeholder
+height_shape = 1
+depth_shape = 1
+
+melt_pool_dict = {
+    "width": (width_data, n_modes, width_scale, width_shape),
+    "depth": (width_data, n_modes, depth_scale, depth_shape),
+    "height": (width_data, n_modes, height_scale, height_shape),
+}
+
+melt_pool = create_melt_pool(melt_pool_dict, enable_random_phases=True)
+
+# 4. Compute porosity using conic section / superellipse curves for melt pool mask
+porosity = compute_porosity(grid, path_vectors, melt_pool, jit_warmup=True)
+
+# 5. Write porosity field to .VTI
+write_vtk(grid.origin, grid.resolution, porosity, "rve.vti")
+
+# 6. Compute morphology
+morphology = compute_morphology(
+    porosity, voxel_resolution, ["area", "equivalent_diameter_area"]
+)
+write_morphology(morphology, "rve_morphology.csv")
+
+# 7. Visualize using PyVista
+visualize("./rve.vti")
