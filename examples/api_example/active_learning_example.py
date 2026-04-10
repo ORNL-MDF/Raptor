@@ -92,9 +92,7 @@ def defects_model(
     # Run Raptor and calculate defect metrics
     defect_metrics = []
     for i in range(num_rves):
-        porosity = compute_porosity(
-            grid, path_vectors, melt_pool, (i == 0)  # jit warmup
-        )
+        porosity = compute_porosity(grid, path_vectors, melt_pool, (i == 0))
         metrics = compute_morphology(porosity, grid.resolution, metric_names)
         defect_metrics.append(metrics)
 
@@ -110,7 +108,6 @@ def defects_model(
     return combined_metrics
 
 
-# --- Run example ---
 if __name__ == "__main__":
 
     hatch_spacing_m = np.array([60, 80, 100, 120, 140, 160, 180, 200]) * 1e-6
