@@ -58,23 +58,19 @@ BOUNDS = [[60e-6, 200e-6]]  # Hatch spacing in meters
 UNIT_BOUNDS = [[0.0, 1.0]]
 NUM_DIMS = len(BOUNDS)
 
-INITIAL_DATA_SIZE = 8   # Number of initial LHS points
-MAX_ITERATIONS = 20     # Number of active learning iterations
+INITIAL_DATA_SIZE = 8  # Number of initial LHS points
+MAX_ITERATIONS = 25  # Number of active learning (AL) iterations
+
+# Global seed for deterministic active learning
+SEED = 42
+random.seed(SEED)
+np.random.seed(SEED)
+
 MESHGRID_SIZE = 101
 
-# Ensemble parameters (sampling around suggested point)
-ENSEMBLE_SIZE = 8
-LOCAL_FRAC = 0.1
-
 INITIAL_POINTS_TO_PREDICT = np.linspace(
-    BOUNDS[0][0],
-    BOUNDS[0][1],
-    MESHGRID_SIZE
+    BOUNDS[0][0], BOUNDS[0][1], MESHGRID_SIZE
 ).reshape(-1, 1)
-
-# History tracking
-HISTORY_X: list[list[float]] = []
-HISTORY_Y: list[float] = []
 
 
 # -----------------------------------------------------------------------------
@@ -106,10 +102,7 @@ def run_raptor(
     rve_max_point = np.array([5e-4, 5e-4, 5e-4])
     rve_bounding_box = np.array([rve_min_point, rve_max_point])
 
-    grid = create_grid(
-        voxel_resolution=voxel_resolution_m,
-        bound_box=rve_bounding_box
-    )
+    grid = create_grid(voxel_resolution=voxel_resolution_m, bound_box=rve_bounding_box)
 
     SCRIPT_DIR = Path(__file__).resolve().parent
     melt_pool_data_path = (
@@ -164,12 +157,7 @@ def run_raptor(
 
     defect_metrics = []
     for i in range(num_rves):
-        porosity = compute_porosity(
-            grid,
-            path_vectors,
-            melt_pool,
-            False  # jit warmup
-        )
+        porosity = compute_porosity(grid, path_vectors, melt_pool, False)  # jit warmup
         metrics = compute_morphology(porosity, grid.resolution, metric_names)
         defect_metrics.append(metrics)
 
@@ -182,9 +170,11 @@ def run_raptor(
         else:
             combined_metrics[name] = np.array([])
 
-    mean, _ = compute_mean_and_std(combined_metrics["equivalent_diameter_area"])
+    mean, std = compute_mean_and_std(combined_metrics["equivalent_diameter_area"])
 
-    print("Hatch spacing: ", hatch_spacing_m, "Mean pore size: ", mean)
+    print("Hatch spacing: ", hatch_spacing_m)
+    print("Pore size (mean): ", mean)
+    print("Pore size (std):  ", std)
     return mean
 
 
@@ -207,30 +197,12 @@ def x_from_unit(U):
 
 def get_data_point(x_suggested):
     """
-    Runs the suggested point plus a few local variations to account for simulation noise.
+    Runs the suggested point.
     """
-    ensemble_xs = [x_suggested]
+    x_ = [np.clip(x_suggested[0], BOUNDS[0][0], BOUNDS[0][1])]
+    y_ = run_raptor(x_[0])
 
-    span = BOUNDS[0][1] - BOUNDS[0][0]
-    for _ in range(ENSEMBLE_SIZE - 1):
-        delta = (random.random() - 0.5) * 2 * LOCAL_FRAC * span
-        new_x = np.clip(
-            x_suggested[0] + delta,
-            BOUNDS[0][0],
-            BOUNDS[0][1]
-        )
-        ensemble_xs.append([new_x])
-
-    results_y = []
-    for x_vec in ensemble_xs:
-        y = run_raptor(x_vec[0])
-        HISTORY_X.append(x_vec)
-        HISTORY_Y.append(y)
-        results_y.append(y)
-
-    # Return the best (lowest defect diameter) found in the local ensemble
-    best_idx = np.argmin(results_y)
-    return ensemble_xs[best_idx], results_y[best_idx]
+    return x_, y_
 
 
 # -----------------------------------------------------------------------------
@@ -238,12 +210,14 @@ def get_data_point(x_suggested):
 # -----------------------------------------------------------------------------
 def plot_1d_surrogate(mean_grid, variance_grid, dataset_x, dataset_y):
     Xg = np.linspace(BOUNDS[0][0], BOUNDS[0][1], MESHGRID_SIZE)
-    hx = np.array(HISTORY_X).flatten()
-    hy = np.array(HISTORY_Y)
+
+    train_x = np.array(dataset_x).flatten()
+    train_y = np.array(dataset_y)
 
     plt.figure(figsize=(8, 5))
     plt.plot(Xg, mean_grid.flatten(), "b-", label="GP Mean")
     std = np.sqrt(variance_grid.flatten())
+
     plt.fill_between(
         Xg,
         mean_grid.flatten() - 2 * std,
@@ -252,13 +226,13 @@ def plot_1d_surrogate(mean_grid, variance_grid, dataset_x, dataset_y):
         alpha=0.2,
         label="95% Conf",
     )
-    plt.scatter(hx, hy, c="black", s=20, alpha=0.5, label="All Samples")
+
     plt.scatter(
-        np.array(dataset_x).flatten(),
-        dataset_y,
+        train_x,
+        train_y,
         c="red",
         marker="x",
-        label="Active Learning Selections",
+        label="Raptor training points",
     )
 
     plt.xlabel("Hatch Spacing (m)")
@@ -279,21 +253,17 @@ class ActiveLearningOrchestrator:
         self.workflow_id = ""
 
         logger.info(f"Performing cold start with {INITIAL_DATA_SIZE} points...")
-        lhs = qmc.LatinHypercube(d=NUM_DIMS)
+        lhs = qmc.LatinHypercube(d=NUM_DIMS, seed=SEED)
         self.dataset_x = qmc.scale(
             lhs.random(n=INITIAL_DATA_SIZE),
             [b[0] for b in BOUNDS],
             [b[1] for b in BOUNDS],
         ).tolist()
 
-        self.dataset_y = []
-        for x in self.dataset_x:
-            y = run_raptor(x[0])
-            self.dataset_y.append(y)
-            HISTORY_X.append(x)
-            HISTORY_Y.append(y)
+        self.dataset_y = [run_raptor(x[0]) for x in self.dataset_x]
 
         self.dataset_x_unit = x_to_unit(self.dataset_x).tolist()
+
         self.bounds_unit = UNIT_BOUNDS
 
     def assemble_message(
@@ -309,7 +279,7 @@ class ActiveLearningOrchestrator:
                 length_per_dimension=True,
                 y_is_good=False,
                 backend="sklearn",
-                seed=-1,
+                seed=SEED,
                 preprocess_standardize=False,
             )
         elif operation == "update_workflow_with_data":
@@ -349,8 +319,6 @@ class ActiveLearningOrchestrator:
         payload: INTERSECT_JSON_VALUE,
     ) -> IntersectClientCallback:
 
-        print("in call")
-
         if has_error:
             print("============ERROR==============", file=sys.stderr)
             print(operation, file=sys.stderr)
@@ -371,10 +339,7 @@ class ActiveLearningOrchestrator:
 
             if self.iteration_count >= MAX_ITERATIONS:
                 plot_1d_surrogate(
-                    self.mean_grid,
-                    self.variance,
-                    self.dataset_x,
-                    self.dataset_y
+                    self.mean_grid, self.variance, self.dataset_x, self.dataset_y
                 )
                 logger.info("Max iterations reached. Optimization complete.")
                 raise Exception("DONE")
@@ -382,33 +347,31 @@ class ActiveLearningOrchestrator:
 
         if operation == "dial.get_next_point":
             x_suggested_unit = np.array(payload).reshape(1, -1)
-            x_suggested_raw = x_from_unit(x_suggested_unit)[0].tolist()
+            x_suggested = x_from_unit(x_suggested_unit)[0].tolist()
 
             logger.info(
                 f"Iteration {self.iteration_count}: "
-                f"DIAL suggests HS={x_suggested_raw[0]*1e6:.2f}um"
+                f"DIAL suggests HS={x_suggested[0]*1e6:.2f}um"
             )
 
-            best_x, best_y = get_data_point(x_suggested_raw)
+            new_x, new_y = get_data_point(x_suggested)
 
-            self.dataset_x.append(best_x)
-            self.dataset_y.append(best_y)
-            best_x_unit = x_to_unit(best_x).flatten().tolist()
-            self.dataset_x_unit.append(best_x_unit)
+            self.dataset_x.append(new_x)
+            self.dataset_y.append(new_y)
+
+            new_x_unit = x_to_unit(new_x).flatten().tolist()
+            self.dataset_x_unit.append(new_x_unit)
 
             self.iteration_count += 1
 
             plot_1d_surrogate(
-                self.mean_grid,
-                self.variance,
-                self.dataset_x,
-                self.dataset_y
+                self.mean_grid, self.variance, self.dataset_x, self.dataset_y
             )
 
             return self.assemble_message(
                 "update_workflow_with_data",
-                next_x=best_x_unit,
-                next_y=float(best_y),
+                next_x=new_x_unit,
+                next_y=float(new_y),
             )
 
 
