@@ -11,8 +11,10 @@
 import time
 from typing import List, Tuple, Optional, Dict, Any
 import numpy as np
+import pandas as pd
 import vtk
 from vtk.util import numpy_support
+import pyvista as pv
 from skimage import measure
 from skimage.morphology import remove_small_objects
 
@@ -259,15 +261,42 @@ def write_morphology(properties: dict, morphology_output_path: str) -> None:
     """
     Writes morphology output as a .csv.
     """
-    columns = ",".join([key for key in properties.keys()])
 
-    morphology = np.vstack([properties[key] for key in properties.keys()]).transpose()
-
-    np.savetxt(
-        morphology_output_path, morphology, header=columns, delimiter=",", comments=""
-    )
+    morphology_df = pd.DataFrame(properties, index=None)
+    morphology_df.to_csv(morphology_output_path, index=False)
 
     print(
-        f"Morphology features of {morphology.shape[0]} "
+        f"Morphology features of {len(morphology_df)} "
         f"defects written to: {morphology_output_path}"
     )
+
+
+def visualize(vtk_output_path: str, scaling=1e6) -> None:
+    """
+    Visualizes porosity field using PyVista. Defaults to scaling from meters to microns for better labeling.
+    """
+    rve = pv.read(vtk_output_path)
+    isosurface = rve.contour(isosurfaces=5)
+
+    # Outline of the original domain
+    outline = rve.outline()
+
+    # Set up the plotter
+    pl = pv.Plotter()
+    pl.add_mesh(isosurface, color="red", opacity=0.8)
+    pl.add_mesh(outline, color="black", line_width=1)
+    label_args = {
+        "font_size": 12,
+        "color": "black",
+        "font_family": "arial",
+        "fmt": "%.0e",
+    }
+    pl.show_grid(
+        xtitle="X (um)",
+        ytitle="Y (um)",
+        ztitle="Z (um)",
+        grid=False,
+        location="outer",
+        **label_args,
+    )
+    pl.show()

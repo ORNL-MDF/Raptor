@@ -201,11 +201,10 @@ def main() -> int:
 
         # write morphology metrics (optional)
         if morphology_fields:
-            write_morphology
-            (
-                compute_morphology(porosity, voxel_resolution, morphology_fields),
-                morphology_file,
+            defect_morphologies = compute_morphology(
+                porosity, voxel_resolution, morphology_fields
             )
+            write_morphology(defect_morphologies, morphology_file)
 
     except FileNotFoundError as e:
         print(f"Error: {e}")
