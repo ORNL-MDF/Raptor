@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 from scipy.stats import qmc
 
 # Raptor Imports
+from numba import njit
 from raptor.io import read_data
 from raptor.api import (
     create_grid,
@@ -22,7 +23,7 @@ from raptor.api import (
     compute_porosity,
     compute_morphology,
 )
-from raptor.utilities import ScanPathBuilder
+from raptor.utilities import ScanPathBuilder, MeltPoolFilter
 
 # Intersect Imports
 from intersect_sdk import (
@@ -54,6 +55,9 @@ logger = logging.getLogger(__name__)
 # -----------------------------------------------------------------------------
 # USER PARAMETERS
 # -----------------------------------------------------------------------------
+WIDTH_MEAN = 148.0e-6
+WIDTH_STD = 18.0e-6
+
 BOUNDS = [[60e-6, 200e-6]]  # Hatch spacing in meters
 UNIT_BOUNDS = [[0.0, 1.0]]
 NUM_DIMS = len(BOUNDS)
@@ -61,10 +65,13 @@ NUM_DIMS = len(BOUNDS)
 INITIAL_DATA_SIZE = 8  # Number of initial LHS points
 MAX_ITERATIONS = 25  # Number of active learning (AL) iterations
 
-# Global seed for deterministic active learning
 SEED = 42
-random.seed(SEED)
-np.random.seed(SEED)
+
+
+@njit
+def seed_numba(seed):
+    np.random.seed(seed)
+
 
 MESHGRID_SIZE = 101
 
@@ -98,40 +105,19 @@ def run_raptor(
     metric_names: list[str] = ["equivalent_diameter_area"],
 ):
     """Executes a single Raptor simulation."""
+    # Re-seed at the start of every ensemble for independent determinism
+    random.seed(SEED)
+    np.random.seed(SEED)
+    seed_numba(SEED)
+
+    # 1. Create voxel grid
     rve_min_point = np.array([0.0, 0.0, 0.0])
     rve_max_point = np.array([5e-4, 5e-4, 5e-4])
     rve_bounding_box = np.array([rve_min_point, rve_max_point])
 
     grid = create_grid(voxel_resolution=voxel_resolution_m, bound_box=rve_bounding_box)
 
-    SCRIPT_DIR = Path(__file__).resolve().parent
-    melt_pool_data_path = (
-        SCRIPT_DIR / ".." / "data" / "meltPoolData" / "ULI_v1700_theta0_widths.txt"
-    )
-    base_width_data = read_data(melt_pool_data_path)
-    melt_pool_dict = {
-        "width": (
-            base_width_data,
-            50,
-            1.0,
-            2,
-        ),
-        "depth": (
-            base_width_data,
-            50,
-            0.8,
-            1,
-        ),
-        "height": (
-            base_width_data,
-            50,
-            0.4,
-            1,
-        ),
-    }
-    melt_pool = create_melt_pool(melt_pool_dict, enable_random_phases=True)
-
-    # Build the laser paths
+    # 2. Build the laser scan path
     laser_power_watts = 370.0
     laser_velocity_m_per_s = 1.7
     layer_rotation_angle_deg = 67.0
@@ -151,13 +137,48 @@ def run_raptor(
     scan_path_builder.generate_layers()
     path_vectors = scan_path_builder.process_vectors()
 
-    # Run Raptor and calculate defect metrics
+    # 3. Create stochastic melt pool model using convolution filter
+    frequency = 250000
+    duration = 0.08
+    sampling_rate = [frequency, duration]
+
+    melt_pool_filter = MeltPoolFilter(
+        WIDTH_MEAN, WIDTH_STD, laser_velocity_m_per_s, sampling_rate
+    )
+    melt_pool_filter.add_effect("melt_pool", [800e-6, None, 1])
+    melt_pool_filter.initialize()
+    width_data = melt_pool_filter.generate_fluctuations(1)
+
+    # 4. Create stochastic geometry model for melt pool mask
+    melt_pool_dict = {
+        "width": (
+            width_data,
+            50,  # number of modes in series expansion
+            1.0,  # scale
+            2,  # shape: ellipse
+        ),
+        "depth": (
+            width_data,
+            50,  # number of modes in series expansion
+            0.8,  # scale
+            1,  # shape: parabola
+        ),
+        "height": (
+            width_data,
+            50,  # number of modes in series expansion
+            0.4,  # scale
+            1,  # shape: parabola
+        ),
+    }
+    melt_pool = create_melt_pool(melt_pool_dict, enable_random_phases=True)
+
+    # 5. Run Raptor and calculate defect metrics
     rve_volume_mm3 = (1e3 * (rve_max_point - rve_min_point)).prod()
     num_rves = int(np.ceil(query_volume_mm3 / rve_volume_mm3))
 
     defect_metrics = []
     for i in range(num_rves):
-        porosity = compute_porosity(grid, path_vectors, melt_pool, False)  # jit warmup
+        porosity = compute_porosity(grid, path_vectors, melt_pool, False)
         metrics = compute_morphology(porosity, grid.resolution, metric_names)
         defect_metrics.append(metrics)
 
@@ -172,9 +193,7 @@ def run_raptor(
 
     mean, std = compute_mean_and_std(combined_metrics["equivalent_diameter_area"])
 
-    print("Hatch spacing: ", hatch_spacing_m)
-    print("Pore size (mean): ", mean)
-    print("Pore size (std):  ", std)
+    print(f"Hatch Spacing: {hatch_spacing_m*1e6:.1f}um | Mean Pore Size: {mean:.2f}um")
     return mean
 
 
@@ -232,7 +251,7 @@ def plot_1d_surrogate(mean_grid, variance_grid, dataset_x, dataset_y):
         train_y,
         c="red",
         marker="x",
-        label="Raptor training points",
+        label="training points",
     )
 
     plt.xlabel("Hatch Spacing (m)")
