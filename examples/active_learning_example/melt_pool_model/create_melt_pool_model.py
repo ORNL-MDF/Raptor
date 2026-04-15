@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 # -----------------------------------------------------------------------------
 # USER PARAMETERS
 # -----------------------------------------------------------------------------
-INITIAL_BOUNDS = [[500, 1500], [100, 300]]  # [velocity, power]
+INITIAL_BOUNDS = [[0.5, 1.5], [100, 300]]  # [velocity (m/s), power (W)]
 UNIT_BOUNDS = [[0.0, 1.0], [0.0, 1.0]]
 NUM_DIMS = len(INITIAL_BOUNDS)
 MESHGRID_SIZE = 101
@@ -68,7 +68,7 @@ def x_from_unit(U):
     return U * (hi - lo) + lo
 
 
-def melt_pool_dataset():
+def melt_pool_dataset(convert_to_m_per_s: float = 1e-3, convert_to_m: float = 1e-6):
     json_files = [
         "parameters_A.json",
         "parameters_B.json",
@@ -102,12 +102,18 @@ def melt_pool_dataset():
 
     df = pd.DataFrame(data_dict)
 
+    df["Velocity"] = df["Velocity"] * convert_to_m_per_s
+
     power = pd.concat([df["Power"], df["Power"]], ignore_index=True)
     velocity = pd.concat([df["Velocity"], df["Velocity"]], ignore_index=True)
 
     depth = pd.concat([df["right_depth"], df["left_depth"]], ignore_index=True)
     width = pd.concat([df["right_width"], df["left_width"]], ignore_index=True)
     height = pd.concat([df["right_height"], df["left_height"]], ignore_index=True)
+
+    depth = depth * convert_to_m
+    width = width * convert_to_m
+    height = height * convert_to_m
 
     combined_df = pd.DataFrame(
         {
@@ -158,9 +164,9 @@ def graph(mean_grid, variance, dataset_x, feature_name):
         extend="both",
     )
     cbar = plt.colorbar()
-    cbar.set_label(f"{feature_name} (um)")
+    cbar.set_label(f"{feature_name} (m)")
 
-    plt.xlabel("Velocity (um/s)")
+    plt.xlabel("Velocity (m/s)")
     plt.ylabel("Power (W)")
 
     X_train = np.array(dataset_x)
@@ -214,7 +220,7 @@ class ActiveLearningOrchestrator:
                 y_is_good=False,
                 backend="sklearn",
                 seed=-1,
-                preprocess_standardize=False,
+                preprocess_standardize=True,
             )
         elif operation == "update_workflow_with_data":
             payload = DialWorkflowDatasetUpdate(
@@ -279,6 +285,20 @@ class ActiveLearningOrchestrator:
             if self.feature_idx < len(self.features):
                 return self.assemble_message("initialize_workflow")
             else:
+                save_data = {}
+                for feature, (mean_grid, _) in self.surrogate_results.items():
+                    save_data[f"{feature}"] = mean_grid
+
+                save_data["velocity"] = np.linspace(
+                    INITIAL_BOUNDS[0][0], INITIAL_BOUNDS[0][1], MESHGRID_SIZE
+                )
+                save_data["power"] = np.linspace(
+                    INITIAL_BOUNDS[1][0], INITIAL_BOUNDS[1][1], MESHGRID_SIZE
+                )
+
+                np.savez("melt_pool_surrogates.npz", **save_data)
+                print("Saved surrogates to 'melt_pool_surrogates.npz'")
+
                 raise Exception("DONE!")
 
         if operation == "dial.get_next_point":

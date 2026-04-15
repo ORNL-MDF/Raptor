@@ -13,7 +13,6 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from scipy.stats import qmc
-from scipy.interpolate import RegularGridInterpolator
 
 # Raptor Imports
 from numba import njit
@@ -56,8 +55,8 @@ logger = logging.getLogger(__name__)
 # -----------------------------------------------------------------------------
 # USER PARAMETERS
 # -----------------------------------------------------------------------------
-LASER_POWER_WATTS = 200.0
-LASER_VELOCITY_M_S = 1.0
+WIDTH_MEAN = 148.0e-6
+WIDTH_STD = 18.0e-6
 
 BOUNDS = [[60e-6, 200e-6]]  # Hatch spacing in meters
 UNIT_BOUNDS = [[0.0, 1.0]]
@@ -80,42 +79,10 @@ INITIAL_POINTS_TO_PREDICT = np.linspace(
     BOUNDS[0][0], BOUNDS[0][1], MESHGRID_SIZE
 ).reshape(-1, 1)
 
-MELT_POOL_SURROGATE_PATH = os.path.abspath(
-    os.path.join(
-        os.path.dirname(__file__), "..", "melt_pool_model", "melt_pool_surrogates.npz"
-    )
-)
-
 
 # -----------------------------------------------------------------------------
-# RAPTOR UTILITIES
+# RAPTOR
 # -----------------------------------------------------------------------------
-class MeltPoolInterpolator:
-    def __init__(self, filepath: str):
-        data = np.load(filepath)
-        self.v_axis = data["velocity"]
-        self.p_axis = data["power"]
-
-        self.features = [
-            "depth_mean",
-            "depth_std",
-            "width_mean",
-            "width_std",
-            "height_mean",
-            "height_std",
-        ]
-
-        self.interpolators = {}
-        for f in self.features:
-            self.interpolators[f] = RegularGridInterpolator(
-                (self.v_axis, self.p_axis), data[f]
-            )
-
-    def query(self, velocity: float, power: float):
-        point = np.array([velocity, power])
-        return {f: float(self.interpolators[f](point)) for f in self.features}
-
-
 def compute_mean_and_std(defects: np.ndarray):
     if len(defects) == 0:
         y = 0.0
@@ -132,79 +99,80 @@ def compute_mean_and_std(defects: np.ndarray):
 
 def run_raptor(
     hatch_spacing_m: float,
-    mp_interpolator: MeltPoolInterpolator,
-    layer_thickness_m: float = 40e-6,
+    layer_thickness_m: float = 50e-6,
     query_volume_mm3: float = 1.0,
     voxel_resolution_m: float = 5.0e-6,
     metric_names: list[str] = ["equivalent_diameter_area"],
 ):
-    """Executes a single Raptor simulation using dynamic melt pool surrogates."""
+    """Executes a single Raptor simulation."""
     # Re-seed at the start of every ensemble for independent determinism
     random.seed(SEED)
     np.random.seed(SEED)
     seed_numba(SEED)
 
-    # 1. Query the surrogates for power and velocity combination
-    mp_stats = mp_interpolator.query(LASER_VELOCITY_M_S, LASER_POWER_WATTS)
-
-    # 2. Create voxel grid
+    # 1. Create voxel grid
     rve_min_point = np.array([0.0, 0.0, 0.0])
     rve_max_point = np.array([5e-4, 5e-4, 5e-4])
     rve_bounding_box = np.array([rve_min_point, rve_max_point])
 
     grid = create_grid(voxel_resolution=voxel_resolution_m, bound_box=rve_bounding_box)
 
-    # 3. Build the laser scan path
+    # 2. Build the laser scan path
+    laser_power_watts = 370.0
+    laser_velocity_m_per_s = 1.7
+    layer_rotation_angle_deg = 67.0
+    scan_extension_distance_m = max(rve_max_point - rve_min_point)
+    num_extra_layers = 0
+
     scan_path_builder = ScanPathBuilder(
         rve_bounding_box,
-        LASER_POWER_WATTS,
-        LASER_VELOCITY_M_S,
+        laser_power_watts,
+        laser_velocity_m_per_s,
         hatch_spacing_m,
         layer_thickness_m,
-        67.0,
-        max(rve_max_point - rve_min_point),
-        0,
+        layer_rotation_angle_deg,
+        scan_extension_distance_m,
+        num_extra_layers,
     )
     scan_path_builder.generate_layers()
     path_vectors = scan_path_builder.process_vectors()
 
-    # 4. Create stochastic melt pool model using convolution filter and surrogates
+    # 3. Create stochastic melt pool model using convolution filter
     frequency = 250000
     duration = 0.08
     sampling_rate = [frequency, duration]
 
-    # Use width surrogate for the fluctuation series
     melt_pool_filter = MeltPoolFilter(
-        mp_stats["width_mean"], mp_stats["width_std"], LASER_VELOCITY_M_S, sampling_rate
+        WIDTH_MEAN, WIDTH_STD, laser_velocity_m_per_s, sampling_rate
     )
-    melt_pool_filter.add_effect("melt_pool", [1000e-6, None, 1])
+    melt_pool_filter.add_effect("melt_pool", [800e-6, None, 1])
     melt_pool_filter.initialize()
     width_data = melt_pool_filter.generate_fluctuations(1)
 
-    # 5. Create stochastic geometry model
+    # 4. Create stochastic geometry model for melt pool mask
     melt_pool_dict = {
         "width": (
             width_data,
-            50,
-            1.0,
-            2,
+            50,  # number of modes in series expansion
+            1.0,  # scale
+            2,  # shape: ellipse
         ),
         "depth": (
             width_data,
-            50,
-            mp_stats["depth_mean"] / mp_stats["width_mean"],
-            1,
+            50,  # number of modes in series expansion
+            0.8,  # scale
+            1,  # shape: parabola
         ),
         "height": (
             width_data,
-            50,
-            mp_stats["height_mean"] / mp_stats["width_mean"],
-            1,
+            50,  # number of modes in series expansion
+            0.4,  # scale
+            1,  # shape: parabola
         ),
     }
     melt_pool = create_melt_pool(melt_pool_dict, enable_random_phases=True)
 
-    # 6. Run Raptor and calculate defect metrics
+    # 5. Run Raptor and calculate defect metrics
     rve_volume_mm3 = (1e3 * (rve_max_point - rve_min_point)).prod()
     num_rves = int(np.ceil(query_volume_mm3 / rve_volume_mm3))
 
@@ -217,6 +185,7 @@ def run_raptor(
     combined_metrics = {}
     for name in metric_names:
         arrays_to_concat = [m[name] for m in defect_metrics if name in m]
+
         if arrays_to_concat:
             combined_metrics[name] = np.concatenate(arrays_to_concat)
         else:
@@ -224,9 +193,7 @@ def run_raptor(
 
     mean, std = compute_mean_and_std(combined_metrics["equivalent_diameter_area"])
 
-    print(
-        f"Hatch Spacing: {hatch_spacing_m*1e6:.1f}um | Mean Pore Size: {mean*1e6:.2f}um"
-    )
+    print(f"Hatch Spacing: {hatch_spacing_m*1e6:.1f}um | Mean Pore Size: {mean:.2f}um")
     return mean
 
 
@@ -247,12 +214,12 @@ def x_from_unit(U):
     return U * (hi - lo) + lo
 
 
-def get_data_point(x_suggested, mp_interpolator):
+def get_data_point(x_suggested):
     """
-    Runs the suggested point using the dynamic melt pool interpolator.
+    Runs the suggested point.
     """
     x_ = [np.clip(x_suggested[0], BOUNDS[0][0], BOUNDS[0][1])]
-    y_ = run_raptor(x_[0], mp_interpolator)
+    y_ = run_raptor(x_[0])
 
     return x_, y_
 
@@ -304,9 +271,6 @@ class ActiveLearningOrchestrator:
         self.iteration_count = 0
         self.workflow_id = ""
 
-        # Initialize the Melt Pool Surrogate Interpolator
-        self.mp_interpolator = MeltPoolInterpolator(MELT_POOL_SURROGATE_PATH)
-
         logger.info(f"Performing cold start with {INITIAL_DATA_SIZE} points...")
         lhs = qmc.LatinHypercube(d=NUM_DIMS, seed=SEED)
         self.dataset_x = qmc.scale(
@@ -315,9 +279,7 @@ class ActiveLearningOrchestrator:
             [b[1] for b in BOUNDS],
         ).tolist()
 
-        self.dataset_y = [
-            run_raptor(x[0], self.mp_interpolator) for x in self.dataset_x
-        ]
+        self.dataset_y = [run_raptor(x[0]) for x in self.dataset_x]
 
         self.dataset_x_unit = x_to_unit(self.dataset_x).tolist()
 
@@ -354,7 +316,7 @@ class ActiveLearningOrchestrator:
             points_to_predict_unit = x_to_unit(INITIAL_POINTS_TO_PREDICT)
             payload = DialInputPredictions(
                 workflow_id=self.workflow_id,
-                points_to_predict=points_to_predict_unit.tolist(),
+                points_to_predict=points_to_predict_unit,
             )
 
         logger.info(f"✉️ Sending: dial.{operation}")
@@ -411,7 +373,7 @@ class ActiveLearningOrchestrator:
                 f"DIAL suggests HS={x_suggested[0]*1e6:.2f}um"
             )
 
-            new_x, new_y = get_data_point(x_suggested, self.mp_interpolator)
+            new_x, new_y = get_data_point(x_suggested)
 
             self.dataset_x.append(new_x)
             self.dataset_y.append(new_y)
