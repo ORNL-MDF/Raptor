@@ -23,7 +23,6 @@ from intersect_sdk import (
     default_intersect_lifecycle_loop,
 )
 
-# from scipy.stats import qmc
 from dial_dataclass import (
     DialInputPredictions,
     DialInputSingleOtherStrategy,
@@ -39,6 +38,7 @@ logger = logging.getLogger(__name__)
 # USER PARAMETERS
 # -----------------------------------------------------------------------------
 INITIAL_BOUNDS = [[500, 1500], [100, 300]]  # [velocity, power]
+UNIT_BOUNDS = [[0.0, 1.0], [0.0, 1.0]]
 NUM_DIMS = len(INITIAL_BOUNDS)
 MESHGRID_SIZE = 101
 INITIAL_MESHGRIDS = np.meshgrid(
@@ -49,14 +49,26 @@ INITIAL_MESHGRIDS = np.meshgrid(
     indexing="ij",
 )
 INITIAL_POINTS_TO_PREDICT = np.hstack([mg.reshape(-1, 1) for mg in INITIAL_MESHGRIDS])
-NUM_ITERATIONS = 35
 
 
 # -----------------------------------------------------------------------------
 # UTILITIES
 # -----------------------------------------------------------------------------
+def x_to_unit(X):
+    X = np.asarray(X, dtype=float)
+    lo = np.array([b[0] for b in INITIAL_BOUNDS])
+    hi = np.array([b[1] for b in INITIAL_BOUNDS])
+    return (X - lo) / (hi - lo + 1e-12)
+
+
+def x_from_unit(U):
+    U = np.asarray(U, dtype=float)
+    lo = np.array([b[0] for b in INITIAL_BOUNDS])
+    hi = np.array([b[1] for b in INITIAL_BOUNDS])
+    return U * (hi - lo) + lo
+
+
 def melt_pool_dataset():
-    # List of JSON file names
     json_files = [
         "parameters_A.json",
         "parameters_B.json",
@@ -68,39 +80,76 @@ def melt_pool_dataset():
     all_keys = set()
 
     for json_file in json_files:
-        with open(json_file, "r") as file:
-            data = json.load(file)
-            all_keys.update(data.keys())
+        try:
+            with open(json_file, "r") as file:
+                data = json.load(file)
+                all_keys.update(data.keys())
+        except FileNotFoundError:
+            pass
 
     data_dict = {key: [] for key in all_keys}
-    file_labels = []
 
     for json_file in json_files:
-        with open(json_file, "r") as file:
-            data = json.load(file)
-            for key in all_keys:
-                data_dict[key].extend(data.get(key, [None] * len(data_dict[key])))
-            file_labels.extend(
-                [json_file.split("_")[1].split(".")[0]]
-                * len(data.get(list(data.keys())[0], []))
-            )
+        try:
+            with open(json_file, "r") as file:
+                data = json.load(file)
+                for key in all_keys:
+                    data_dict[key].extend(
+                        data.get(key, [None] * len(next(iter(data.values()))))
+                    )
+        except FileNotFoundError:
+            continue
 
     df = pd.DataFrame(data_dict)
-    df["Location"] = file_labels
 
     power = pd.concat([df["Power"], df["Power"]], ignore_index=True)
     velocity = pd.concat([df["Velocity"], df["Velocity"]], ignore_index=True)
 
-    dataset_x = np.stack([velocity, power], axis=1)
-    dataset_y = pd.concat([df["right_depth"], df["left_depth"]], ignore_index=True)
+    depth = pd.concat([df["right_depth"], df["left_depth"]], ignore_index=True)
+    width = pd.concat([df["right_width"], df["left_width"]], ignore_index=True)
+    height = pd.concat([df["right_height"], df["left_height"]], ignore_index=True)
 
-    return dataset_x, dataset_y
+    combined_df = pd.DataFrame(
+        {
+            "Velocity": velocity,
+            "Power": power,
+            "depth": depth,
+            "width": width,
+            "height": height,
+        }
+    )
+
+    grouped = (
+        combined_df.groupby(["Velocity", "Power"])
+        .agg(
+            depth_mean=("depth", "mean"),
+            depth_std=("depth", lambda x: x.std(ddof=0)),
+            width_mean=("width", "mean"),
+            width_std=("width", lambda x: x.std(ddof=0)),
+            height_mean=("height", "mean"),
+            height_std=("height", lambda x: x.std(ddof=0)),
+        )
+        .reset_index()
+    )
+
+    dataset_x = np.stack([grouped["Velocity"], grouped["Power"]], axis=1)
+
+    dataset_y_dict = {
+        "depth_mean": grouped["depth_mean"].values,
+        "depth_std": grouped["depth_std"].values,
+        "width_mean": grouped["width_mean"].values,
+        "width_std": grouped["width_std"].values,
+        "height_mean": grouped["height_mean"].values,
+        "height_std": grouped["height_std"].values,
+    }
+
+    return dataset_x, dataset_y_dict
 
 
 # -----------------------------------------------------------------------------
 # PLOTTING
 # -----------------------------------------------------------------------------
-def graph(mean_grid, variance, dataset_x, dataset_y):
+def graph(mean_grid, variance, dataset_x, feature_name):
     plt.clf()
     plt.contourf(
         INITIAL_MESHGRIDS[0],
@@ -109,7 +158,7 @@ def graph(mean_grid, variance, dataset_x, dataset_y):
         extend="both",
     )
     cbar = plt.colorbar()
-    cbar.set_label("Melt pool depth (um)")
+    cbar.set_label(f"{feature_name} (um)")
 
     plt.xlabel("Velocity (um/s)")
     plt.ylabel("Power (W)")
@@ -119,27 +168,7 @@ def graph(mean_grid, variance, dataset_x, dataset_y):
         X_train[:, 0], X_train[:, 1], facecolor="none", color="black", marker="o"
     )
 
-    plt.savefig("function_value.png")
-
-    plt.clf()
-    plt.contourf(
-        INITIAL_MESHGRIDS[0],
-        INITIAL_MESHGRIDS[1],
-        variance,
-        extend="both",
-    )
-    cbar = plt.colorbar()
-    cbar.set_label("Melt pool depth variance (um)")
-
-    plt.xlabel("Velocity (um/s)")
-    plt.ylabel("Power (W)")
-
-    X_train = np.array(dataset_x)
-    plt.scatter(
-        X_train[:, 0], X_train[:, 1], facecolor="none", color="black", marker="o"
-    )
-
-    plt.savefig("function_variance.png")
+    plt.savefig(f"function_value_{feature_name}.png")
 
 
 # -----------------------------------------------------------------------------
@@ -150,25 +179,42 @@ class ActiveLearningOrchestrator:
         self.service_destination = service_destination
         self.workflow_id = ""
 
-        dataset_x, dataset_y = melt_pool_dataset()
+        dataset_x, dataset_y_dict = melt_pool_dataset()
 
-        self.dataset_x = dataset_x
-        self.dataset_y: list[float] = dataset_y
+        self.dataset_x = dataset_x.tolist()
+        self.dataset_x_unit = x_to_unit(self.dataset_x).tolist()
+        self.dataset_y_dict = dataset_y_dict
+
+        self.bounds_unit = UNIT_BOUNDS
+
+        self.features = [
+            "depth_mean",
+            "depth_std",
+            "width_mean",
+            "width_std",
+            "height_mean",
+            "height_std",
+        ]
+        self.feature_idx = 0
+        self.surrogate_results = {}
 
     def assemble_message(
         self, operation: str, **kwargs: Any
     ) -> IntersectClientCallback:
+        current_feature = self.features[self.feature_idx]
+        current_y = self.dataset_y_dict[current_feature].tolist()
+
         if operation == "initialize_workflow":
             payload = DialWorkflowCreationParamsClient(
-                dataset_x=self.dataset_x,
-                dataset_y=self.dataset_y,
-                bounds=INITIAL_BOUNDS,
+                dataset_x=self.dataset_x_unit,
+                dataset_y=current_y,
+                bounds=self.bounds_unit,
                 kernel="matern",
-                length_per_dimension=False,
+                length_per_dimension=True,
                 y_is_good=False,
                 backend="sklearn",
                 seed=-1,
-                preprocess_standardize=True,
+                preprocess_standardize=False,
             )
         elif operation == "update_workflow_with_data":
             payload = DialWorkflowDatasetUpdate(
@@ -181,9 +227,10 @@ class ActiveLearningOrchestrator:
                 strategy="expected_improvement",
             )
         elif operation == "get_surrogate_values":
+            points_to_predict_unit = x_to_unit(INITIAL_POINTS_TO_PREDICT)
             payload = DialInputPredictions(
                 workflow_id=self.workflow_id,
-                points_to_predict=INITIAL_POINTS_TO_PREDICT,
+                points_to_predict=points_to_predict_unit.tolist(),
             )
 
         return IntersectClientCallback(
@@ -204,8 +251,6 @@ class ActiveLearningOrchestrator:
         payload: INTERSECT_JSON_VALUE,
     ) -> IntersectClientCallback:
 
-        print("in call")
-
         if has_error:
             print("============ERROR==============", file=sys.stderr)
             print(operation, file=sys.stderr)
@@ -218,17 +263,25 @@ class ActiveLearningOrchestrator:
             return self.assemble_message("get_surrogate_values")
 
         if operation == "dial.update_workflow_with_data":
-            # This should go unused for surrogate-only workflows
             pass
 
         if operation == "dial.get_surrogate_values":
-            self.mean_grid = np.array(payload[0]).reshape((MESHGRID_SIZE,) * NUM_DIMS)
-            self.variance = np.array(payload[1]).reshape((MESHGRID_SIZE,) * NUM_DIMS)
-            graph(self.mean_grid, self.variance, self.dataset_x, self.dataset_y)
-            raise Exception("DONE!")
+            mean_grid = np.array(payload[0]).reshape((MESHGRID_SIZE,) * NUM_DIMS)
+            variance = np.array(payload[1]).reshape((MESHGRID_SIZE,) * NUM_DIMS)
+
+            current_feature = self.features[self.feature_idx]
+            self.surrogate_results[current_feature] = (mean_grid, variance)
+
+            graph(mean_grid, variance, self.dataset_x, current_feature)
+
+            self.feature_idx += 1
+
+            if self.feature_idx < len(self.features):
+                return self.assemble_message("initialize_workflow")
+            else:
+                raise Exception("DONE!")
 
         if operation == "dial.get_next_point":
-            # This should go unused for surrogate-only workflows
             pass
 
 
@@ -244,12 +297,8 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    try:
-        with Path(args.config).open("rb") as f:
-            from_config_file = json.load(f)
-    except (json.decoder.JSONDecodeError, OSError) as e:
-        logger.critical("unable to load config file: %s", str(e))
-        sys.exit(1)
+    with Path(args.config).open("rb") as f:
+        from_config_file = json.load(f)
 
     active_learning = ActiveLearningOrchestrator(
         service_destination=HierarchyConfig(

@@ -406,12 +406,8 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    try:
-        with Path(args.config).open("rb") as f:
-            from_config_file = json.load(f)
-    except (json.decoder.JSONDecodeError, OSError) as e:
-        logger.critical("unable to load config file: %s", str(e))
-        sys.exit(1)
+    with Path(args.config).open("rb") as f:
+        from_config_file = json.load(f)
 
     active_learning = ActiveLearningOrchestrator(
         service_destination=HierarchyConfig(
@@ -431,6 +427,4 @@ if __name__ == "__main__":
         user_callback=active_learning,
     )
 
-    default_intersect_lifecycle_loop(
-        client,
-    )
+    default_intersect_lifecycle_loop(client)
