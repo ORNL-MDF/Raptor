@@ -8,10 +8,6 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 from scipy.stats import qmc
 from scipy.interpolate import RegularGridInterpolator
 
@@ -59,12 +55,12 @@ logger = logging.getLogger(__name__)
 LASER_POWER_WATTS = 200.0
 LASER_VELOCITY_M_S = 1.0
 
-BOUNDS = [[60e-6, 200e-6]]  # Hatch spacing in meters
+BOUNDS = [[70e-6, 170e-6]]
 UNIT_BOUNDS = [[0.0, 1.0]]
 NUM_DIMS = len(BOUNDS)
 
-INITIAL_DATA_SIZE = 8  # Number of initial LHS points
-MAX_ITERATIONS = 25  # Number of active learning (AL) iterations
+INITIAL_DATA_SIZE = 20
+MAX_ITERATIONS = 35
 
 SEED = 42
 
@@ -74,7 +70,7 @@ def seed_numba(seed):
     np.random.seed(seed)
 
 
-MESHGRID_SIZE = 101
+MESHGRID_SIZE = 150
 
 INITIAL_POINTS_TO_PREDICT = np.linspace(
     BOUNDS[0][0], BOUNDS[0][1], MESHGRID_SIZE
@@ -112,22 +108,8 @@ class MeltPoolInterpolator:
             )
 
     def query(self, velocity: float, power: float):
-        point = np.array([velocity, power])
-        return {f: float(self.interpolators[f](point)) for f in self.features}
-
-
-def compute_mean_and_std(defects: np.ndarray):
-    if len(defects) == 0:
-        y = 0.0
-        yerr = np.nan
-    elif len(defects) == 1:
-        y = defects[0]
-        yerr = defects[0]
-    else:
-        y = np.mean(defects)
-        yerr = np.std(defects, ddof=1) / np.sqrt(len(defects))
-
-    return y, yerr
+        point = np.array([[velocity, power]])
+        return {f: float(self.interpolators[f](point)[0]) for f in self.features}
 
 
 def run_raptor(
@@ -135,26 +117,21 @@ def run_raptor(
     mp_interpolator: MeltPoolInterpolator,
     layer_thickness_m: float = 40e-6,
     query_volume_mm3: float = 1.0,
-    voxel_resolution_m: float = 5.0e-6,
+    voxel_resolution_m: float = 5e-6,
     metric_names: list[str] = ["equivalent_diameter_area"],
 ):
-    """Executes a single Raptor simulation using dynamic melt pool surrogates."""
-    # Re-seed at the start of every ensemble for independent determinism
     random.seed(SEED)
     np.random.seed(SEED)
     seed_numba(SEED)
 
-    # 1. Query the surrogates for power and velocity combination
     mp_stats = mp_interpolator.query(LASER_VELOCITY_M_S, LASER_POWER_WATTS)
 
-    # 2. Create voxel grid
     rve_min_point = np.array([0.0, 0.0, 0.0])
-    rve_max_point = np.array([5e-4, 5e-4, 5e-4])
+    rve_max_point = np.array([1e-3, 1e-3, 1e-3])
     rve_bounding_box = np.array([rve_min_point, rve_max_point])
 
     grid = create_grid(voxel_resolution=voxel_resolution_m, bound_box=rve_bounding_box)
 
-    # 3. Build the laser scan path
     scan_path_builder = ScanPathBuilder(
         rve_bounding_box,
         LASER_POWER_WATTS,
@@ -168,66 +145,38 @@ def run_raptor(
     scan_path_builder.generate_layers()
     path_vectors = scan_path_builder.process_vectors()
 
-    # 4. Create stochastic melt pool model using convolution filter and surrogates
-    frequency = 250000
-    duration = 0.08
-    sampling_rate = [frequency, duration]
-
-    # Use width surrogate for the fluctuation series
     melt_pool_filter = MeltPoolFilter(
-        mp_stats["width_mean"], mp_stats["width_std"], LASER_VELOCITY_M_S, sampling_rate
+        mp_stats["width_mean"],
+        mp_stats["width_std"],
+        LASER_VELOCITY_M_S,
+        [250000, 0.08],
     )
-    melt_pool_filter.add_effect("melt_pool", [1000e-6, None, 1])
+
+    length_scale = 10.0 * mp_stats["depth_mean"]
+    melt_pool_filter.add_effect("melt_pool", [length_scale, None, 1])
     melt_pool_filter.initialize()
     width_data = melt_pool_filter.generate_fluctuations(1)
 
-    # 5. Create stochastic geometry model
     melt_pool_dict = {
-        "width": (
-            width_data,
-            50,
-            1.0,
-            2,
-        ),
-        "depth": (
-            width_data,
-            50,
-            mp_stats["depth_mean"] / mp_stats["width_mean"],
-            1,
-        ),
-        "height": (
-            width_data,
-            50,
-            mp_stats["height_mean"] / mp_stats["width_mean"],
-            1,
-        ),
+        "width": (width_data, 50, 1.0, 2),
+        "depth": (width_data, 50, mp_stats["depth_mean"] / mp_stats["width_mean"], 1),
+        "height": (width_data, 50, mp_stats["height_mean"] / mp_stats["width_mean"], 1),
     }
     melt_pool = create_melt_pool(melt_pool_dict, enable_random_phases=True)
 
-    # 6. Run Raptor and calculate defect metrics
-    rve_volume_mm3 = (1e3 * (rve_max_point - rve_min_point)).prod()
-    num_rves = int(np.ceil(query_volume_mm3 / rve_volume_mm3))
+    porosity = compute_porosity(grid, path_vectors, melt_pool, False)
+    metrics = compute_morphology(porosity, grid.resolution, metric_names)
 
-    defect_metrics = []
-    for i in range(num_rves):
-        porosity = compute_porosity(grid, path_vectors, melt_pool, False)
-        metrics = compute_morphology(porosity, grid.resolution, metric_names)
-        defect_metrics.append(metrics)
+    combined_defects = metrics["equivalent_diameter_area"]
 
-    combined_metrics = {}
-    for name in metric_names:
-        arrays_to_concat = [m[name] for m in defect_metrics if name in m]
-        if arrays_to_concat:
-            combined_metrics[name] = np.concatenate(arrays_to_concat)
-        else:
-            combined_metrics[name] = np.array([])
+    if len(combined_defects) > 0:
+        max_pore = np.max(combined_defects)
+    else:
+        max_pore = 0.0
 
-    mean, std = compute_mean_and_std(combined_metrics["equivalent_diameter_area"])
+    logger.info(f"Hatch: {hatch_spacing_m*1e6:.1f}um | Max Pore: {max_pore*1e6:.2f}um")
 
-    print(
-        f"Hatch Spacing: {hatch_spacing_m*1e6:.1f}um | Mean Pore Size: {mean*1e6:.2f}um"
-    )
-    return mean
+    return float(np.log1p(max_pore))
 
 
 # -----------------------------------------------------------------------------
@@ -248,51 +197,9 @@ def x_from_unit(U):
 
 
 def get_data_point(x_suggested, mp_interpolator):
-    """
-    Runs the suggested point using the dynamic melt pool interpolator.
-    """
     x_ = [np.clip(x_suggested[0], BOUNDS[0][0], BOUNDS[0][1])]
     y_ = run_raptor(x_[0], mp_interpolator)
-
     return x_, y_
-
-
-# -----------------------------------------------------------------------------
-# PLOTTING
-# -----------------------------------------------------------------------------
-def plot_1d_surrogate(mean_grid, variance_grid, dataset_x, dataset_y):
-    Xg = np.linspace(BOUNDS[0][0], BOUNDS[0][1], MESHGRID_SIZE)
-
-    train_x = np.array(dataset_x).flatten()
-    train_y = np.array(dataset_y)
-
-    plt.figure(figsize=(8, 5))
-    plt.plot(Xg, mean_grid.flatten(), "b-", label="GP Mean")
-    std = np.sqrt(variance_grid.flatten())
-
-    plt.fill_between(
-        Xg,
-        mean_grid.flatten() - 2 * std,
-        mean_grid.flatten() + 2 * std,
-        color="blue",
-        alpha=0.2,
-        label="95% Conf",
-    )
-
-    plt.scatter(
-        train_x,
-        train_y,
-        c="red",
-        marker="x",
-        label="training points",
-    )
-
-    plt.xlabel("Hatch Spacing (m)")
-    plt.ylabel("Mean Defect Diameter")
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.savefig("raptor_surrogate.png")
-    plt.close()
 
 
 # -----------------------------------------------------------------------------
@@ -304,23 +211,24 @@ class ActiveLearningOrchestrator:
         self.iteration_count = 0
         self.workflow_id = ""
 
-        # Initialize the Melt Pool Surrogate Interpolator
         self.mp_interpolator = MeltPoolInterpolator(MELT_POOL_SURROGATE_PATH)
 
         logger.info(f"Performing cold start with {INITIAL_DATA_SIZE} points...")
         lhs = qmc.LatinHypercube(d=NUM_DIMS, seed=SEED)
-        self.dataset_x = qmc.scale(
-            lhs.random(n=INITIAL_DATA_SIZE),
-            [b[0] for b in BOUNDS],
-            [b[1] for b in BOUNDS],
-        ).tolist()
+        lhs_samples = qmc.scale(
+            lhs.random(n=INITIAL_DATA_SIZE), [BOUNDS[0][0]], [BOUNDS[0][1]]
+        )
+        bounds_points = np.array([[BOUNDS[0][0]], [BOUNDS[0][1]]])
 
+        self.dataset_x = np.vstack([lhs_samples, bounds_points]).tolist()
         self.dataset_y = [
             run_raptor(x[0], self.mp_interpolator) for x in self.dataset_x
         ]
 
-        self.dataset_x_unit = x_to_unit(self.dataset_x).tolist()
+        self.y_mean = np.mean(self.dataset_y)
+        self.y_std = np.std(self.dataset_y) if np.std(self.dataset_y) > 0 else 1.0
 
+        self.dataset_x_unit = x_to_unit(self.dataset_x).tolist()
         self.bounds_unit = UNIT_BOUNDS
 
     def assemble_message(
@@ -328,22 +236,23 @@ class ActiveLearningOrchestrator:
     ) -> IntersectClientCallback:
         payload = None
         if operation == "initialize_workflow":
+            y_norm = ((np.array(self.dataset_y) - self.y_mean) / self.y_std).tolist()
             payload = DialWorkflowCreationParamsClient(
                 dataset_x=self.dataset_x_unit,
-                dataset_y=self.dataset_y,
+                dataset_y=y_norm,
                 bounds=self.bounds_unit,
                 kernel="matern",
-                length_per_dimension=True,
+                length_per_dimension=False,
                 y_is_good=False,
                 backend="sklearn",
                 seed=SEED,
                 preprocess_standardize=False,
+                backend_args={"alpha": 1e-3},
             )
         elif operation == "update_workflow_with_data":
-            payload = DialWorkflowDatasetUpdate(
-                workflow_id=self.workflow_id,
-                **kwargs,
-            )
+            next_y_norm = (kwargs["next_y"] - self.y_mean) / self.y_std
+            kwargs["next_y"] = float(next_y_norm)
+            payload = DialWorkflowDatasetUpdate(workflow_id=self.workflow_id, **kwargs)
         elif operation == "get_next_point":
             payload = DialInputSingleOtherStrategy(
                 workflow_id=self.workflow_id,
@@ -351,10 +260,9 @@ class ActiveLearningOrchestrator:
                 bounds=self.bounds_unit,
             )
         elif operation == "get_surrogate_values":
-            points_to_predict_unit = x_to_unit(INITIAL_POINTS_TO_PREDICT)
+            points_unit = x_to_unit(INITIAL_POINTS_TO_PREDICT).tolist()
             payload = DialInputPredictions(
-                workflow_id=self.workflow_id,
-                points_to_predict=points_to_predict_unit.tolist(),
+                workflow_id=self.workflow_id, points_to_predict=points_unit
             )
 
         logger.info(f"✉️ Sending: dial.{operation}")
@@ -378,9 +286,7 @@ class ActiveLearningOrchestrator:
 
         if has_error:
             print("============ERROR==============", file=sys.stderr)
-            print(operation, file=sys.stderr)
-            print(payload, file=sys.stderr)
-            print(file=sys.stderr)
+            print(operation, payload, file=sys.stderr)
             raise Exception
 
         if operation == "dial.initialize_workflow":
@@ -391,14 +297,27 @@ class ActiveLearningOrchestrator:
             return self.assemble_message("get_surrogate_values")
 
         if operation == "dial.get_surrogate_values":
-            self.mean_grid = np.array(payload[0])
-            self.variance = np.array(payload[1])
+            mean_norm = np.array(payload[0])
+            var_norm = np.array(payload[1])
+
+            self.mean_grid = (mean_norm * self.y_std) + self.y_mean
+            self.variance = var_norm * (self.y_std**2)
+
+            np.savez(
+                "defect_model_surrogate.npz",
+                mean_grid=self.mean_grid,
+                variance_grid=self.variance,
+                dataset_x=self.dataset_x,
+                dataset_y=self.dataset_y,
+                bounds=BOUNDS,
+                laser_power=LASER_POWER_WATTS,
+                laser_velocity=LASER_VELOCITY_M_S,
+            )
 
             if self.iteration_count >= MAX_ITERATIONS:
-                plot_1d_surrogate(
-                    self.mean_grid, self.variance, self.dataset_x, self.dataset_y
+                logger.info(
+                    "Active Learning Complete. Surrogate saved to 'defect_model_surrogate.npz'."
                 )
-                logger.info("Max iterations reached. Optimization complete.")
                 raise Exception("DONE")
             return self.assemble_message("get_next_point")
 
@@ -411,24 +330,18 @@ class ActiveLearningOrchestrator:
                 f"DIAL suggests HS={x_suggested[0]*1e6:.2f}um"
             )
 
-            new_x, new_y = get_data_point(x_suggested, self.mp_interpolator)
+            new_x, new_y_log = get_data_point(x_suggested, self.mp_interpolator)
 
             self.dataset_x.append(new_x)
-            self.dataset_y.append(new_y)
+            self.dataset_y.append(new_y_log)
 
             new_x_unit = x_to_unit(new_x).flatten().tolist()
             self.dataset_x_unit.append(new_x_unit)
 
             self.iteration_count += 1
 
-            plot_1d_surrogate(
-                self.mean_grid, self.variance, self.dataset_x, self.dataset_y
-            )
-
             return self.assemble_message(
-                "update_workflow_with_data",
-                next_x=new_x_unit,
-                next_y=float(new_y),
+                "update_workflow_with_data", next_x=new_x_unit, next_y=float(new_y_log)
             )
 
 
@@ -465,4 +378,6 @@ if __name__ == "__main__":
         user_callback=active_learning,
     )
 
-    default_intersect_lifecycle_loop(client)
+    default_intersect_lifecycle_loop(
+        client,
+    )
