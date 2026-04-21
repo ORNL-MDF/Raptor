@@ -31,8 +31,8 @@ def main(filepath):
     Xg_mm = np.linspace(bounds[0][0], bounds[0][1], meshgrid_size) * 1e3
     train_x_mm = np.array(dataset_x).flatten() * 1e3
 
-    actual_train_y_um = np.expm1(dataset_y) * 1e6
-    actual_mean_um = np.expm1(mean_grid.flatten()) * 1e6
+    actual_train_y_um = dataset_y * 1e6
+    actual_mean_um = mean_grid.flatten() * 1e6
     std_um = np.sqrt(variance_grid.flatten()) * 1e6
 
     ax.plot(

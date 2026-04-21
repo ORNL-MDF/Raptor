@@ -244,6 +244,7 @@ class ActiveLearningOrchestrator:
                 workflow_id=self.workflow_id,
                 strategy="upper_confidence_bound",
                 strategy_args={"exploit": 0., "explore": 1},
+                bounds=self.bounds_unit,
             )
         elif operation == "get_surrogate_values":
             points_to_predict_unit = x_to_unit(INITIAL_POINTS_TO_PREDICT).tolist()
