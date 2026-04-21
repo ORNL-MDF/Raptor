@@ -55,17 +55,17 @@ logger = logging.getLogger(__name__)
 LASER_POWER_WATTS = 200.0
 LASER_VELOCITY_M_S = 1.0
 
-BOUNDS = [[70e-6, 170e-6]]
-UNIT_BOUNDS = [[0.0, 1.0]]
+BOUNDS = ((70e-6, 140e-6),) #((70e-6, 170e-6))
+UNIT_BOUNDS = ((0.0, 1.0),)
 NUM_DIMS = len(BOUNDS)
 
 INITIAL_DATA_SIZE = 5
-MAX_ITERATIONS = 35
+MAX_ITERATIONS = 30
 
 SEED = 42
 
-VOXEL_RESOLUTION = 1e-5  # increase voxel_resolution to speed up
-
+VOXEL_RESOLUTION_M = 2e-6  # increase voxel_resolution to speed up
+RVE_LENGTH_M       = 5e-4
 
 @njit
 def seed_numba(seed):
@@ -129,7 +129,7 @@ def run_raptor(
     mp_stats = mp_interpolator.query(LASER_VELOCITY_M_S, LASER_POWER_WATTS)
 
     rve_min_point = np.array([0.0, 0.0, 0.0])
-    rve_max_point = np.array([1e-3, 1e-3, 1e-3])
+    rve_max_point = np.array([RVE_LENGTH_M, RVE_LENGTH_M, RVE_LENGTH_M])
     rve_bounding_box = np.array([rve_min_point, rve_max_point])
 
     grid = create_grid(voxel_resolution=voxel_resolution_m, bound_box=rve_bounding_box)
@@ -184,18 +184,19 @@ def run_raptor(
 
 def process_raptor_data(raptor_data):
 
+    voxel_resolution_m = raptor_data["inputs"]["voxel_resolution_m"]
     combined_defects = raptor_data["outputs"]["equivalent_diameter_area"]
 
-    # add 5 pores below the VOXEL_RESOLUTION, to deal with empty lists due to finite resolution
+    # add 3 pores below the voxel_resolution, to deal with empty lists due to finite resolution
     # TODO: discuss this, if we want to take a maximum here, we need to think about the extreme value statistics
-    combined_defects = combined_defects.tolist() + [VOXEL_RESOLUTION * 0.9] * 5
+    combined_defects = combined_defects.tolist() + (voxel_resolution_m * np.random.rand(3)).tolist()
 
-    if len(combined_defects) > 0:
+    if len(combined_defects) > 1:
         max_pore = np.max(combined_defects)
-        std_pore = np.std(combined_defects, ddof=1)
+        std_pore = np.std(combined_defects, ddof=1) / np.sqrt(len(combined_defects))
     else:
          # if no pores are fouund, they must be below VOXEL_RESOLUTION
-        max_pore = VOXEL_RESOLUTION
+        max_pore = np.max(combined_defects, initial=voxel_resolution_m)
         std_pore = max_pore
 
     logger.info(f"Hatch: {raptor_data['inputs']['hatch_spacing_m']*1e6:.1f}um | Max Pore: {max_pore*1e6:.2f}um")
@@ -223,10 +224,10 @@ def x_from_unit(U):
 def get_data_point(x_suggested, mp_interpolator):
     x_ = [np.clip(x_suggested[0], BOUNDS[0][0], BOUNDS[0][1])]
     raptor_data = run_raptor(x_[0], mp_interpolator,
-                             voxel_resolution_m=VOXEL_RESOLUTION,
+                             voxel_resolution_m=VOXEL_RESOLUTION_M,
                              )
-    y_ = process_raptor_data(raptor_data)[0]
-    return x_, y_, raptor_data
+    y_, yerr_ = process_raptor_data(raptor_data)
+    return x_, y_, yerr_, raptor_data
 
 
 # -----------------------------------------------------------------------------
@@ -250,15 +251,17 @@ class ActiveLearningOrchestrator:
         self.dataset_x = np.vstack([lhs_samples, bounds_points]).tolist()
         self.dataset_raptor = [
             run_raptor(x[0], self.mp_interpolator,
-                       voxel_resolution_m=VOXEL_RESOLUTION,
+                       voxel_resolution_m=VOXEL_RESOLUTION_M,
                        ) for x in self.dataset_x
         ]
-        self.dataset_y = [
-            process_raptor_data(raptor_data)[0] for raptor_data in self.dataset_raptor
+        # pre-process the raw data to extract y value and yerr
+        dataset_statistics = [
+            process_raptor_data(raptor_data) for raptor_data in self.dataset_raptor
         ]
+        self.dataset_y, self.dataset_yerr = [list(tuple) for tuple in zip(*dataset_statistics)]
 
         self.y_mean = np.mean(self.dataset_y)
-        self.y_std = np.std(self.dataset_y) if np.std(self.dataset_y) > 0 else 1.0
+        self.y_std = np.std(self.dataset_y, ddof=1) if np.std(self.dataset_y) > 0 else 1.0
 
         self.dataset_x_unit = x_to_unit(self.dataset_x).tolist()
         self.bounds_unit = UNIT_BOUNDS
@@ -270,11 +273,27 @@ class ActiveLearningOrchestrator:
         if operation == "initialize_workflow":
 
             # nondimensionalized lengthscale, on the normalized x data
-            length_scale = .04
+            length_scale = .2
             # prior variance of the kernel
             prior_variance = 2.0
             # standard deviation of output error yerr
-            yerr = 1.e-3
+            yerr = np.asarray(self.dataset_yerr)
+
+            self.heteroscedastic = np.asarray(yerr).shape[0] > 1
+
+            if not self.heteroscedastic:
+                kernel_args = {"length_scale": length_scale, "length_scale_bounds": "fixed",
+                               "constant_value": prior_variance, "constant_value_bounds": "fixed",
+                               "noise_level": yerr**2, "noise_level_bounds": "fixed", # noise level is noise variance
+                               }
+                backend_args = {"alpha": .0}
+            else:
+                kernel_args = {"length_scale": length_scale, "length_scale_bounds": "fixed",
+                               "constant_value": prior_variance, "constant_value_bounds": "fixed",
+                               "noise_level": 0., "noise_level_bounds": "fixed", # set nugget to zero, and use alpha
+                               }
+                # use the nondimensionalized yerr to set alpha
+                backend_args = {"alpha": (yerr/self.y_std)**2}
 
             # normalize the output data
             y_norm = ((np.array(self.dataset_y) - self.y_mean) / self.y_std).tolist()
@@ -287,16 +306,19 @@ class ActiveLearningOrchestrator:
                 length_per_dimension=False,
                 y_is_good=False,
                 backend="sklearn",
-                kernel_args={"length_scale": length_scale, "length_scale_bounds": "fixed",
-                             "constant_value": prior_variance, "constant_value_bounds": "fixed",
-                             "noise_level": yerr**2, "noise_level_bounds": "fixed", # noise level is noise variance
-                             },
-                backend_args={"alpha": .0},
+                kernel_args=kernel_args,
+                backend_args=backend_args,
                 seed=SEED,
                 preprocess_standardize=False,
             )
         elif operation == "update_workflow_with_data":
             next_y_norm = (kwargs["next_y"] - self.y_mean) / self.y_std
+
+            if self.heteroscedastic:
+                yerr = np.asarray(self.dataset_yerr)
+                # use the nondimensionalized yerr to set alpha
+                kwargs["backend_args"] = {"alpha": (yerr/self.y_std)**2}
+
             kwargs["next_y"] = float(next_y_norm)
             payload = DialWorkflowDatasetUpdate(
                 workflow_id=self.workflow_id,
@@ -312,7 +334,8 @@ class ActiveLearningOrchestrator:
         elif operation == "get_surrogate_values":
             points_unit = x_to_unit(INITIAL_POINTS_TO_PREDICT).tolist()
             payload = DialInputPredictions(
-                workflow_id=self.workflow_id, points_to_predict=points_unit
+                workflow_id=self.workflow_id,
+                points_to_predict=points_unit
             )
 
         logger.info(f"✉️ Sending: dial.{operation}")
@@ -384,11 +407,12 @@ class ActiveLearningOrchestrator:
                 f"DIAL suggests HS={x_suggested[0]*1e6:.2f}um"
             )
 
-            new_x, new_y, new_raptor_data = get_data_point(x_suggested, self.mp_interpolator)
+            new_x, new_y, new_yerr, new_raptor_data = get_data_point(x_suggested, self.mp_interpolator)
 
             self.dataset_x.append(new_x)
             self.dataset_raptor.append(new_raptor_data)
             self.dataset_y.append(new_y)
+            self.dataset_yerr.append(new_yerr)
 
             new_x_unit = x_to_unit(new_x).flatten().tolist()
             self.dataset_x_unit.append(new_x_unit)
