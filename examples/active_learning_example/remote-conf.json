@@ -15,6 +15,7 @@
       "facility": "intersect",
       "system": "dial-system",
       "subsystem": "dial-subsystem",
-      "service": "dial-service-development"
+      "service": "dial-service-acl",
+      "//COMMENT": "use the dial-service-acl service deployment for the most up-to date server version"
     }
   }

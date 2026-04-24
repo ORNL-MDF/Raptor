@@ -1,7 +1,6 @@
 import argparse
 import json
 import logging
-import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -37,8 +36,8 @@ logger = logging.getLogger(__name__)
 # -----------------------------------------------------------------------------
 # USER PARAMETERS
 # -----------------------------------------------------------------------------
-INITIAL_BOUNDS = [[0.5, 1.5], [100, 300]]  # [velocity (m/s), power (W)]
-UNIT_BOUNDS = [[0.0, 1.0], [0.0, 1.0]]
+INITIAL_BOUNDS = ((0.5, 1.5), (100, 300))  # [velocity (m/s), power (W)]
+UNIT_BOUNDS = ((0.0, 1.0), (0.0, 1.0))
 NUM_DIMS = len(INITIAL_BOUNDS)
 MESHGRID_SIZE = 101
 INITIAL_MESHGRIDS = np.meshgrid(
@@ -87,7 +86,7 @@ def melt_pool_dataset(convert_to_m_per_s: float = 1e-3, convert_to_m: float = 1e
         except FileNotFoundError:
             pass
 
-    data_dict = {key: [] for key in all_keys}
+    data_dict: dict[str, list] = {key: [] for key in all_keys}
 
     for json_file in json_files:
         try:
@@ -202,7 +201,7 @@ class ActiveLearningOrchestrator:
             "height_std",
         ]
         self.feature_idx = 0
-        self.surrogate_results = {}
+        self.surrogate_results: dict[str, tuple[Any, Any]] = {}
 
     def assemble_message(
         self, operation: str, **kwargs: Any
@@ -210,15 +209,32 @@ class ActiveLearningOrchestrator:
         current_feature = self.features[self.feature_idx]
         current_y = self.dataset_y_dict[current_feature].tolist()
 
+        # nondimensionalized lengthscale, on the normalized x data
+        length_scale = 0.5
+        # prior variance of the kernel
+        prior_variance = 2.0
+        # standard deviation of output error yerr
+        yerr = 1.0e-1
+
         if operation == "initialize_workflow":
             payload = DialWorkflowCreationParamsClient(
                 dataset_x=self.dataset_x_unit,
                 dataset_y=current_y,
+                dim_x=2,
                 bounds=self.bounds_unit,
                 kernel="matern",
                 length_per_dimension=True,
                 y_is_good=False,
                 backend="sklearn",
+                kernel_args={
+                    "length_scale": length_scale,
+                    "length_scale_bounds": "fixed",
+                    "constant_value": prior_variance,
+                    "constant_value_bounds": "fixed",
+                    "noise_level": yerr**2,
+                    "noise_level_bounds": "fixed",  # noise level is noise variance
+                },
+                backend_args=None,
                 seed=-1,
                 preprocess_standardize=True,
             )
@@ -230,13 +246,15 @@ class ActiveLearningOrchestrator:
         elif operation == "get_next_point":
             payload = DialInputSingleOtherStrategy(
                 workflow_id=self.workflow_id,
-                strategy="expected_improvement",
+                strategy="upper_confidence_bound",
+                strategy_args={"exploit": 0.0, "explore": 1.0},
+                bounds=self.bounds_unit,
             )
         elif operation == "get_surrogate_values":
-            points_to_predict_unit = x_to_unit(INITIAL_POINTS_TO_PREDICT)
+            points_to_predict_unit = x_to_unit(INITIAL_POINTS_TO_PREDICT).tolist()
             payload = DialInputPredictions(
                 workflow_id=self.workflow_id,
-                points_to_predict=points_to_predict_unit.tolist(),
+                points_to_predict=points_to_predict_unit,
             )
 
         return IntersectClientCallback(
@@ -265,15 +283,16 @@ class ActiveLearningOrchestrator:
             raise Exception
 
         if operation == "dial.initialize_workflow":
-            self.workflow_id: str = payload
+            self.workflow_id = payload
             return self.assemble_message("get_surrogate_values")
 
         if operation == "dial.update_workflow_with_data":
             pass
 
         if operation == "dial.get_surrogate_values":
-            mean_grid = np.array(payload[0]).reshape((MESHGRID_SIZE,) * NUM_DIMS)
-            variance = np.array(payload[1]).reshape((MESHGRID_SIZE,) * NUM_DIMS)
+            data = payload["data"]
+            mean_grid = np.array(data[0]).reshape((MESHGRID_SIZE,) * NUM_DIMS)
+            variance = np.array(data[1]).reshape((MESHGRID_SIZE,) * NUM_DIMS)
 
             current_feature = self.features[self.feature_idx]
             self.surrogate_results[current_feature] = (mean_grid, variance)
