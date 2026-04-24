@@ -210,11 +210,11 @@ class ActiveLearningOrchestrator:
         current_y = self.dataset_y_dict[current_feature].tolist()
 
         # nondimensionalized lengthscale, on the normalized x data
-        length_scale = .5
+        length_scale = 0.5
         # prior variance of the kernel
         prior_variance = 2.0
         # standard deviation of output error yerr
-        yerr = 1.e-1
+        yerr = 1.0e-1
 
         if operation == "initialize_workflow":
             payload = DialWorkflowCreationParamsClient(
@@ -226,10 +226,14 @@ class ActiveLearningOrchestrator:
                 length_per_dimension=True,
                 y_is_good=False,
                 backend="sklearn",
-                kernel_args={"length_scale": length_scale, "length_scale_bounds": "fixed",
-                             "constant_value": prior_variance, "constant_value_bounds": "fixed",
-                             "noise_level": yerr**2, "noise_level_bounds": "fixed", # noise level is noise variance
-                             },
+                kernel_args={
+                    "length_scale": length_scale,
+                    "length_scale_bounds": "fixed",
+                    "constant_value": prior_variance,
+                    "constant_value_bounds": "fixed",
+                    "noise_level": yerr**2,
+                    "noise_level_bounds": "fixed",  # noise level is noise variance
+                },
                 backend_args=None,
                 seed=-1,
                 preprocess_standardize=True,
@@ -243,7 +247,7 @@ class ActiveLearningOrchestrator:
             payload = DialInputSingleOtherStrategy(
                 workflow_id=self.workflow_id,
                 strategy="upper_confidence_bound",
-                strategy_args={"exploit": 0., "explore": 1},
+                strategy_args={"exploit": 0.0, "explore": 1.0},
                 bounds=self.bounds_unit,
             )
         elif operation == "get_surrogate_values":
@@ -286,7 +290,7 @@ class ActiveLearningOrchestrator:
             pass
 
         if operation == "dial.get_surrogate_values":
-            data = payload['data']
+            data = payload["data"]
             mean_grid = np.array(data[0]).reshape((MESHGRID_SIZE,) * NUM_DIMS)
             variance = np.array(data[1]).reshape((MESHGRID_SIZE,) * NUM_DIMS)
 
