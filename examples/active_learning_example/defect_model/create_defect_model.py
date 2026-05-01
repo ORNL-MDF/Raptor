@@ -42,7 +42,6 @@ from dial_dataclass import (
 )
 
 
-# Logging
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)-8s %(message)s"
 )
@@ -55,7 +54,7 @@ logger = logging.getLogger(__name__)
 LASER_POWER_WATTS = 200.0
 LASER_VELOCITY_M_S = 1.0
 
-BOUNDS = ((70e-6, 140e-6),)  # ((70e-6, 170e-6))
+BOUNDS = ((70e-6, 140e-6),)
 UNIT_BOUNDS = ((0.0, 1.0),)
 NUM_DIMS = len(BOUNDS)
 
@@ -64,18 +63,13 @@ MAX_ITERATIONS = 30
 
 SEED = 42
 
-VOXEL_RESOLUTION_M = 5e-6  # increase voxel_resolution to speed up
+VOXEL_RESOLUTION_M = 5e-6
 RVE_LENGTH_M = 1e-3
+QUERY_VOLUME_MM3 = 10  # decrease query_volume_mm3 to speed up
 
 MIN_LEN_DEFECTS = 50
 ANALYZE_MAX = False
 BACKEND = "sklearn"  # "sable"
-
-
-@njit
-def seed_numba(seed):
-    np.random.seed(seed)
-
 
 MESHGRID_SIZE = 150
 
@@ -123,28 +117,21 @@ def run_raptor(
     hatch_spacing_m: float,
     mp_interpolator: MeltPoolInterpolator,
     layer_thickness_m: float = 40e-6,
-    query_volume_mm3: float = 1.0,  # is not used currently?
+    query_volume_mm3: float = QUERY_VOLUME_MM3,
     voxel_resolution_m: float = 5e-6,
     metric_names: list[str] = ["equivalent_diameter_area"],
 ):
-    # query volume: should be set to the value from size of the experimental coupon
-    #    (artifact for process quality control)
-
-    # TODO: why do we do the seeding in every iteration?
-    # this is causing issues with the statistics, I commented it out.
-    # random.seed(SEED)
-    # np.random.seed(SEED)
-    # seed_numba(SEED)
-
+    # Query melt pool statistics for processing conditions
     mp_stats = mp_interpolator.query(LASER_VELOCITY_M_S, LASER_POWER_WATTS)
 
-    # TODO: run enough RVSs to cover the whole query volume.
+    # Create representative volume element (RVE)
     rve_min_point = np.array([0.0, 0.0, 0.0])
     rve_max_point = np.array([RVE_LENGTH_M, RVE_LENGTH_M, RVE_LENGTH_M])
     rve_bounding_box = np.array([rve_min_point, rve_max_point])
 
     grid = create_grid(voxel_resolution=voxel_resolution_m, bound_box=rve_bounding_box)
 
+    # Create scan path in RVE
     scan_path_builder = ScanPathBuilder(
         rve_bounding_box,
         LASER_POWER_WATTS,
@@ -158,6 +145,7 @@ def run_raptor(
     scan_path_builder.generate_layers()
     path_vectors = scan_path_builder.process_vectors()
 
+    # Create stochastic melt pool model
     melt_pool_filter = MeltPoolFilter(
         mp_stats["width_mean"],
         mp_stats["width_std"],
@@ -170,24 +158,63 @@ def run_raptor(
     melt_pool_filter.initialize()
     width_data = melt_pool_filter.generate_fluctuations(1)
 
+    ellipse = 2
+    parabola = 1
+
+    num_modes = 50
+
     melt_pool_dict = {
-        "width": (width_data, 50, 1.0, 2),
-        "depth": (width_data, 50, mp_stats["depth_mean"] / mp_stats["width_mean"], 1),
-        "height": (width_data, 50, mp_stats["height_mean"] / mp_stats["width_mean"], 1),
+        "width": (width_data, num_modes, 1.0, ellipse),
+        "depth": (
+            width_data,
+            num_modes,
+            mp_stats["depth_mean"] / mp_stats["width_mean"],
+            parabola,
+        ),
+        "height": (
+            width_data,
+            num_modes,
+            mp_stats["height_mean"] / mp_stats["width_mean"],
+            parabola,
+        ),
     }
     melt_pool = create_melt_pool(melt_pool_dict, enable_random_phases=True)
 
-    porosity = compute_porosity(grid, path_vectors, melt_pool, False)
-    metrics = compute_morphology(porosity, grid.resolution, metric_names)
+    # Run simulations for all RVEs
+    single_rve_volume_mm3 = np.prod((rve_bounding_box[1] - rve_bounding_box[0]) * 1e3)
 
+    num_rves = int(np.ceil(query_volume_mm3 / single_rve_volume_mm3))
+
+    logger.info(
+        f"Query Volume: {query_volume_mm3} mm3 "
+        f"| RVE Volume: {single_rve_volume_mm3:.4f} mm3"
+    )
+    logger.info(f"Running {num_rves} RVE simulations...")
+
+    outputs = []
+    for i in range(num_rves):
+        porosity = compute_porosity(grid, path_vectors, melt_pool, jit_warmup=0)
+        metrics = compute_morphology(porosity, grid.resolution, metric_names)
+        outputs.append(metrics)
+
+    combined_outputs = {}
+    for name in metric_names:
+        arrays = [out[name] for out in outputs if name in out]
+        if arrays:
+            combined_outputs[name] = np.concatenate(arrays)
+        else:
+            combined_outputs[name] = np.array([])
+
+    # Package inputs and outputs
     inputs = {
         "hatch_spacing_m": hatch_spacing_m,
         "layer_thickness_m": layer_thickness_m,
         "query_volume_mm3": query_volume_mm3,
         "voxel_resolution_m": voxel_resolution_m,
+        "num_rves": num_rves,
     }
 
-    raptor_data = {"inputs": inputs, "outputs": metrics}
+    raptor_data = {"inputs": inputs, "outputs": combined_outputs}
 
     return raptor_data
 

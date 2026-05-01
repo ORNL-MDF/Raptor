@@ -6,3 +6,4 @@ python create_melt_pool_model.py --config ../remote-conf.json
 
 cd ../defect_model
 python create_defect_model.py --config ../remote-conf.json
+python plot_defect_model.py
