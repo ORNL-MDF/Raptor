@@ -19,6 +19,7 @@ def main(filepath):
     variance_grid = data["variance_grid"]
     dataset_x = data["dataset_x"]
     dataset_y = data["dataset_y"]
+    dataset_yerr = data["dataset_yerr"]
     bounds = data["bounds"]
     laser_power = float(data["laser_power"])
     laser_velocity = float(data["laser_velocity"])
@@ -32,6 +33,7 @@ def main(filepath):
     train_x_mm = np.array(dataset_x).flatten() * 1e3
 
     actual_train_y_um = dataset_y * 1e6
+    actual_train_yerr_um = dataset_yerr * 1e6
     actual_mean_um = mean_grid.flatten() * 1e6
     std_um = np.sqrt(variance_grid.flatten()) * 1e6
 
@@ -52,6 +54,16 @@ def main(filepath):
         label="95% Conf. Interval",
     )
 
+    ax.errorbar(
+        train_x_mm,
+        actual_train_y_um,
+        yerr=2 * actual_train_yerr_um,
+        color="black",
+        ls="none",
+        alpha=0.6,
+        label="Training errors 2σ",
+    )
+
     ax.scatter(
         train_x_mm,
         actual_train_y_um,
@@ -62,7 +74,7 @@ def main(filepath):
         label="Training data",
     )
 
-    colors = plt.cm.Reds(np.linspace(0.4, 0.9, len(D_CRIT_LIST)))
+    # colors = plt.cm.Reds(np.linspace(0.4, 0.9, len(D_CRIT_LIST)))
 
     for i, d_crit in enumerate(D_CRIT_LIST):
         d_um = d_crit * 1e6
