@@ -65,9 +65,9 @@ MAX_ITERATIONS = 30
 SEED = 42
 
 VOXEL_RESOLUTION_M = 5e-6  # increase voxel_resolution to speed up
-RVE_LENGTH_M = 5e-4
+RVE_LENGTH_M = 1e-3
 
-MIN_LEN_DEFECTS = 10
+MIN_LEN_DEFECTS = 50
 ANALYZE_MAX = False
 BACKEND = "sklearn"  # "sable"
 
@@ -199,7 +199,7 @@ def process_raptor_data(raptor_data):
 
     min_len_defects = MIN_LEN_DEFECTS
     if len(combined_defects) < min_len_defects:
-        # add 3 pores below the voxel_resolution, to deal with empty lists due to finite resolution
+        # add some pores below the voxel_resolution, to deal with empty lists due to finite resolution
         # TODO: discuss how we should handle the fact that pores blow voxel_resolution can not be resolved
         random.seed()  # explicitly call rng seeding to make sure this is truly random
         n_extra_defects = min_len_defects - len(combined_defects)
@@ -364,14 +364,14 @@ class ActiveLearningOrchestrator:
                     # smoothness hyperparameter gamma
                     # (0. means the minimum degree of smoothness, i.e. continuous;
                     #  1. is once differentiable, etc. )
-                    "gamma": 0.1,
+                    "gamma": 0.5,
                 }
                 self.backend_args = {
                     # memory size for number of features:
                     # needs to be large enough, but becomes slower with more features
                     "n_features": 10000,
                     # prior variance (scaled by problem specific hyperparameter)
-                    "alpha": 0.05 / prior_variance,
+                    "alpha": 0.02 / prior_variance,
                     # algorithm hyperparameters
                     # p is degree of adaptivity (p=2 is a GP, p=1 is fully sparse)
                     "p": 1.25,
@@ -478,6 +478,7 @@ class ActiveLearningOrchestrator:
                 variance_grid=self.variance_grid,
                 dataset_x=self.dataset_x,
                 dataset_y=self.dataset_y,
+                dataset_yerr=self.dataset_yerr,
                 bounds=BOUNDS,
                 laser_power=LASER_POWER_WATTS,
                 laser_velocity=LASER_VELOCITY_M_S,
