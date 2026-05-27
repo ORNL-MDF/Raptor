@@ -197,7 +197,8 @@ def compute_porosity(
         f"Melted {n_melted} of {grid.n_voxels} voxels."
     )
 
-    porosity_field = (~melted_mask_flat).astype(np.int8).reshape(grid.shape, order="C")
+    # porosity_field = (~melted_mask_flat).astype(np.int8).reshape(grid.shape, order="C")
+    porosity_field = (melted_mask_flat).astype(np.int8).reshape(grid.shape, order="C")
 
     return porosity_field
 
@@ -225,7 +226,7 @@ def write_vtk(
     vtk_data_array = numpy_support.numpy_to_vtk(
         num_array=porosity_vtk_order.ravel(order="C"),
         deep=True,
-        array_type=vtk.VTK_UNSIGNED_CHAR,
+        array_type=vtk.VTK_INT,
     )
     vtk_data_array.SetName("porosity")
     imageData.GetPointData().SetScalars(vtk_data_array)
@@ -233,7 +234,7 @@ def write_vtk(
     writer = vtk.vtkXMLImageDataWriter()
     writer.SetFileName(vtk_output_path)
     writer.SetInputData(imageData)
-    writer.SetDataModeToBinary()
+    # writer.SetDataModeToBinary()
 
     writer.Write()
     del porosity

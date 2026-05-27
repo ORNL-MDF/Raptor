@@ -69,8 +69,8 @@ height_scale = 0.4
 
 # assign shape to melt pool and cap (1 = parabola, 2 = ellipse)
 width_shape = 2  # placeholder
-height_shape = 1
-depth_shape = 1
+height_shape = 2
+depth_shape = 2
 
 melt_pool_dict = {
     "width": (width_data, n_modes, width_scale, width_shape),

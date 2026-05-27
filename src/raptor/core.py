@@ -67,7 +67,7 @@ def compute_melt_mask(
     Unpacks jitclasses into arrays to pass to compute_melt_mask_implicit().
     """
     n_voxels = voxels.shape[0]
-    melt_mask = np.zeros(n_voxels, dtype=np.bool_)
+    melt_mask = np.zeros(n_voxels, dtype=np.int8)
 
     # --- Unpack MeltPool object ---
     width_amplitudes = melt_pool.width_oscillations[:, 0]
@@ -167,7 +167,7 @@ def compute_melt_mask_implicit(
 
     for i in prange(n_voxels):
         vx, vy, vz = voxels[i, 0], voxels[i, 1], voxels[i, 2]
-        is_voxel_melted = False
+        is_voxel_melted = 0
 
         for j in range(n_vectors):
             if (
@@ -243,9 +243,8 @@ def compute_melt_mask_implicit(
                 height += height_amplitudes[k] * np.cos(
                     two_pi_t * height_frequencies[k] + phase_k
                 )
-
-            is_voxel_melted = is_inside(
-                local_y,
+            is_voxel_melted_left = is_inside(
+                local_y-5.0e-6*e0[j, 0],
                 local_z,
                 width,
                 height,
@@ -254,9 +253,48 @@ def compute_melt_mask_implicit(
                 depth_shape_factor,
             )
 
+            is_voxel_melted_right = is_inside(
+                local_y+5.0e-6*e0[j, 0],
+                local_z,
+                width,
+                height,
+                depth,
+                height_shape_factor,
+                depth_shape_factor,
+            )
+
+            is_voxel_melted_up = is_inside(
+                local_y,
+                local_z+5.0e-6*e2[j, 2],
+                width,
+                height,
+                depth,
+                height_shape_factor,
+                depth_shape_factor,
+            )
+            
+            is_voxel_melted_down = is_inside(
+                local_y,
+                local_z-5.0e-6*e2[j, 2],
+                width,
+                height,
+                depth,
+                height_shape_factor,
+                depth_shape_factor,
+            )
+            
+            is_voxel_melted = is_inside(local_y, local_z, width, height, depth, height_shape_factor, depth_shape_factor)
+            
+            is_boundary = (
+                is_voxel_melted_left != is_voxel_melted
+                or is_voxel_melted_right != is_voxel_melted
+                or is_voxel_melted_up != is_voxel_melted
+                or is_voxel_melted_down != is_voxel_melted
+            )
             if is_voxel_melted:
-                break
-
-        melt_mask[i] = is_voxel_melted
-
+                 melt_mask[i] = 1
+            if is_boundary:
+                melt_mask[i] = 2
+            if melt_mask[i]==2 and is_voxel_melted and not is_boundary:
+                melt_mask[i] = 1
     return melt_mask
