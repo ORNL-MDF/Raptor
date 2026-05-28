@@ -60,6 +60,52 @@ def is_inside(
     return test_value <= 1.0
 
 
+@njit(inline="always", fastmath=True)
+def is_boundary(
+    y: float,
+    z: float,
+    width: float,
+    height: float,
+    depth: float,
+    height_shape_factor: float,
+    depth_shape_factor: float,
+    tolerance: float,
+) -> bool:
+    """
+    Checks if a point (y, z) is on the boundary of a modified Lamé curve cross-section:
+    (y/a)^2 + (|z|/b)^n <= 1
+
+    Args:
+        y (float): The y-coordinate of the point (horizontal axis).
+        z (float): The z-coordinate of the point (vertical axis).
+        width (float): The full width of the shape along the y-axis (shared).
+        height (float): The maximum height of the top half of the shape (for z > 0).
+        depth (float): The maximum depth of the bottom half of the shape (for z < 0).
+        height_shape_factor (float): The shape exponent 'n' for the top half.
+        depth_shape_factor (float): The shape exponent 'n' for the bottom half.
+            - n=2:   Ellipse
+            - n=1:   Parabola
+            - n=0.5: Bell-shaped
+            - n=10:  Box-shaped
+
+    Returns:
+        bool: True if the point is on the boundary, False otherwise.
+    """
+
+    a = width / 2.0
+
+    b_choices = (depth, height)
+    n_choices = (depth_shape_factor, height_shape_factor)
+
+    selector = int(z >= 0)
+
+    b = b_choices[selector]
+    n = n_choices[selector]
+
+    test_value = (y / a) ** 2 + (np.abs(z) / b) ** n
+
+    return np.abs(test_value - 1.0) <= tolerance
+
 def compute_melt_mask(
     voxels: np.ndarray, melt_pool: MeltPool, path_vectors: List[PathVector]
 ):
@@ -152,7 +198,7 @@ def compute_melt_mask_implicit(
     width_frequencies: np.ndarray,
     depth_amplitudes: np.ndarray,
     depth_frequencies: np.ndarray,
-    height_amplitudes: np.ndarray,
+    height_amplitudes: np.ndarray,  
     height_frequencies: np.ndarray,
     height_shape_factor: np.float64,
     depth_shape_factor: np.float64,
@@ -243,58 +289,15 @@ def compute_melt_mask_implicit(
                 height += height_amplitudes[k] * np.cos(
                     two_pi_t * height_frequencies[k] + phase_k
                 )
-            is_voxel_melted_left = is_inside(
-                local_y-5.0e-6*e0[j, 0],
-                local_z,
-                width,
-                height,
-                depth,
-                height_shape_factor,
-                depth_shape_factor,
-            )
-
-            is_voxel_melted_right = is_inside(
-                local_y+5.0e-6*e0[j, 0],
-                local_z,
-                width,
-                height,
-                depth,
-                height_shape_factor,
-                depth_shape_factor,
-            )
-
-            is_voxel_melted_up = is_inside(
-                local_y,
-                local_z+5.0e-6*e2[j, 2],
-                width,
-                height,
-                depth,
-                height_shape_factor,
-                depth_shape_factor,
-            )
-            
-            is_voxel_melted_down = is_inside(
-                local_y,
-                local_z-5.0e-6*e2[j, 2],
-                width,
-                height,
-                depth,
-                height_shape_factor,
-                depth_shape_factor,
-            )
             
             is_voxel_melted = is_inside(local_y, local_z, width, height, depth, height_shape_factor, depth_shape_factor)
             
-            is_boundary = (
-                is_voxel_melted_left != is_voxel_melted
-                or is_voxel_melted_right != is_voxel_melted
-                or is_voxel_melted_up != is_voxel_melted
-                or is_voxel_melted_down != is_voxel_melted
-            )
+            is_voxel_boundary = is_boundary(local_y, local_z, width, height, depth, height_shape_factor, depth_shape_factor, 0.1)
+
             if is_voxel_melted:
                  melt_mask[i] = 1
-            if is_boundary:
+            if is_voxel_boundary:
                 melt_mask[i] = 2
-            if melt_mask[i]==2 and is_voxel_melted and not is_boundary:
+            if melt_mask[i]==2 and is_voxel_melted and not is_voxel_boundary:
                 melt_mask[i] = 1
     return melt_mask
