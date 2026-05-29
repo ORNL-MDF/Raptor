@@ -34,7 +34,7 @@ grid = create_grid(voxel_resolution, bound_box=bound_box)
 # 2. Create path vectors through the representative volume element (RVE)
 power = 370
 velocity = 1.7
-hatch_spacing = 140e-6
+hatch_spacing = 145e-6
 layer_height = 30e-6
 rotation = 67
 scan_extension = max(max_point - min_point)
@@ -69,8 +69,8 @@ height_scale = 0.4
 
 # assign shape to melt pool and cap (1 = parabola, 2 = ellipse)
 width_shape = 2  # placeholder
-height_shape = 2
-depth_shape = 2
+height_shape = 1
+depth_shape = 1
 
 melt_pool_dict = {
     "width": (width_data, n_modes, width_scale, width_shape),
