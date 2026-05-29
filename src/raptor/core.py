@@ -151,7 +151,7 @@ def compute_distance_to_boundary(
     cos_theta = np.cos(theta)
     sin_theta = np.sin(theta)
     r0 = (y**2 + z**2) ** 0.5
-    rtol = 1e-8
+    rtol = 1e-6
     while True:
         f = (r0 * cos_theta / a) ** 2 + (r0 * sin_theta / b) ** n - 1.0
         if np.abs(f) < rtol:
@@ -162,7 +162,7 @@ def compute_distance_to_boundary(
     return r0
 
 def compute_melt_mask(
-    voxels: np.ndarray, melt_pool: MeltPool, path_vectors: List[PathVector]
+    voxels: np.ndarray, resolution: float, melt_pool: MeltPool, path_vectors: List[PathVector]
 ):
     """
     Unpacks jitclasses into arrays to pass to compute_melt_mask_implicit().
@@ -205,6 +205,7 @@ def compute_melt_mask(
 
     return compute_melt_mask_implicit(
         voxels,
+        resolution,
         melt_mask,
         start_points,
         end_points,
@@ -234,6 +235,7 @@ def compute_melt_mask(
 @njit(parallel=True, fastmath=True)
 def compute_melt_mask_implicit(
     voxels: np.ndarray,
+    resolution: float,
     melt_mask: np.ndarray,
     start_points: np.ndarray,
     end_points: np.ndarray,
@@ -347,10 +349,9 @@ def compute_melt_mask_implicit(
             
             is_voxel_melted = is_inside(local_y, local_z, width, height, depth, height_shape_factor, depth_shape_factor)
             
-            # is_voxel_boundary = is_boundary(local_y, local_z, width, height, depth, height_shape_factor, depth_shape_factor, 0.1)
-
             dist_to_bdry = compute_distance_to_boundary(local_y, local_z, width, height, depth, height_shape_factor, depth_shape_factor)
-            is_voxel_boundary = np.abs(dist_to_bdry - (local_y**2 + local_z**2)**0.5) <= 5.0e-6 * (2**0.5)/2
+            
+            is_voxel_boundary = np.abs(dist_to_bdry - (local_y**2 + local_z**2)**0.5) <= resolution * (2**0.5)/2
 
             if is_voxel_melted:
                  melt_mask[i] = 1
