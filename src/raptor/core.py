@@ -152,11 +152,13 @@ def compute_distance_to_boundary(
     sin_theta = np.sin(theta)
     r0 = (y**2 + z**2) ** 0.5
     rtol = 1e-6
+    r1 = r0 + 10 * rtol
     while True:
         f = (r0 * cos_theta / a) ** 2 + (r0 * sin_theta / b) ** n - 1.0
-        if np.abs(f) < rtol:
+        if np.abs(r1-r0) < rtol:
             break
         df_dr = 2 * (r0 * cos_theta / a) ** 2 / r0 + n * (r0 * sin_theta / b) ** n / r0
+        r1 = r0
         r0 -= f / df_dr
 
     return r0
