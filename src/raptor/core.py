@@ -59,53 +59,6 @@ def is_inside(
 
     return test_value <= 1.0
 
-
-@njit(inline="always", fastmath=True)
-def is_boundary(
-    y: float,
-    z: float,
-    width: float,
-    height: float,
-    depth: float,
-    height_shape_factor: float,
-    depth_shape_factor: float,
-    tolerance: float,
-) -> bool:
-    """
-    Checks if a point (y, z) is on the boundary of a modified Lamé curve cross-section:
-    (y/a)^2 + (|z|/b)^n <= 1
-
-    Args:
-        y (float): The y-coordinate of the point (horizontal axis).
-        z (float): The z-coordinate of the point (vertical axis).
-        width (float): The full width of the shape along the y-axis (shared).
-        height (float): The maximum height of the top half of the shape (for z > 0).
-        depth (float): The maximum depth of the bottom half of the shape (for z < 0).
-        height_shape_factor (float): The shape exponent 'n' for the top half.
-        depth_shape_factor (float): The shape exponent 'n' for the bottom half.
-            - n=2:   Ellipse
-            - n=1:   Parabola
-            - n=0.5: Bell-shaped
-            - n=10:  Box-shaped
-
-    Returns:
-        bool: True if the point is on the boundary, False otherwise.
-    """
-
-    a = width / 2.0
-
-    b_choices = (depth, height)
-    n_choices = (depth_shape_factor, height_shape_factor)
-
-    selector = int(z >= 0)
-
-    b = b_choices[selector]
-    n = n_choices[selector]
-
-    test_value = (y / a) ** 2 + (np.abs(z) / b) ** n
-
-    return np.abs(test_value - 1.0) <= tolerance
-
 @njit(fastmath=True)
 def compute_distance_to_boundary(
     y: float,
@@ -152,7 +105,7 @@ def compute_distance_to_boundary(
     cos_theta = np.cos(theta)
     sin_theta = np.sin(theta)
     r0 = (y**2 + z**2) ** 0.5
-    
+
     while True:
         f = (r0 * cos_theta / a) ** 2 + (r0 * sin_theta / b) ** n - 1.0
         df_dr = 2 * (r0 * cos_theta / a) ** 2 / r0 + n * (r0 * sin_theta / b) ** n / r0
