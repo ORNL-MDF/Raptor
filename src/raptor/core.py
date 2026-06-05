@@ -115,6 +115,7 @@ def compute_distance_to_boundary(
     depth: float,
     height_shape_factor: float,
     depth_shape_factor: float,
+    relative_tolerance: float = 1e-5,
 ) -> float:
     """
     Computes the distance from a point (y, z) to the boundary of a modified Lamé curve cross-section:
@@ -151,15 +152,14 @@ def compute_distance_to_boundary(
     cos_theta = np.cos(theta)
     sin_theta = np.sin(theta)
     r0 = (y**2 + z**2) ** 0.5
-    rtol = 1e-6
-    r1 = r0 + 10 * rtol
+    
     while True:
         f = (r0 * cos_theta / a) ** 2 + (r0 * sin_theta / b) ** n - 1.0
-        if np.abs(r1-r0) < rtol:
-            break
         df_dr = 2 * (r0 * cos_theta / a) ** 2 / r0 + n * (r0 * sin_theta / b) ** n / r0
-        r1 = r0
-        r0 -= f / df_dr
+        step = f / df_dr
+        r0 -= step
+        if np.abs(step) < relative_tolerance:
+            break
 
     return r0
 
@@ -354,6 +354,8 @@ def compute_melt_mask_implicit(
             dist_to_bdry = compute_distance_to_boundary(local_y, local_z, width, height, depth, height_shape_factor, depth_shape_factor)
             
             is_voxel_boundary = np.abs(dist_to_bdry - (local_y**2 + local_z**2)**0.5) <= resolution * (2**0.5)/2
+            
+            melt_mask_previous = melt_mask[i]
 
             if is_voxel_melted:
                  melt_mask[i] = 1
@@ -361,4 +363,6 @@ def compute_melt_mask_implicit(
                 melt_mask[i] = 2
             if melt_mask[i]==2 and is_voxel_melted and not is_voxel_boundary:
                 melt_mask[i] = 1
+            if melt_mask_previous > 1 and is_voxel_boundary:
+                melt_mask[i] = 3
     return melt_mask
