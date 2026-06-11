@@ -1,0 +1,36 @@
+{
+  "intersect": {
+    "brokers": [
+      {
+        "username": "intersect_username",
+        "password": "intersect_password",
+        "host": "127.0.0.1",
+        "port": 5672,
+        "protocol": "amqp0.9.1"
+      }
+    ]
+  },
+  "intersect-hierarchy": {
+    "organization": "ornl",
+    "facility": "intersect",
+    "system": "dial-system",
+    "subsystem": "dial-subsystem",
+    "service": "dial-service"
+  },
+  "dial": {
+    "mongo": {
+      "username": null,
+      "password": null,
+      "host": "127.0.0.1",
+      "port": 27017,
+      "db_name": "dial"
+    }
+  },
+  "rosenbrock-hierarchy": {
+    "organization": "ornl",
+    "facility": "intersect",
+    "system": "rosenbrock-system",
+    "subsystem": "rosenbrock-subsystem",
+    "service": "rosenbrock-service"
+  }
+}
