@@ -1,0 +1,29 @@
+services:
+  broker:
+    image: "bitnamilegacy/rabbitmq:3.13.3"
+    ports:
+      - "1883:1883"
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_PLUGINS: "rabbitmq_management rabbitmq_mqtt"
+      RABBITMQ_USERNAME: "intersect_username"
+      RABBITMQ_PASSWORD: "intersect_password"
+      RABBITMQ_MANAGEMENT_ALLOW_WEB_ACCESS: "yes"
+    healthcheck:
+      test: rabbitmq-diagnostics -q ping && rabbitmq-diagnostics -q check_running && rabbitmq-diagnostics -q check_local_alarms
+      interval: 10s
+      retries: 5
+      start_period: 10s
+      timeout: 10s
+
+  mongodb:
+    image: docker.io/bitnamilegacy/mongodb:8.0
+    ports:
+      - "27017:27017"
+    volumes:
+      - dial_mongodb_data:/bitnami/mongodb
+
+volumes:
+  dial_mongodb_data:
+    driver: local

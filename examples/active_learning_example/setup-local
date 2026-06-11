@@ -1,0 +1,8 @@
+#!/bin/sh
+cd ${0%/*} || exit 1
+
+cd local_config
+sudo docker login
+sudo docker-compose down
+sudo docker-compose -f docker-compose.yml up -d
+python launch_service.py --config local-conf.json
