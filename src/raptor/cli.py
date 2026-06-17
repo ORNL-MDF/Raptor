@@ -57,7 +57,6 @@ def main() -> int:
         layer_height = scan_pattern_parameters["layer_height"]
         voxel_resolution = scan_pattern_parameters["voxel_resolution"]
         enable_random_phases = scan_pattern_parameters["enable_random_segment_phase"]
-        boundary_tolerance = scan_pattern_parameters["boundary_tolerance"]
 
         # read melt pool dictionary (time series or spectral components)
         melt_pool_dict = config.get("melt_pool_data", {})
@@ -194,7 +193,7 @@ def main() -> int:
         grid = create_grid(voxel_resolution, bound_box=bounding_box)
 
         # compute porosity
-        porosity = compute_porosity(grid, all_vectors, melt_pool, boundary_tolerance=boundary_tolerance)
+        porosity = compute_porosity(grid, all_vectors, melt_pool)
 
         # write VTK (optional)
         if vtk_dict:

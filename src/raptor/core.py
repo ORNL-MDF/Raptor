@@ -68,8 +68,7 @@ def compute_distance_to_boundary(
     depth: float,
     height_shape_factor: float,
     depth_shape_factor: float,
-    relative_tolerance: float = 1e-5,
-    boundary_tolerance: float = 1e-5,
+    resolution: float,
 ) -> float:
     """
     Computes the distance from a point (y, z) to the boundary of a modified Lamé curve cross-section:
@@ -112,13 +111,13 @@ def compute_distance_to_boundary(
         df_dr = 2 * (r0 * cos_theta / a) ** 2 / r0 + n * (r0 * sin_theta / b) ** n / r0
         step = f / df_dr
         r0 -= step
-        if np.abs(step) < boundary_tolerance:
+        if np.abs(step) - resolution * 3 ** 0.5 / 2 <= 1e-24:
             break
 
     return r0
 
 def compute_melt_mask(
-    voxels: np.ndarray, resolution: float, melt_pool: MeltPool, path_vectors: List[PathVector], boundary_tolerance: float = 1e-5
+    voxels: np.ndarray, resolution: float, melt_pool: MeltPool, path_vectors: List[PathVector]
 ):
     """
     Unpacks jitclasses into arrays to pass to compute_melt_mask_implicit().
@@ -215,7 +214,6 @@ def compute_melt_mask_implicit(
     height_frequencies: np.ndarray,
     height_shape_factor: np.float64,
     depth_shape_factor: np.float64,
-    boundary_tolerance: np.float64 = 1e-5,
 ) -> np.ndarray:
     """
     Implicit compute melt mask function.
@@ -306,9 +304,9 @@ def compute_melt_mask_implicit(
             
             is_voxel_melted = is_inside(local_y, local_z, width, height, depth, height_shape_factor, depth_shape_factor)
             
-            dist_to_bdry = compute_distance_to_boundary(local_y, local_z, width, height, depth, height_shape_factor, depth_shape_factor)
+            dist_to_bdry = compute_distance_to_boundary(local_y, local_z, width, height, depth, height_shape_factor, depth_shape_factor, resolution)
             
-            is_voxel_boundary = np.abs(dist_to_bdry - (local_y**2 + local_z**2)**0.5) <= resolution * (2**0.5)/2
+            is_voxel_boundary = np.abs(dist_to_bdry - (local_y**2 + local_z**2)**0.5) - resolution * (3**0.5 / 2) <= 1e-24 
             
             melt_mask_previous = melt_mask[i]
 
