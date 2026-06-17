@@ -69,6 +69,7 @@ def compute_distance_to_boundary(
     height_shape_factor: float,
     depth_shape_factor: float,
     relative_tolerance: float = 1e-5,
+    boundary_tolerance: float = 1e-5,
 ) -> float:
     """
     Computes the distance from a point (y, z) to the boundary of a modified Lamé curve cross-section:
@@ -111,13 +112,13 @@ def compute_distance_to_boundary(
         df_dr = 2 * (r0 * cos_theta / a) ** 2 / r0 + n * (r0 * sin_theta / b) ** n / r0
         step = f / df_dr
         r0 -= step
-        if np.abs(step) < relative_tolerance:
+        if np.abs(step) < boundary_tolerance:
             break
 
     return r0
 
 def compute_melt_mask(
-    voxels: np.ndarray, resolution: float, melt_pool: MeltPool, path_vectors: List[PathVector]
+    voxels: np.ndarray, resolution: float, melt_pool: MeltPool, path_vectors: List[PathVector], boundary_tolerance: float = 1e-5
 ):
     """
     Unpacks jitclasses into arrays to pass to compute_melt_mask_implicit().
@@ -214,6 +215,7 @@ def compute_melt_mask_implicit(
     height_frequencies: np.ndarray,
     height_shape_factor: np.float64,
     depth_shape_factor: np.float64,
+    boundary_tolerance: np.float64 = 1e-5,
 ) -> np.ndarray:
     """
     Implicit compute melt mask function.

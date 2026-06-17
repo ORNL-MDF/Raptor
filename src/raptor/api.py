@@ -161,6 +161,7 @@ def compute_porosity(
     path_vectors: List[PathVector],
     melt_pool: MeltPool,
     jit_warmup: Optional[bool] = True,
+    boundary_tolerance: Optional[float] = 1e-5,
 ) -> None:
     """
     Main computation: computes porosity field.
@@ -176,7 +177,7 @@ def compute_porosity(
 
         # Warm up the main, parallelized compute kernel.
         if grid.n_voxels > 0 and path_vectors:
-            _ = compute_melt_mask(grid.voxels[0:1], grid.resolution * 1.5, melt_pool, path_vectors[0:1])
+            _ = compute_melt_mask(grid.voxels[0:1], grid.resolution * 1.5, melt_pool, path_vectors[0:1], boundary_tolerance)
 
         print(f" -> JIT warmup complete ({time.time() - t_start_warmup:.8f}s).")
 
@@ -188,7 +189,7 @@ def compute_porosity(
 
     print("Running melt-mask calculation...")
     t0_run = time.time()
-    melted_mask_flat = compute_melt_mask(grid.voxels, grid.resolution * 1.5, melt_pool, path_vectors)
+    melted_mask_flat = compute_melt_mask(grid.voxels, grid.resolution * 1.5, melt_pool, path_vectors, boundary_tolerance)
     t_elapsed = time.time() - t0_run
 
     n_melted = melted_mask_flat.sum()

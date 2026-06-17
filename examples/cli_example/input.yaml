@@ -5,6 +5,7 @@ parameters:
   layer_height: 50.0e-6              # (meters)
   voxel_resolution: 5.0e-6           # (meters)
   enable_random_segment_phase: false # Default: true
+  boundary_tolerance: 1e-5           # (meters) convergence tolerance for boundary calculation
 
 melt_pool_data:
   width:

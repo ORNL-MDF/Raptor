@@ -81,7 +81,8 @@ melt_pool_dict = {
 melt_pool = create_melt_pool(melt_pool_dict, enable_random_phases=True)
 
 # 4. Compute porosity using conic section / superellipse curves for melt pool mask
-porosity = compute_porosity(grid, path_vectors, melt_pool, jit_warmup=True)
+boundary_tolerance = 1e-5 # setting a convergence tolerance for the boundary calculation in compute_melt_mask()
+porosity = compute_porosity(grid, path_vectors, melt_pool, jit_warmup=True, boundary_tolerance=boundary_tolerance)
 
 # 5. Write porosity field to .VTI
 write_vtk(grid.origin, grid.resolution, porosity, "rve.vti")
