@@ -116,7 +116,8 @@ def create_melt_pool(
 
         else:
             raise ValueError(
-                f"Unsupported data shape: {data.shape}.  Must be [time, value] or [amplitude, frequency, phase]"
+                f"Unsupported data shape: {data.shape}.  "
+                f"Must be [time, value] or [amplitude, frequency, phase]"
             )
 
         # Pad the array with zeros if it has fewer modes than the max.
@@ -201,7 +202,6 @@ def compute_porosity(
         f"Melted {n_melted} of {grid.n_voxels} voxels."
     )
 
-    # porosity_field = (~melted_mask_flat).astype(np.int8).reshape(grid.shape, order="C")
     porosity_field = (melted_mask_flat).astype(np.int8).reshape(grid.shape, order="C")
 
     return porosity_field
@@ -238,7 +238,6 @@ def write_vtk(
     writer = vtk.vtkXMLImageDataWriter()
     writer.SetFileName(vtk_output_path)
     writer.SetInputData(imageData)
-    # writer.SetDataModeToBinary()
 
     writer.Write()
     del porosity
@@ -256,7 +255,8 @@ def compute_morphology(
     defect_structure = (porosity == 0).astype(int)
     print(f"Identifying connected defects...")
     print(
-        f" -> Found {defect_structure.sum()} defect voxels. Computing morphology features..."
+        f" -> Found {defect_structure.sum()} defect voxels. "
+        f"Computing morphology features..."
     )
     labeled_defects = measure.label(defect_structure, connectivity=3)
     min_size = 2
@@ -275,7 +275,8 @@ def write_morphology(properties: dict, morphology_output_path: str) -> None:
     morphology_df = pd.DataFrame(properties, index=None)
     if len(morphology_df) == 0:
         print(
-            "Either no defects were found or all defects were single-voxel. No morphology features to write."
+            f"Either no defects were found or all defects were single-voxel. "
+            f"No morphology features to write."
         )
         return None
     else:
@@ -288,7 +289,8 @@ def write_morphology(properties: dict, morphology_output_path: str) -> None:
 
 def visualize(vtk_output_path: str, scaling=1e6) -> None:
     """
-    Visualizes porosity field using PyVista. Defaults to scaling from meters to microns for better labeling.
+    Visualizes porosity field using PyVista.
+    Defaults to scaling from meters to microns for better labeling.
     """
     rve = pv.read(vtk_output_path)
     isosurface = rve.contour(isosurfaces=5)
