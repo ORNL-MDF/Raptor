@@ -34,8 +34,8 @@ grid = create_grid(voxel_resolution, bound_box=bound_box)
 # 2. Create path vectors through the representative volume element (RVE)
 power = 370
 velocity = 1.7
-hatch_spacing = 140e-6
-layer_height = 30e-6
+hatch_spacing = 145e-6
+layer_height = 40e-6
 rotation = 67
 scan_extension = max(max_point - min_point)
 extra_layers = 0
@@ -93,4 +93,4 @@ morphology = compute_morphology(
 write_morphology(morphology, "rve_morphology.csv")
 
 # 7. Visualize using PyVista
-# visualize("./rve.vti")
+visualize("./rve.vti")

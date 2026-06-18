@@ -293,7 +293,7 @@ def visualize(vtk_output_path: str, scaling=1e6) -> None:
     Defaults to scaling from meters to microns for better labeling.
     """
     rve = pv.read(vtk_output_path)
-    isosurface = rve.contour(isosurfaces=5)
+    isosurface = rve.contour(isosurfaces=[0.5], scalars="porosity", compute_normals=False)
 
     # Outline of the original domain
     outline = rve.outline()
