@@ -253,12 +253,14 @@ def compute_morphology(
     """
     Extracts pores, computes morphology features.
     """
-    defect_structure = (porosity==0).astype(int)
+    defect_structure = (porosity == 0).astype(int)
     print(f"Identifying connected defects...")
-    print(f" -> Found {defect_structure.sum()} defect voxels. Computing morphology features...")
+    print(
+        f" -> Found {defect_structure.sum()} defect voxels. Computing morphology features..."
+    )
     labeled_defects = measure.label(defect_structure, connectivity=3)
-    max_size = 2
-    filtered_defects = remove_small_objects(labeled_defects, max_size=max_size)
+    min_size = 2
+    filtered_defects = remove_small_objects(labeled_defects, min_size=min_size)
 
     return measure.regionprops_table(
         filtered_defects, spacing=voxel_resolution, properties=morphology_fields
@@ -272,7 +274,9 @@ def write_morphology(properties: dict, morphology_output_path: str) -> None:
 
     morphology_df = pd.DataFrame(properties, index=None)
     if len(morphology_df) == 0:
-        print("Either no defects were found or all defects were single-voxel. No morphology features to write.")
+        print(
+            "Either no defects were found or all defects were single-voxel. No morphology features to write."
+        )
         return None
     else:
         morphology_df.to_csv(morphology_output_path, index=False)
