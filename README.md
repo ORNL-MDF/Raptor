@@ -28,9 +28,15 @@ This project is licensed under the BSD 3-Clause [License](LICENSE).
 *  **Intersection Tracking**: Voxels that are incident with two or more boundaries are flagged as intersection points.
 *  **Analysis and Output**: The final 3D volume is saved in the binary VTK ImageData (`.vti`) format. The morphological characteristics (e.g., volume, surface area, equivalent diameter) of contiguous pore structures can be quantified using the `scikit-image` library, and saved to a `.csv` file.
 
-<figure>
-  <img src="https://raw.githubusercontent.com/ORNL-MDF/raptor-media/main/images/boundary_visualization.gif" alt="example animation">
-  <figcaption>Visualization of the melt pool overlaps with boundary tracking. The stochastic lack-of-fusion can be seen as the white regions in the animation. 0.5mm edge length, 1.25µm resolution, ~64M voxels, ~66s runtime on a 2025 Macbook Air M4.</figcaption>
+<figure style="text-align:center;">
+  <img
+    src="https://raw.githubusercontent.com/ORNL-MDF/raptor-media/main/images/example_phases_annotated.gif"
+    alt="example animation"
+    style="width:60%; height:auto;"
+  >
+  <figcaption>
+    Visualization of the melt pool overlaps with defects, interior, boundaries and intersections tracked.
+  </figcaption>
 </figure>
 
 ## Installation

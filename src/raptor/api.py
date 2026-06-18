@@ -232,7 +232,7 @@ def write_vtk(
         deep=True,
         array_type=vtk.VTK_INT,
     )
-    vtk_data_array.SetName("porosity")
+    vtk_data_array.SetName("Phase")
     imageData.GetPointData().SetScalars(vtk_data_array)
 
     writer = vtk.vtkXMLImageDataWriter()
@@ -243,7 +243,7 @@ def write_vtk(
     del porosity
     del porosity_vtk_order
 
-    print(f"VTK porosity map written to: {vtk_output_path}")
+    print(f"VTK phase map written to: {vtk_output_path}")
 
 
 def compute_morphology(
@@ -294,7 +294,7 @@ def visualize(vtk_output_path: str, scaling=1e6) -> None:
     """
     rve = pv.read(vtk_output_path)
     isosurface = rve.contour(
-        isosurfaces=[0.5], scalars="porosity", compute_normals=False
+        isosurfaces=[0.5], scalars="Phase", compute_normals=False
     )
     if isosurface.n_points == 0:
         print(f"No porosity detected in the volume, skipping visualization.")
