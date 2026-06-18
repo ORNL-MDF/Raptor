@@ -27,14 +27,14 @@ from raptor.utilities import ScanPathBuilder
 min_point = np.array([0.0, 0.0, 0.0])
 max_point = np.array([5.0e-4, 5.0e-4, 5.0e-4])
 bound_box = np.array([min_point, max_point])
-voxel_resolution = 2.5e-6
+voxel_resolution = 5.0e-6
 
 grid = create_grid(voxel_resolution, bound_box=bound_box)
 
 # 2. Create path vectors through the representative volume element (RVE)
 power = 370
 velocity = 1.7
-hatch_spacing = 145e-6
+hatch_spacing = 140e-6
 layer_height = 30e-6
 rotation = 67
 scan_extension = max(max_point - min_point)
