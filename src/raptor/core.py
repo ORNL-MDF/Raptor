@@ -298,5 +298,5 @@ def compute_melt_mask_implicit(
                 melt_mask[i] = 2
             if melt_mask_previous > 1 and is_voxel_boundary:
                 melt_mask[i] = 3
-            
+
     return melt_mask
