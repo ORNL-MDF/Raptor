@@ -14,52 +14,6 @@ from typing import List, Tuple
 from .structures import MeltPool, PathVector
 
 
-@njit(inline="always", fastmath=True)
-def is_inside(
-    y: float,
-    z: float,
-    width: float,
-    height: float,
-    depth: float,
-    height_shape_factor: float,
-    depth_shape_factor: float,
-) -> bool:
-    """
-    Checks if a point (y, z) is inside a modified Lamé curve cross-section:
-    (y/a)^2 + (|z|/b)^n <= 1
-
-    Args:
-        y (float): The y-coordinate of the point (horizontal axis).
-        z (float): The z-coordinate of the point (vertical axis).
-        width (float): The full width of the shape along the y-axis (shared).
-        height (float): The maximum height of the top half of the shape (for z > 0).
-        depth (float): The maximum depth of the bottom half of the shape (for z < 0).
-        height_shape_factor (float): The shape exponent 'n' for the top half.
-        depth_shape_factor (float): The shape exponent 'n' for the bottom half.
-            - n=2:   Ellipse
-            - n=1:   Parabola
-            - n=0.5: Bell-shaped
-            - n=10:  Box-shaped
-
-    Returns:
-        bool: True if the point is inside or on the boundary, False otherwise.
-    """
-
-    a = width / 2.0
-
-    b_choices = (depth, height)
-    n_choices = (depth_shape_factor, height_shape_factor)
-
-    selector = int(z >= 0)
-
-    b = b_choices[selector]
-    n = n_choices[selector]
-
-    test_value = (y / a) ** 2 + (np.abs(z) / b) ** n
-
-    return test_value <= 1.0
-
-
 @njit(fastmath=True)
 def compute_distance_to_boundary(
     y: float,
@@ -105,24 +59,31 @@ def compute_distance_to_boundary(
     theta = np.arctan2(np.abs(z), y)
     cos_theta = np.cos(theta)
     sin_theta = np.sin(theta)
-    r0 = (y**2 + z**2) ** 0.5
+    rv = (y**2 + z**2) ** 0.5
+    r0 = rv
+    inv_r0 = 1.0 / r0
+    cos_theta = y * inv_r0
+    sin_theta = np.abs(z) * inv_r0
 
-    while True:
-        f = (r0 * cos_theta / a) ** 2 + (r0 * sin_theta / b) ** n - 1.0
+    c2 = (cos_theta / a) ** 2
+    cn = (sin_theta / b) ** n
 
-        df_dr = (
-            2 * (r0 * cos_theta / a) ** 2 / r0
-            + n * (r0 ** (n - 1)) * (sin_theta / b) ** n
-        )
+    tol = resolution + 1e-24
+    max_iter = 20
+
+    for _ in range(max_iter):
+        r_n_minus_1 = r0 ** (n - 1.0)
+
+        f = c2 * r0 * r0 + cn * r_n_minus_1 * r0 - 1.0
+        df_dr = 2.0 * c2 * r0 + n * cn * r_n_minus_1
 
         step = f / df_dr
-
         r0 -= step
 
-        if np.abs(step) - resolution <= 1e-24:
+        if np.abs(step) <= tol:
             break
 
-    return r0
+    return rv - r0
 
 
 def compute_melt_mask(
@@ -314,17 +275,17 @@ def compute_melt_mask_implicit(
                     two_pi_t * height_frequencies[k] + phase_k
                 )
 
-            is_voxel_melted = is_inside(
-                local_y,
-                local_z,
-                width,
-                height,
-                depth,
-                height_shape_factor,
-                depth_shape_factor,
-            )
+            # is_voxel_melted = is_inside(
+            #     local_y,
+            #     local_z,
+            #     width,
+            #     height,
+            #     depth,
+            #     height_shape_factor,
+            #     depth_shape_factor,
+            # )
 
-            dist_to_bdry = compute_distance_to_boundary(
+            signed_dist = compute_distance_to_boundary(
                 local_y,
                 local_z,
                 width,
@@ -335,10 +296,9 @@ def compute_melt_mask_implicit(
                 resolution,
             )
 
-            is_voxel_boundary = (
-                np.abs(dist_to_bdry - (local_y**2 + local_z**2) ** 0.5) - resolution
-                <= 1e-24
-            )
+            is_voxel_melted = signed_dist < 0.0
+
+            is_voxel_boundary = np.abs(signed_dist) - resolution <= 1e-24
 
             melt_mask_previous = melt_mask[i]
 
@@ -346,8 +306,6 @@ def compute_melt_mask_implicit(
                 melt_mask[i] = 1
             if is_voxel_boundary:
                 melt_mask[i] = 2
-            if melt_mask[i] == 2 and is_voxel_melted and not is_voxel_boundary:
-                melt_mask[i] = 1
             if melt_mask_previous > 1 and is_voxel_boundary:
                 melt_mask[i] = 3
     return melt_mask
