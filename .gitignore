@@ -6,6 +6,7 @@ build
 # other typical case file names
 *.vti
 *morphology.csv
+*.h5
 
 # vscode settings cache
 .vscode
