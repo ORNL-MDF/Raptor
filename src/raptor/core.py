@@ -57,7 +57,7 @@ def is_inside(
 
     test_value = (y / a) ** 2 + (np.abs(z) / b) ** n
 
-    return test_value <= 1.0
+    return test_value<=1.0
 
 @njit(fastmath=True)
 def compute_distance_to_boundary(
@@ -108,10 +108,14 @@ def compute_distance_to_boundary(
 
     while True:
         f = (r0 * cos_theta / a) ** 2 + (r0 * sin_theta / b) ** n - 1.0
-        df_dr = 2 * (r0 * cos_theta / a) ** 2 / r0 + n * (r0 * sin_theta / b) ** n / r0
+
+        df_dr = 2 * (r0 * cos_theta / a) ** 2 / r0 + n * (r0**(n-1)) * (sin_theta / b) ** n
+
         step = f / df_dr
+
         r0 -= step
-        if np.abs(step) - resolution * 3 ** 0.5 / 2 <= 1e-24:
+        
+        if np.abs(step) - resolution <= 1e-24:
             break
 
     return r0
@@ -306,7 +310,7 @@ def compute_melt_mask_implicit(
             
             dist_to_bdry = compute_distance_to_boundary(local_y, local_z, width, height, depth, height_shape_factor, depth_shape_factor, resolution)
             
-            is_voxel_boundary = np.abs(dist_to_bdry - (local_y**2 + local_z**2)**0.5) - resolution * (3**0.5 / 2) <= 1e-24 
+            is_voxel_boundary = np.abs(dist_to_bdry - (local_y**2 + local_z**2)**0.5) - resolution <= 1e-24 
             
             melt_mask_previous = melt_mask[i]
 
