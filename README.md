@@ -29,11 +29,9 @@ This project is licensed under the BSD 3-Clause [License](LICENSE).
 *  **Analysis and Output**: The final 3D volume is saved in the binary VTK ImageData (`.vti`) format. The morphological characteristics (e.g., volume, surface area, equivalent diameter) of contiguous pore structures can be quantified using the `scikit-image` library, and saved to a `.csv` file.
 
 <figure>
-  <img src="https://raw.githubusercontent.com/ORNL-MDF/raptor-media/main/images/example_defects.png" alt="example figure">
-  <figcaption>Stochastic undermelting defects occurring between tracks due to melt pool fluctuations.</figcaption>
+  <img src="https://raw.githubusercontent.com/ORNL-MDF/raptor-media/main/images/boundary_visualization.gif" alt="example animation">
+  <figcaption>Visualization of the melt pool overlaps with boundary tracking. The stochastic lack-of-fusion can be seen as the white regions in the animation. 0.5mm edge length, 1.25µm resolution, ~64M voxels, ~66s runtime on a 2025 Macbook Air M4.</figcaption>
 </figure>
-
-
 
 ## Installation
 
