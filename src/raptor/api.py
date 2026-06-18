@@ -17,6 +17,7 @@ from vtk.util import numpy_support
 import pyvista as pv
 from skimage import measure
 from skimage.morphology import remove_small_objects
+from matplotlib.colors import ListedColormap
 
 from .utilities import ScanPathBuilder
 from .structures import MeltPool, PathVector, Grid
@@ -287,38 +288,125 @@ def write_morphology(properties: dict, morphology_output_path: str) -> None:
         )
 
 
-def visualize(vtk_output_path: str, scaling=1e6) -> None:
+def visualize(vtk_output_path: str) -> None:
     """
     Visualizes porosity field using PyVista.
     Defaults to scaling from meters to microns for better labeling.
     """
+
     rve = pv.read(vtk_output_path)
-    isosurface = rve.contour(
-        isosurfaces=[0.5], scalars="Phase", compute_normals=False
-    )
-    if isosurface.n_points == 0:
-        print(f"No porosity detected in the volume, skipping visualization.")
-        return
-
-    # Outline of the original domain
     outline = rve.outline()
+    annotations = {
+        0: "Pore",
+        1: "Melted",
+        2: "Boundary",
+        3: "Intersection",
+    }
+    phase_cmap = ListedColormap(
+        [
+            (1.0, 0.0, 0.0),
+            (0.7, 0.7, 0.7),
+            (0.2, 0.2, 0.2),
+            (1.0, 1.0, 0.0),
+        ],
+        name="phase_cmap",
+        N=4,
+    )
 
-    # Set up the plotter
-    pl = pv.Plotter()
-    pl.add_mesh(isosurface, color="red", opacity=0.8)
+    pl = pv.Plotter(shape=(1, 2), window_size=(1600, 800))
+
+    pl.subplot(0, 1)
+    pore_rve = rve.threshold([-0.5, 0.5], scalars="Phase")
+    pore_rve_clip_actor = pl.add_mesh(
+        pore_rve.clip(normal=(1, 0, 0), origin=(rve.bounds[1], 0, 0)),
+        scalars="Phase",
+        cmap=ListedColormap(
+            [
+                (1.0, 0.0, 0.0),
+            ],
+            name="phase_cmap_pore",
+            N=1,
+        ),
+        interpolate_before_map=False,
+        lighting=False,
+        opacity=1.0,
+        scalar_bar_args={
+            "n_labels": 0,
+        },
+    )
     pl.add_mesh(outline, color="black", line_width=1)
+
     label_args = {
         "font_size": 12,
         "color": "black",
         "font_family": "arial",
         "fmt": "%.0e",
     }
+
     pl.show_grid(
-        xtitle="X (um)",
-        ytitle="Y (um)",
-        ztitle="Z (um)",
+        xtitle="X (µm)",
+        ytitle="Y (µm)",
+        ztitle="Z (µm)",
         grid=False,
         location="outer",
         **label_args,
     )
+
+    pl.add_axes()
+
+    pl.subplot(0, 0)
+    rve_clipped = rve.clip(normal=(1, 0, 0), origin=(rve.bounds[1], 0, 0))
+
+    clip_actor = pl.add_mesh(
+        rve_clipped,
+        scalars="Phase",
+        cmap=phase_cmap,
+        clim=(0, 3),
+        categories=True,
+        n_colors=4,
+        annotations=annotations,
+        interpolate_before_map=False,
+        lighting=False,
+        opacity=1.0,
+        show_scalar_bar=True,
+        scalar_bar_args={"title": "Phase", "n_labels": 0},
+    )
+    pl.add_mesh(outline, color="black", line_width=1)
+
+    label_args = {
+        "font_size": 12,
+        "color": "black",
+        "font_family": "arial",
+        "fmt": "%.0e",
+    }
+
+    pl.show_grid(
+        xtitle="X (µm)",
+        ytitle="Y (µm)",
+        ztitle="Z (µm)",
+        grid=False,
+        location="outer",
+        **label_args,
+    )
+
+    pl.add_axes()
+
+    def update_clip(normal, origin):
+        new_clipped = rve.clip(normal=normal, origin=origin)
+        clip_actor.mapper.SetInputData(new_clipped)
+        pore_rve_clip_actor.mapper.SetInputData(
+            new_clipped.threshold([-0.5, 0.5], scalars="Phase")
+        )
+
+    pl.add_plane_widget(
+        update_clip,
+        normal=(1, 0, 0),
+        origin=rve.center,
+        bounds=rve.bounds,
+        color="blue",
+        outline_translation=False,
+    )
+
+    pl.link_views()  # Link the two views for synchronized interaction
+
     pl.show()
