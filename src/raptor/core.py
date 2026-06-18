@@ -57,7 +57,8 @@ def is_inside(
 
     test_value = (y / a) ** 2 + (np.abs(z) / b) ** n
 
-    return test_value<=1.0
+    return test_value <= 1.0
+
 
 @njit(fastmath=True)
 def compute_distance_to_boundary(
@@ -109,19 +110,26 @@ def compute_distance_to_boundary(
     while True:
         f = (r0 * cos_theta / a) ** 2 + (r0 * sin_theta / b) ** n - 1.0
 
-        df_dr = 2 * (r0 * cos_theta / a) ** 2 / r0 + n * (r0**(n-1)) * (sin_theta / b) ** n
+        df_dr = (
+            2 * (r0 * cos_theta / a) ** 2 / r0
+            + n * (r0 ** (n - 1)) * (sin_theta / b) ** n
+        )
 
         step = f / df_dr
 
         r0 -= step
-        
+
         if np.abs(step) - resolution <= 1e-24:
             break
 
     return r0
 
+
 def compute_melt_mask(
-    voxels: np.ndarray, resolution: float, melt_pool: MeltPool, path_vectors: List[PathVector]
+    voxels: np.ndarray,
+    resolution: float,
+    melt_pool: MeltPool,
+    path_vectors: List[PathVector],
 ):
     """
     Unpacks jitclasses into arrays to pass to compute_melt_mask_implicit().
@@ -214,7 +222,7 @@ def compute_melt_mask_implicit(
     width_frequencies: np.ndarray,
     depth_amplitudes: np.ndarray,
     depth_frequencies: np.ndarray,
-    height_amplitudes: np.ndarray,  
+    height_amplitudes: np.ndarray,
     height_frequencies: np.ndarray,
     height_shape_factor: np.float64,
     depth_shape_factor: np.float64,
@@ -305,20 +313,40 @@ def compute_melt_mask_implicit(
                 height += height_amplitudes[k] * np.cos(
                     two_pi_t * height_frequencies[k] + phase_k
                 )
-            
-            is_voxel_melted = is_inside(local_y, local_z, width, height, depth, height_shape_factor, depth_shape_factor)
-            
-            dist_to_bdry = compute_distance_to_boundary(local_y, local_z, width, height, depth, height_shape_factor, depth_shape_factor, resolution)
-            
-            is_voxel_boundary = np.abs(dist_to_bdry - (local_y**2 + local_z**2)**0.5) - resolution <= 1e-24 
-            
+
+            is_voxel_melted = is_inside(
+                local_y,
+                local_z,
+                width,
+                height,
+                depth,
+                height_shape_factor,
+                depth_shape_factor,
+            )
+
+            dist_to_bdry = compute_distance_to_boundary(
+                local_y,
+                local_z,
+                width,
+                height,
+                depth,
+                height_shape_factor,
+                depth_shape_factor,
+                resolution,
+            )
+
+            is_voxel_boundary = (
+                np.abs(dist_to_bdry - (local_y**2 + local_z**2) ** 0.5) - resolution
+                <= 1e-24
+            )
+
             melt_mask_previous = melt_mask[i]
 
             if is_voxel_melted:
-                 melt_mask[i] = 1
+                melt_mask[i] = 1
             if is_voxel_boundary:
                 melt_mask[i] = 2
-            if melt_mask[i]==2 and is_voxel_melted and not is_voxel_boundary:
+            if melt_mask[i] == 2 and is_voxel_melted and not is_voxel_boundary:
                 melt_mask[i] = 1
             if melt_mask_previous > 1 and is_voxel_boundary:
                 melt_mask[i] = 3
