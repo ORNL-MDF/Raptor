@@ -297,41 +297,48 @@ def visualize(vtk_output_path: str) -> None:
     rve = pv.read(vtk_output_path)
     outline = rve.outline()
     pore_rve = rve.threshold([-0.5, 0.5], scalars="Phase")
-    render_pore_structure= pore_rve.n_points > 0
-    
-    
-    annotations = {
-        0.5: "Pore",
-        1.5: "Melted",
-        2.5: "Boundary",
-        3.5: "Intersection",
-    } if render_pore_structure else {
-        1.5: "Melted",
-        2.5: "Boundary",
-        3.5: "Intersection",
-    }
+    render_pore_structure = pore_rve.n_points > 0
+
+    annotations = (
+        {
+            0.5: "Pore",
+            1.5: "Melted",
+            2.5: "Boundary",
+            3.5: "Intersection",
+        }
+        if render_pore_structure
+        else {
+            1.5: "Melted",
+            2.5: "Boundary",
+            3.5: "Intersection",
+        }
+    )
     n_colors = 4 if render_pore_structure else 3
-    phase_cmap = ListedColormap(
-        [
-            (1.0, 0.0, 0.0),
-            (0.7, 0.7, 0.7),
-            (0.2, 0.2, 0.2),
-            (1.0, 1.0, 0.0),
-        ],
-        name="phase_cmap",
-        N=n_colors,
-    ) if render_pore_structure else ListedColormap(
-        [
-            (0.7, 0.7, 0.7),
-            (0.2, 0.2, 0.2),
-            (1.0, 1.0, 0.0),
-        ],
-        name="phase_cmap",
-        N=n_colors,
+    phase_cmap = (
+        ListedColormap(
+            [
+                (1.0, 0.0, 0.0),
+                (0.7, 0.7, 0.7),
+                (0.2, 0.2, 0.2),
+                (1.0, 1.0, 0.0),
+            ],
+            name="phase_cmap",
+            N=n_colors,
+        )
+        if render_pore_structure
+        else ListedColormap(
+            [
+                (0.7, 0.7, 0.7),
+                (0.2, 0.2, 0.2),
+                (1.0, 1.0, 0.0),
+            ],
+            name="phase_cmap",
+            N=n_colors,
+        )
     )
 
     pl = pv.Plotter(shape=(1, 2), window_size=(1600, 800))
-    
+
     if render_pore_structure:
         pl.subplot(0, 1)
         pore_rve_clip_actor = pl.add_mesh(
@@ -411,9 +418,13 @@ def visualize(vtk_output_path: str) -> None:
     def update_clip(normal, origin):
         new_clipped = rve.clip(normal=normal, origin=origin)
         clip_actor.mapper.SetInputData(new_clipped)
-        pore_rve_clip_actor.mapper.SetInputData(
-            new_clipped.threshold([-0.5, 0.5], scalars="Phase")
-        ) if render_pore_structure else None
+        (
+            pore_rve_clip_actor.mapper.SetInputData(
+                new_clipped.threshold([-0.5, 0.5], scalars="Phase")
+            )
+            if render_pore_structure
+            else None
+        )
 
     pl.add_plane_widget(
         update_clip,
