@@ -13,7 +13,8 @@ from raptor.api import (
     visualize,
 )
 from raptor.utilities import ScanPathBuilder, MeltPoolFilter
-import joblib
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import Matern
 import pickle
 
 comm = MPI.COMM_WORLD
@@ -148,9 +149,19 @@ def run_raptor(power, velocity, hatch_spacing, layer_height, features,
         return np.array([])
     
 def load_sve_cases(nruns=5):
-    gp_models = load_meltpool_surrogates("/Users/vamsi/Desktop/phd/mcml/projects/ornl/summer2026/mpi_acceleration/pvhl/meltpool_model/meltpool_gp_bundle.joblib")
-    gp_models = gp_models["gp_dict"]
-    meltpool_data_y = load_meltpool_data("/Users/vamsi/Desktop/phd/mcml/projects/ornl/summer2026/mpi_acceleration/pvhl/meltpool_model/meltpool_data_y.pkl")
+    meltpool_data_x = load_meltpool_data("./meltpool_data_x.pkl")
+    meltpool_data_x = x_to_unit(meltpool_data_x)
+    meltpool_data_y = load_meltpool_data("./meltpool_data_y.pkl")
+    length_scale = 0.5
+    kernel = Matern(length_scale = length_scale, length_scale_bounds='fixed')
+    gps = {}
+    features = {}
+    for feature in meltpool_data_y.keys():
+        meltpool_data_y_unit = (meltpool_data_y[feature] - np.mean(meltpool_data_y[feature])) / (np.std(meltpool_data_y[feature]) + 1e-12)
+        gp = GaussianProcessRegressor(kernel=kernel, alpha=0.01)
+        gp.fit(meltpool_data_x, meltpool_data_y_unit)
+        gps[feature] = gp
+        print("Trained GP surrogate for feature: ", feature)
     # p_range = [100, 150, 200, 250, 300]
     # v_range = [0.5, 0.75, 1.0, 1.25, 1.5]
     # h_range = np.arange(60e-6, 180e-6, 5e-6)
@@ -162,10 +173,10 @@ def load_sve_cases(nruns=5):
     cases = []
     for p in p_range:
         for v in v_range:
-            features = {}
-            for dim in gp_models.keys():
+            x_unit = x_to_unit([v,p]).reshape(1,-1)
+            for dim in gps.keys():
                 x_unit = x_to_unit([p, v]).reshape(1, -1)
-                pred = gp_models[dim].predict(x_unit) * np.std(meltpool_data_y[dim] + 1e-12) + np.mean(meltpool_data_y[dim])
+                pred = gps[dim].predict(x_unit) * np.std(meltpool_data_y[dim] + 1e-12) + np.mean(meltpool_data_y[dim])
                 features[dim] = pred[0]
             for h in h_range:
                 for l in l_range:
