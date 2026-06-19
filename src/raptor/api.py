@@ -296,12 +296,21 @@ def visualize(vtk_output_path: str) -> None:
 
     rve = pv.read(vtk_output_path)
     outline = rve.outline()
+    pore_rve = rve.threshold([-0.5, 0.5], scalars="Phase")
+    render_pore_structure= pore_rve.n_points > 0
+    
+    
     annotations = {
-        0: "Pore",
-        1: "Melted",
-        2: "Boundary",
-        3: "Intersection",
+        0.5: "Pore",
+        1.5: "Melted",
+        2.5: "Boundary",
+        3.5: "Intersection",
+    } if render_pore_structure else {
+        1.5: "Melted",
+        2.5: "Boundary",
+        3.5: "Intersection",
     }
+    n_colors = 4 if render_pore_structure else 3
     phase_cmap = ListedColormap(
         [
             (1.0, 0.0, 0.0),
@@ -310,49 +319,57 @@ def visualize(vtk_output_path: str) -> None:
             (1.0, 1.0, 0.0),
         ],
         name="phase_cmap",
-        N=4,
+        N=n_colors,
+    ) if render_pore_structure else ListedColormap(
+        [
+            (0.7, 0.7, 0.7),
+            (0.2, 0.2, 0.2),
+            (1.0, 1.0, 0.0),
+        ],
+        name="phase_cmap",
+        N=n_colors,
     )
 
     pl = pv.Plotter(shape=(1, 2), window_size=(1600, 800))
+    
+    if render_pore_structure:
+        pl.subplot(0, 1)
+        pore_rve_clip_actor = pl.add_mesh(
+            pore_rve.clip(normal=(1, 0, 0), origin=(rve.bounds[1], 0, 0)),
+            scalars="Phase",
+            cmap=ListedColormap(
+                [
+                    (1.0, 0.0, 0.0),
+                ],
+                name="phase_cmap_pore",
+                N=1,
+            ),
+            interpolate_before_map=False,
+            lighting=False,
+            opacity=1.0,
+            scalar_bar_args={
+                "n_labels": 0,
+            },
+        )
+        pl.add_mesh(outline, color="black", line_width=1)
 
-    pl.subplot(0, 1)
-    pore_rve = rve.threshold([-0.5, 0.5], scalars="Phase")
-    pore_rve_clip_actor = pl.add_mesh(
-        pore_rve.clip(normal=(1, 0, 0), origin=(rve.bounds[1], 0, 0)),
-        scalars="Phase",
-        cmap=ListedColormap(
-            [
-                (1.0, 0.0, 0.0),
-            ],
-            name="phase_cmap_pore",
-            N=1,
-        ),
-        interpolate_before_map=False,
-        lighting=False,
-        opacity=1.0,
-        scalar_bar_args={
-            "n_labels": 0,
-        },
-    )
-    pl.add_mesh(outline, color="black", line_width=1)
+        label_args = {
+            "font_size": 12,
+            "color": "black",
+            "font_family": "arial",
+            "fmt": "%.0e",
+        }
 
-    label_args = {
-        "font_size": 12,
-        "color": "black",
-        "font_family": "arial",
-        "fmt": "%.0e",
-    }
+        pl.show_grid(
+            xtitle="X (µm)",
+            ytitle="Y (µm)",
+            ztitle="Z (µm)",
+            grid=False,
+            location="outer",
+            **label_args,
+        )
 
-    pl.show_grid(
-        xtitle="X (µm)",
-        ytitle="Y (µm)",
-        ztitle="Z (µm)",
-        grid=False,
-        location="outer",
-        **label_args,
-    )
-
-    pl.add_axes()
+        pl.add_axes()
 
     pl.subplot(0, 0)
     rve_clipped = rve.clip(normal=(1, 0, 0), origin=(rve.bounds[1], 0, 0))
@@ -361,9 +378,9 @@ def visualize(vtk_output_path: str) -> None:
         rve_clipped,
         scalars="Phase",
         cmap=phase_cmap,
-        clim=(0, 3),
+        clim=(0, 4) if render_pore_structure else (1, 4),
         categories=True,
-        n_colors=4,
+        n_colors=n_colors,
         annotations=annotations,
         interpolate_before_map=False,
         lighting=False,
@@ -396,7 +413,7 @@ def visualize(vtk_output_path: str) -> None:
         clip_actor.mapper.SetInputData(new_clipped)
         pore_rve_clip_actor.mapper.SetInputData(
             new_clipped.threshold([-0.5, 0.5], scalars="Phase")
-        )
+        ) if render_pore_structure else None
 
     pl.add_plane_widget(
         update_clip,

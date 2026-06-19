@@ -103,4 +103,4 @@ morphology = compute_morphology(
 write_morphology(morphology, "rve_morphology.csv")
 
 # 7. Visualize using PyVista
-visualize("./rve.vti")
+# visualize("./rve.vti")
