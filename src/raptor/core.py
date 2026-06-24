@@ -286,9 +286,9 @@ def compute_melt_mask_implicit(
                 resolution,
             )
 
-            is_voxel_melted = signed_dist < 1e-24
+            is_voxel_melted = signed_dist < 1e-12
 
-            is_voxel_boundary = np.abs(signed_dist) - resolution <= 1e-24
+            is_voxel_boundary = np.abs(signed_dist) - resolution <= 1e-12
 
             melt_mask_previous = melt_mask[i]
 
