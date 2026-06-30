@@ -239,8 +239,8 @@ class MeltPoolFilter:
         # timeseries related properties
         self.fs, self.duration = timeseries_params
         self.dt = 1 / self.fs
-        self.n_points = int(self.duration / self.dt + 1)
-        self.t = np.arange(0, self.duration, self.dt)
+        self.n_points = int(self.duration // self.dt + 1)
+        self.t = np.linspace(0, self.duration, self.n_points)
         # parametric representations of fluctuation scales
         self.physical_effects = {}  # contains scale description and parameters
 
