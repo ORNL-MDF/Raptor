@@ -11,7 +11,7 @@
 import numpy as np
 from typing import List, Tuple
 from .structures import PathVector
-from scipy.signal import lfilter, butter
+from scipy.signal import butter, sosfilt
 
 
 class ScanPathBuilder:
@@ -239,8 +239,8 @@ class MeltPoolFilter:
         # timeseries related properties
         self.fs, self.duration = timeseries_params
         self.dt = 1 / self.fs
-        self.n_points = int(self.duration // self.dt + 1)
-        self.t = np.linspace(0, self.duration, self.n_points)
+        self.n_points = int(np.floor(self.duration * self.fs)) + 1
+        self.t = np.arange(self.n_points) * self.dt
         # parametric representations of fluctuation scales
         self.physical_effects = {}  # contains scale description and parameters
 
@@ -287,12 +287,13 @@ class MeltPoolFilter:
         nyq = 0.5 * fs
         low = lowcut / nyq
         high = highcut / nyq
-        if high >= 1.0:
-            high = 0.999
-        if low <= 0.0001:
-            low = 0.0001
-        b, a = butter(order, [low, high], btype="band")
-        return lfilter(b, a, data)
+        if not 0.0 < low < high < 1.0:
+            raise ValueError(
+                "Bandpass range must lie strictly between 0 Hz and the "
+                "Nyquist frequency. Increase the sampling frequency."
+            )
+        sos = butter(order, [low, high], btype="band", output="sos")
+        return sosfilt(sos, data)
 
     def generate_fluctuations(self, noise_scale):
         base_white_noise = np.random.normal(
@@ -310,7 +311,10 @@ class MeltPoolFilter:
                 fs=self.fs,
             )
 
+            component_noise -= np.mean(component_noise)
             std_dev = np.std(component_noise)
+            if not np.isfinite(std_dev) or std_dev == 0.0:
+                raise ValueError("Unable to generate finite melt-pool fluctuations.")
             scaled_component = component_noise * (
                 params["sigma_contribution"] / std_dev
             )
