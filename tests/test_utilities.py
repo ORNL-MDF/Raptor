@@ -33,9 +33,7 @@ def test_melt_pool_filter_recovers_requested_statistics():
 
     assert np.isfinite(width_data).all()
     np.testing.assert_allclose(width_data[:, 1].mean(), mean, atol=1.0e-15)
-    np.testing.assert_allclose(
-        width_data[:, 1].std(), standard_deviation, atol=1.0e-15
-    )
+    np.testing.assert_allclose(width_data[:, 1].std(), standard_deviation, atol=1.0e-15)
 
 
 def test_melt_pool_filter_remains_finite_at_high_sampling_frequency():

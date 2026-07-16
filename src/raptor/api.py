@@ -80,9 +80,7 @@ def compute_spectral_components(melt_pool_data: np.ndarray, n_modes: int) -> np.
         n_fluctuation_modes = min(n_modes - 1, len(available_indices))
 
         dominant = available_indices[
-            np.argsort(np.abs(fft_resolution[available_indices]))[
-                -n_fluctuation_modes:
-            ]
+            np.argsort(np.abs(fft_resolution[available_indices]))[-n_fluctuation_modes:]
         ]
         dominant.sort()
 
