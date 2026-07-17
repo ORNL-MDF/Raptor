@@ -9,7 +9,7 @@
 # https://github.com/ORNL-MDF/Raptor/LICENSE
 # =============================================================================
 import time
-from typing import List, Tuple, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 import vtk
@@ -66,12 +66,8 @@ def create_path_vectors(
 
 
 def compute_required_modes(data: np.ndarray, reconstruction_rmse: float) -> int:
-    """
-    Computes the number of modes required to reconstruct the melt pool data within a specified RMSE threshold.
-    """
-    fft_resolution = np.fft.fft(data[:, 1])
-    F = np.zeros_like(fft_resolution)
-    n_fft = len(fft_resolution)
+    """Return the minimum number of real Fourier modes for an RMSE target."""
+    return compute_spectral_components(data, tolerance=reconstruction_rmse).shape[0]
 
 
 def compute_spectral_components(
@@ -79,55 +75,82 @@ def compute_spectral_components(
     n_modes: Optional[int] = None,
     tolerance: Optional[float] = None,
 ) -> np.ndarray:
+    """Convert a uniformly sampled real signal to a sparse cosine expansion.
 
-    dt = melt_pool_data[1, 0] - melt_pool_data[0, 0]
-    mode0 = melt_pool_data[:, 1].mean()
-    fft_resolution = np.fft.fft(melt_pool_data[:, 1])
-    F = np.zeros_like(fft_resolution)
-    n_fft = len(fft_resolution)
+    ``n_modes`` includes the mean (DC) mode and retains the corresponding
+    low-frequency prefix.  When ``tolerance`` is used, the smallest set of
+    Fourier bins whose discarded energy satisfies the requested reconstruction
+    RMSE is retained.
+    """
+    data = np.asarray(melt_pool_data, dtype=np.float64)
+    if data.ndim != 2 or data.shape[1] != 2 or data.shape[0] < 2:
+        raise ValueError("melt_pool_data must have shape (n, 2) with n >= 2.")
+    if not np.isfinite(data).all():
+        raise ValueError("melt_pool_data must contain only finite values.")
+    if (n_modes is None) == (tolerance is None):
+        raise ValueError("Provide exactly one of n_modes or tolerance.")
 
-    if n_modes is None:
-        if tolerance is None:
-            raise ValueError(
-                "Either n_modes or tolerance must be provided for spectral component computation."
-            )
-        for k in range(1, n_fft // 2 + 1):
-            # Keep only the n_modes with largest magnitude
-            fft_truncated = fft_resolution.copy()
-            indices = np.argsort(np.abs(fft_resolution))
-            fft_truncated[indices[:-k]] = 0
+    time_values = data[:, 0]
+    signal = data[:, 1]
+    time_steps = np.diff(time_values)
+    dt = time_steps[0]
+    if dt <= 0.0 or not np.allclose(time_steps, dt, rtol=1.0e-7, atol=0.0):
+        raise ValueError("Time samples must be strictly increasing and uniform.")
 
-            # Reconstruct signal
-            reconstructed_signal = np.fft.ifft(fft_truncated).real
+    n_samples = signal.size
+    fft_values = np.fft.rfft(signal)
+    frequencies = np.fft.rfftfreq(n_samples, d=dt)
+    candidate_bins = np.arange(1, fft_values.size)
 
-            # Compute RMSE
-            rmse = np.sqrt(np.mean((melt_pool_data[:, 1] - reconstructed_signal) ** 2))
-
-            # Check if threshold is met
-            if rmse <= tolerance:
-                n_modes = k
-                break
-        print(
-            f"Computed {n_modes} modes to achieve reconstruction RMSE of {rmse:.6f} within tolerance {tolerance}."
+    # Parseval energy represented by each positive-frequency cosine.  Interior
+    # rFFT bins represent a conjugate pair; the Nyquist bin does not.
+    energy_weights = np.full(fft_values.size, 2.0)
+    energy_weights[0] = 1.0
+    if n_samples % 2 == 0:
+        energy_weights[-1] = 1.0
+    if tolerance is not None:
+        if not np.isfinite(tolerance) or tolerance < 0.0:
+            raise ValueError("tolerance must be a finite, non-negative value.")
+        candidate_energy = (
+            energy_weights[candidate_bins] * np.abs(fft_values[candidate_bins]) ** 2
         )
+        energy_indices = np.argsort(candidate_energy)[::-1]
+        energy_order = candidate_bins[energy_indices]
+        allowed_energy = (tolerance * n_samples) ** 2
+        ordered_energy = candidate_energy[energy_indices]
+        required_energy = ordered_energy.sum() - allowed_energy
+        retained_count = (
+            0
+            if required_energy <= 0.0
+            else np.searchsorted(
+                np.cumsum(ordered_energy), required_energy, side="left"
+            )
+            + 1
+        )
+        selected_bins = energy_order[:retained_count]
+    else:
+        if not isinstance(n_modes, (int, np.integer)) or n_modes < 1:
+            raise ValueError("n_modes must be a positive integer.")
+        if n_modes > fft_values.size:
+            raise ValueError(
+                f"n_modes cannot exceed {fft_values.size} for this time series."
+            )
+        selected_bins = candidate_bins[: n_modes - 1]
 
-    elif n_modes == 1:
-        spectral_array = np.array([[mode0, 0, 0]])
+    # Frequency order is convenient for evaluation and deterministic output.
+    selected_bins = np.sort(selected_bins)
+    amplitudes = energy_weights[selected_bins] * np.abs(fft_values[selected_bins])
+    amplitudes /= n_samples
+    phases = np.angle(fft_values[selected_bins])
+    # FFT phases are relative to sample zero; account for an absolute time axis.
+    phases -= 2.0 * np.pi * frequencies[selected_bins] * time_values[0]
 
-    for i in range(1, n_modes):
-        F[i] = fft_resolution[i]
-        F[n_fft - i] = fft_resolution[n_fft - i]
-
-    frequencies = np.float64(1 / (dt * n_fft)) * np.arange(n_modes, dtype=np.float64)
-    phases = np.float64(np.angle(F[:n_modes]))
-    amplitudes = np.float64(np.abs(F[:n_modes]) / n_fft)
-    spectral_array = np.vstack(
-        [
-            np.array([mode0, 0, 0]),
-            np.vstack([amplitudes[1:], frequencies[1:], phases[1:]]).transpose(),
-        ]
-    )
-    return np.float64(spectral_array)
+    spectral_array = np.empty((selected_bins.size + 1, 3), dtype=np.float64)
+    spectral_array[0] = (signal.mean(), 0.0, 0.0)
+    spectral_array[1:, 0] = amplitudes
+    spectral_array[1:, 1] = frequencies[selected_bins]
+    spectral_array[1:, 2] = phases
+    return spectral_array
 
 
 def create_melt_pool(
@@ -136,19 +159,21 @@ def create_melt_pool(
     tolerance: Optional[float] = None,
 ) -> MeltPool:
 
-    processed_components: Dict[str, Tuple[np.ndarray, float]] = {}
+    processed_components: Dict[str, np.ndarray] = {}
 
-    # 1. Determine the maximum number of modes required.
-    # for _, nmodes, _, _ in melt_pool_dict.values():
-    #     max_modes = max(max_modes, n_modes if nmodes is not None else 0)
-
-    # 2. Process each component into its spectral format
-    max_modes = 0
+    # Process every component before padding so results do not depend on
+    # dictionary insertion order.
     for key, (data, n_modes, scale, shape_factor) in melt_pool_dict.items():
         # Option A: Input data is a raw time-series [time, value]
         if data.shape[1] == 2:
-            spectral_array = compute_spectral_components(data, n_modes, tolerance)
-            max_modes = max(max_modes, spectral_array.shape[0])
+            component_tolerance = tolerance
+            if tolerance is not None and scale != 0.0:
+                component_tolerance = tolerance / abs(scale)
+            spectral_array = compute_spectral_components(
+                data,
+                n_modes=n_modes,
+                tolerance=component_tolerance if n_modes is None else None,
+            )
             spectral_array[:, 0] *= scale
 
         # Option B: Input data is a spectral array [amplitude, frequency, phase]
@@ -161,16 +186,17 @@ def create_melt_pool(
                 f"Must be [time, value] or [amplitude, frequency, phase]"
             )
 
-        # Pad the array with zeros if it has fewer modes than the max.
+        processed_components[key] = np.asarray(spectral_array, dtype=np.float64)
+
+    max_modes = max(array.shape[0] for array in processed_components.values())
+    for key, spectral_array in processed_components.items():
         current_modes = spectral_array.shape[0]
-        if current_modes < max_modes:
+        if current_modes != max_modes:
             pad_array = np.zeros(
                 shape=(max_modes - current_modes, spectral_array.shape[1]),
                 dtype=np.float64,
             )
-            spectral_array = np.vstack([spectral_array, pad_array])
-
-        processed_components[key] = spectral_array
+            processed_components[key] = np.vstack([spectral_array, pad_array])
 
     # 3. Create the MeltPool object
     width_oscillations = processed_components["width"]
