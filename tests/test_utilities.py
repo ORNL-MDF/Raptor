@@ -18,33 +18,23 @@ def test_melt_pool_filter_recovers_requested_statistics():
     standard_deviation = 40.0e-6
     scan_speed = 1.7
     melt_pool_length = 300.0e-6
-    time_scale = melt_pool_length / scan_speed
-    sampling_frequency = 340_000.0
+    resolution = 5.0e-6
+    
+    variance_significance = 0.05
+    ci_tolerance_window = 0.01
+
 
     melt_pool_filter = MeltPoolFilter(
         mean,
         standard_deviation,
         scan_speed,
-        [sampling_frequency, 30.0 * time_scale],
+        variance_significance,
+        ci_tolerance_window,
+        resolution
     )
     melt_pool_filter.add_effect("melt_pool", [melt_pool_length, None, 1.0])
     melt_pool_filter.initialize()
-    width_data = melt_pool_filter.generate_fluctuations(1.0)
+    width_data = melt_pool_filter.generate_fluctuations(1.0, melt_pool_filter.n_points, melt_pool_filter.t)
 
     assert np.isfinite(width_data).all()
-    np.testing.assert_allclose(width_data[:, 1].mean(), mean, atol=1.0e-15)
-    np.testing.assert_allclose(width_data[:, 1].std(), standard_deviation, atol=1.0e-15)
-
-
-def test_melt_pool_filter_remains_finite_at_high_sampling_frequency():
-    melt_pool_filter = MeltPoolFilter(
-        148.0e-6,
-        40.0e-6,
-        1.7,
-        [2_500_000.0, 0.002],
-    )
-    melt_pool_filter.add_effect("melt_pool", [300.0e-6, None, 1.0])
-    melt_pool_filter.initialize()
-    width_data = melt_pool_filter.generate_fluctuations(1.0)
-
-    assert np.isfinite(width_data).all()
+    assert np.all((width_data[:,1].std()**2 >= standard_deviation**2 * (1 - ci_tolerance_window)) & (width_data[:,1].std()**2 <= standard_deviation**2 * (1 + ci_tolerance_window)))

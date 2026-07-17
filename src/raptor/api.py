@@ -111,8 +111,9 @@ def compute_spectral_components(
             f"Computed {n_modes} modes to achieve reconstruction RMSE of {rmse:.6f} within tolerance {tolerance}."
         )
 
-    elif n_modes == 1:
+    if n_modes == 1:
         spectral_array = np.array([[mode0, 0, 0]])
+        return np.float64(spectral_array)
 
     for i in range(1, n_modes):
         F[i] = fft_resolution[i]
@@ -138,11 +139,7 @@ def create_melt_pool(
 
     processed_components: Dict[str, Tuple[np.ndarray, float]] = {}
 
-    # 1. Determine the maximum number of modes required.
-    # for _, nmodes, _, _ in melt_pool_dict.values():
-    #     max_modes = max(max_modes, n_modes if nmodes is not None else 0)
-
-    # 2. Process each component into its spectral format
+    # 1. Process each component into its spectral format, determine max_modes
     max_modes = 0
     for key, (data, n_modes, scale, shape_factor) in melt_pool_dict.items():
         # Option A: Input data is a raw time-series [time, value]
@@ -150,17 +147,22 @@ def create_melt_pool(
             spectral_array = compute_spectral_components(data, n_modes, tolerance)
             max_modes = max(max_modes, spectral_array.shape[0])
             spectral_array[:, 0] *= scale
+            melt_pool_dict[key] = (spectral_array, spectral_array.shape[0], scale, shape_factor)
 
         # Option B: Input data is a spectral array [amplitude, frequency, phase]
         elif data.shape[1] == 3:
             spectral_array = data.copy()
+            max_modes = max(max_modes, spectral_array.shape[0])
 
         else:
             raise ValueError(
                 f"Unsupported data shape: {data.shape}.  "
                 f"Must be [time, value] or [amplitude, frequency, phase]"
             )
-
+    
+    # 2. Pad each spectral array to have the same number of modes (max_modes)
+    for key, (data, n_modes, scale, shape_factor) in melt_pool_dict.items():
+        spectral_array = data
         # Pad the array with zeros if it has fewer modes than the max.
         current_modes = spectral_array.shape[0]
         if current_modes < max_modes:
