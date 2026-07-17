@@ -325,9 +325,13 @@ class TestComputeSpectralComponents:
             )
             assert spectral_array.shape == (n_modes, 3)
 
-    def test_compute_spectral_components_mean_value(self, sample_time_series_data, sample_voxel_resolution):
+    def test_compute_spectral_components_mean_value(
+        self, sample_time_series_data, sample_voxel_resolution
+    ):
         """Test that mode 0 matches the mean of input data."""
-        spectral_array = compute_spectral_components(sample_time_series_data, n_modes=None, tolerance=sample_voxel_resolution)
+        spectral_array = compute_spectral_components(
+            sample_time_series_data, n_modes=None, tolerance=sample_voxel_resolution
+        )
         expected_mean = sample_time_series_data[:, 1].mean()
 
         np.testing.assert_allclose(spectral_array[0, 0], expected_mean)

@@ -147,7 +147,12 @@ def create_melt_pool(
             spectral_array = compute_spectral_components(data, n_modes, tolerance)
             max_modes = max(max_modes, spectral_array.shape[0])
             spectral_array[:, 0] *= scale
-            melt_pool_dict[key] = (spectral_array, spectral_array.shape[0], scale, shape_factor)
+            melt_pool_dict[key] = (
+                spectral_array,
+                spectral_array.shape[0],
+                scale,
+                shape_factor,
+            )
 
         # Option B: Input data is a spectral array [amplitude, frequency, phase]
         elif data.shape[1] == 3:
@@ -159,7 +164,7 @@ def create_melt_pool(
                 f"Unsupported data shape: {data.shape}.  "
                 f"Must be [time, value] or [amplitude, frequency, phase]"
             )
-    
+
     # 2. Pad each spectral array to have the same number of modes (max_modes)
     for key, (data, n_modes, scale, shape_factor) in melt_pool_dict.items():
         spectral_array = data
