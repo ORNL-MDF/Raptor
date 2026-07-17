@@ -37,6 +37,9 @@ MELT_POOL_HEIGHT = 30.0e-6
 MELT_POOL_WIDTH_STD_DEV = 18.0e-6
 MELT_POOL_LENGTH = 300.0e-6
 
+VARIANCE_SIGNIFICANCE = 0.025 # \alpha value for significance of variance test
+CI_TOLERANCE_WINDOW = 0.01 # relative tolerance window around the user supplied std
+
 N_SPECTRAL_MODES = 50
 HEIGHT_SHAPE_FACTOR = 1.0
 DEPTH_SHAPE_FACTOR = 1.0
@@ -133,16 +136,15 @@ def plot_width_data(width_data):
 
 def build_melt_pool():
     # Create melt pools from convolution filter
-    fluctuation_time_scale = MELT_POOL_LENGTH / SCAN_SPEED
-    sampling_frequency = SCAN_SPEED / VOXEL_RESOLUTION
-    duration = 200.0 * fluctuation_time_scale
-
+    
     # Instantiate object
     mp_filter = MeltPoolFilter(
         MELT_POOL_WIDTH,
         MELT_POOL_WIDTH_STD_DEV,
         SCAN_SPEED,
-        [sampling_frequency, duration],
+        VARIANCE_SIGNIFICANCE,
+        CI_TOLERANCE_WINDOW,
+        VOXEL_RESOLUTION
     )
 
     # Define physical scales
@@ -150,7 +152,7 @@ def build_melt_pool():
 
     # Generate stochastic melt pool
     mp_filter.initialize()
-    width_data = mp_filter.generate_fluctuations(1)
+    width_data = mp_filter.generate_fluctuations(1, mp_filter.n_points, mp_filter.t)
     plot_width_data(width_data)
 
     # scale melt pool data by constant factor
@@ -159,22 +161,22 @@ def build_melt_pool():
 
     # assign shape to melt pool and cap (1 = parabola, 2 = ellipse)
     melt_pool_dict = {
-        "width": (width_data, N_SPECTRAL_MODES, 1.0, 2.0),
+        "width": (width_data, None, 1.0, 2.0),
         "depth": (
             width_data,
-            N_SPECTRAL_MODES,
+            None,
             depth_scale,
             DEPTH_SHAPE_FACTOR,
         ),
         "height": (
             width_data,
-            N_SPECTRAL_MODES,
+            None,
             height_scale,
             HEIGHT_SHAPE_FACTOR,
         ),
     }
 
-    return create_melt_pool(melt_pool_dict, enable_random_phases=True)
+    return create_melt_pool(melt_pool_dict, enable_random_phases=True, tolerance = VOXEL_RESOLUTION)
 
 
 def main():
