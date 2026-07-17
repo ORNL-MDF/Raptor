@@ -12,6 +12,7 @@ import numpy as np
 from typing import List, Tuple
 from .structures import PathVector
 from scipy.signal import butter, sosfilt
+from scipy.stats import chi2
 
 
 class ScanPathBuilder:
@@ -221,7 +222,7 @@ class ScanPathBuilder:
 
 class MeltPoolFilter:
     def __init__(
-        self, mu: float, sigma: float, scan_speed: float, timeseries_params: list
+        self, mu: float, sigma: float, scan_speed: float, confidence: float, ci_relative_width: float, voxel_resolution: float
     ):
         """
         Filtration of disparate fluctuation scales to infer a melt pool oscillations sequence.
@@ -237,10 +238,13 @@ class MeltPoolFilter:
         # process parameters
         self.scan_speed = scan_speed
         # timeseries related properties
-        self.fs, self.duration = timeseries_params
-        self.dt = 1 / self.fs
-        self.n_points = int(np.floor(self.duration * self.fs)) + 1
-        self.t = np.arange(self.n_points) * self.dt
+        self.voxel_resolution = voxel_resolution
+        self.fs = self.scan_speed / self.voxel_resolution
+
+        # confidence interval properties
+        self.confidence = confidence
+        self.ci_relative_width = ci_relative_width
+
         # parametric representations of fluctuation scales
         self.physical_effects = {}  # contains scale description and parameters
 
@@ -280,6 +284,30 @@ class MeltPoolFilter:
                 params["sigma_weight"] / self.normalization_factor
             ) * self.sigma
 
+        max_timescale = max(
+            p["length_scale_m"] / self.scan_speed
+            for p in self.physical_effects.values()
+            if p["length_scale_m"] is not None
+        )
+        duration_guess = max_timescale
+        npoints_guess = int(np.floor(duration_guess * self.fs)) + 1
+        t_guess = np.arange(npoints_guess) * (1 / self.fs)
+        timeseries_guess = self.generate_fluctuations(self.sigma, npoints_guess, t_guess)
+        ci_result = self.evaluate_variance_ci(timeseries_guess[:, 1])
+        while True:
+            if ci_result["target_within_ci"] and ci_result["precision_satisfied"]:
+                break
+            duration_guess *=2 
+            npoints_guess = int(np.floor(duration_guess * self.fs)) + 1
+            t_guess = np.arange(npoints_guess) * (1 / self.fs)
+            timeseries_guess = self.generate_fluctuations(self.sigma, npoints_guess, t_guess)
+            ci_result = self.evaluate_variance_ci(timeseries_guess[:, 1])
+            print("Confidence interval evaluation: ", ci_result)
+        
+        self.duration = duration_guess
+        self.n_points = int(np.floor(self.duration * self.fs)) + 1
+        self.t = t_guess
+
     def bandpass_filter(self, data, f0, bandwidth_fraction, fs, order=4):
         """Applies a bandpass filter around a center frequency f0."""
         lowcut = f0 * (1 - bandwidth_fraction / 2)
@@ -295,11 +323,11 @@ class MeltPoolFilter:
         sos = butter(order, [low, high], btype="band", output="sos")
         return sosfilt(sos, data)
 
-    def generate_fluctuations(self, noise_scale):
+    def generate_fluctuations(self, noise_scale, n_points, t):
         base_white_noise = np.random.normal(
-            loc=0, scale=noise_scale, size=self.n_points
+            loc=0, scale=noise_scale, size=n_points
         )
-        final_series = np.zeros(self.n_points)
+        final_series = np.zeros(n_points)
         self.component_series = {}
 
         # Create each component series, scale it, and add to the final series
@@ -324,4 +352,44 @@ class MeltPoolFilter:
         # Adding the mean
         final_series += self.mu
 
-        return np.column_stack([self.t, final_series])
+        return np.column_stack([t, final_series])
+    
+    def evaluate_variance_ci(self, data):
+        """
+        Evaluates the confidence interval for the variance of the data.
+        Returns (lower_bound, upper_bound) for the variance.
+        """
+        n = len(data)
+        sample_variance = np.var(data, ddof=1)
+        
+        # Compute autocorrelation to estimate effective sample size
+        autocorr = np.correlate(data - np.mean(data), data - np.mean(data), mode='full')
+        autocorr = autocorr[autocorr.size // 2:] / autocorr[autocorr.size // 2]
+
+        # Effective sample size
+        zero_crossings = np.where(autocorr < 0)[0]
+        cutoff = zero_crossings[0] if zero_crossings.size > 0 else len(autocorr)
+        effective_n = n / (1 + 2 * np.sum(autocorr[1:cutoff]))
+        effective_n = int(max(1, min(effective_n, n)))  # Ensure effective_n is at least 1 and not greater than n
+
+        # chi-squared confidence interval for variance
+        dof = effective_n - 1
+        alpha = 1 - self.confidence
+        chi2_lower = chi2.ppf(alpha / 2, dof)
+        chi2_upper = chi2.ppf(1 - alpha / 2, dof)
+        
+        lower_bound = dof * sample_variance / chi2_upper
+        upper_bound = dof * sample_variance / chi2_lower
+        
+        allowed_width = 2 * self.ci_relative_width * self.sigma**2
+        target_within_ci = (lower_bound <= self.sigma**2 <= upper_bound)
+        precision_satisfied = (upper_bound - lower_bound) <= allowed_width
+
+        return {
+            "sample_variance": sample_variance,
+            "effective_n": effective_n,
+            "lower_bound": lower_bound,
+            "upper_bound": upper_bound,
+            "target_within_ci": target_within_ci,
+            "precision_satisfied": precision_satisfied,
+        }
