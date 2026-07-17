@@ -72,9 +72,13 @@ def compute_required_modes(data: np.ndarray, reconstruction_rmse: float) -> int:
     fft_resolution = np.fft.fft(data[:, 1])
     F = np.zeros_like(fft_resolution)
     n_fft = len(fft_resolution)
-    
 
-def compute_spectral_components(melt_pool_data: np.ndarray, n_modes: Optional[int]=None, tolerance: Optional[float]=None) -> np.ndarray:
+
+def compute_spectral_components(
+    melt_pool_data: np.ndarray,
+    n_modes: Optional[int] = None,
+    tolerance: Optional[float] = None,
+) -> np.ndarray:
 
     dt = melt_pool_data[1, 0] - melt_pool_data[0, 0]
     mode0 = melt_pool_data[:, 1].mean()
@@ -92,19 +96,21 @@ def compute_spectral_components(melt_pool_data: np.ndarray, n_modes: Optional[in
             fft_truncated = fft_resolution.copy()
             indices = np.argsort(np.abs(fft_resolution))
             fft_truncated[indices[:-k]] = 0
-            
+
             # Reconstruct signal
             reconstructed_signal = np.fft.ifft(fft_truncated).real
-            
+
             # Compute RMSE
             rmse = np.sqrt(np.mean((melt_pool_data[:, 1] - reconstructed_signal) ** 2))
-            
+
             # Check if threshold is met
             if rmse <= tolerance:
                 n_modes = k
                 break
-        print(f"Computed {n_modes} modes to achieve reconstruction RMSE of {rmse:.6f} within tolerance {tolerance}.")
-    
+        print(
+            f"Computed {n_modes} modes to achieve reconstruction RMSE of {rmse:.6f} within tolerance {tolerance}."
+        )
+
     elif n_modes == 1:
         spectral_array = np.array([[mode0, 0, 0]])
 
@@ -112,9 +118,7 @@ def compute_spectral_components(melt_pool_data: np.ndarray, n_modes: Optional[in
         F[i] = fft_resolution[i]
         F[n_fft - i] = fft_resolution[n_fft - i]
 
-    frequencies = np.float64(1 / (dt * n_fft)) * np.arange(
-        n_modes, dtype=np.float64
-    )
+    frequencies = np.float64(1 / (dt * n_fft)) * np.arange(n_modes, dtype=np.float64)
     phases = np.float64(np.angle(F[:n_modes]))
     amplitudes = np.float64(np.abs(F[:n_modes]) / n_fft)
     spectral_array = np.vstack(
@@ -127,11 +131,12 @@ def compute_spectral_components(melt_pool_data: np.ndarray, n_modes: Optional[in
 
 
 def create_melt_pool(
-    melt_pool_dict: Dict[str, Any], enable_random_phases: bool, tolerance: Optional[float] = None
+    melt_pool_dict: Dict[str, Any],
+    enable_random_phases: bool,
+    tolerance: Optional[float] = None,
 ) -> MeltPool:
 
     processed_components: Dict[str, Tuple[np.ndarray, float]] = {}
-    
 
     # 1. Determine the maximum number of modes required.
     # for _, nmodes, _, _ in melt_pool_dict.values():
@@ -142,7 +147,7 @@ def create_melt_pool(
     for key, (data, n_modes, scale, shape_factor) in melt_pool_dict.items():
         # Option A: Input data is a raw time-series [time, value]
         if data.shape[1] == 2:
-            spectral_array = compute_spectral_components(data, n_modes,tolerance)
+            spectral_array = compute_spectral_components(data, n_modes, tolerance)
             max_modes = max(max_modes, spectral_array.shape[0])
             spectral_array[:, 0] *= scale
 

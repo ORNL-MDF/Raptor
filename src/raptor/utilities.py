@@ -222,7 +222,13 @@ class ScanPathBuilder:
 
 class MeltPoolFilter:
     def __init__(
-        self, mu: float, sigma: float, scan_speed: float, confidence: float, ci_relative_width: float, voxel_resolution: float
+        self,
+        mu: float,
+        sigma: float,
+        scan_speed: float,
+        confidence: float,
+        ci_relative_width: float,
+        voxel_resolution: float,
     ):
         """
         Filtration of disparate fluctuation scales to infer a melt pool oscillations sequence.
@@ -292,18 +298,22 @@ class MeltPoolFilter:
         duration_guess = max_timescale
         npoints_guess = int(np.floor(duration_guess * self.fs)) + 1
         t_guess = np.arange(npoints_guess) * (1 / self.fs)
-        timeseries_guess = self.generate_fluctuations(self.sigma, npoints_guess, t_guess)
+        timeseries_guess = self.generate_fluctuations(
+            self.sigma, npoints_guess, t_guess
+        )
         ci_result = self.evaluate_variance_ci(timeseries_guess[:, 1])
         while True:
             if ci_result["target_within_ci"] and ci_result["precision_satisfied"]:
                 break
-            duration_guess *=2 
+            duration_guess *= 2
             npoints_guess = int(np.floor(duration_guess * self.fs)) + 1
             t_guess = np.arange(npoints_guess) * (1 / self.fs)
-            timeseries_guess = self.generate_fluctuations(self.sigma, npoints_guess, t_guess)
+            timeseries_guess = self.generate_fluctuations(
+                self.sigma, npoints_guess, t_guess
+            )
             ci_result = self.evaluate_variance_ci(timeseries_guess[:, 1])
             print("Confidence interval evaluation: ", ci_result)
-        
+
         self.duration = duration_guess
         self.n_points = int(np.floor(self.duration * self.fs)) + 1
         self.t = t_guess
@@ -324,9 +334,7 @@ class MeltPoolFilter:
         return sosfilt(sos, data)
 
     def generate_fluctuations(self, noise_scale, n_points, t):
-        base_white_noise = np.random.normal(
-            loc=0, scale=noise_scale, size=n_points
-        )
+        base_white_noise = np.random.normal(loc=0, scale=noise_scale, size=n_points)
         final_series = np.zeros(n_points)
         self.component_series = {}
 
@@ -353,7 +361,7 @@ class MeltPoolFilter:
         final_series += self.mu
 
         return np.column_stack([t, final_series])
-    
+
     def evaluate_variance_ci(self, data):
         """
         Evaluates the confidence interval for the variance of the data.
@@ -361,28 +369,30 @@ class MeltPoolFilter:
         """
         n = len(data)
         sample_variance = np.var(data, ddof=1)
-        
+
         # Compute autocorrelation to estimate effective sample size
-        autocorr = np.correlate(data - np.mean(data), data - np.mean(data), mode='full')
-        autocorr = autocorr[autocorr.size // 2:] / autocorr[autocorr.size // 2]
+        autocorr = np.correlate(data - np.mean(data), data - np.mean(data), mode="full")
+        autocorr = autocorr[autocorr.size // 2 :] / autocorr[autocorr.size // 2]
 
         # Effective sample size
         zero_crossings = np.where(autocorr < 0)[0]
         cutoff = zero_crossings[0] if zero_crossings.size > 0 else len(autocorr)
         effective_n = n / (1 + 2 * np.sum(autocorr[1:cutoff]))
-        effective_n = int(max(1, min(effective_n, n)))  # Ensure effective_n is at least 1 and not greater than n
+        effective_n = int(
+            max(1, min(effective_n, n))
+        )  # Ensure effective_n is at least 1 and not greater than n
 
         # chi-squared confidence interval for variance
         dof = effective_n - 1
         alpha = 1 - self.confidence
         chi2_lower = chi2.ppf(alpha / 2, dof)
         chi2_upper = chi2.ppf(1 - alpha / 2, dof)
-        
+
         lower_bound = dof * sample_variance / chi2_upper
         upper_bound = dof * sample_variance / chi2_lower
-        
+
         allowed_width = 2 * self.ci_relative_width * self.sigma**2
-        target_within_ci = (lower_bound <= self.sigma**2 <= upper_bound)
+        target_within_ci = lower_bound <= self.sigma**2 <= upper_bound
         precision_satisfied = (upper_bound - lower_bound) <= allowed_width
 
         return {

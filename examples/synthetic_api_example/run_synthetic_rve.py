@@ -37,8 +37,8 @@ MELT_POOL_HEIGHT = 30.0e-6
 MELT_POOL_WIDTH_STD_DEV = 18.0e-6
 MELT_POOL_LENGTH = 300.0e-6
 
-VARIANCE_SIGNIFICANCE = 0.025 # \alpha value for significance of variance test
-CI_TOLERANCE_WINDOW = 0.01 # relative tolerance window around the user supplied std
+VARIANCE_SIGNIFICANCE = 0.025  # \alpha value for significance of variance test
+CI_TOLERANCE_WINDOW = 0.01  # relative tolerance window around the user supplied std
 
 N_SPECTRAL_MODES = 50
 HEIGHT_SHAPE_FACTOR = 1.0
@@ -136,7 +136,7 @@ def plot_width_data(width_data):
 
 def build_melt_pool():
     # Create melt pools from convolution filter
-    
+
     # Instantiate object
     mp_filter = MeltPoolFilter(
         MELT_POOL_WIDTH,
@@ -144,7 +144,7 @@ def build_melt_pool():
         SCAN_SPEED,
         VARIANCE_SIGNIFICANCE,
         CI_TOLERANCE_WINDOW,
-        VOXEL_RESOLUTION
+        VOXEL_RESOLUTION,
     )
 
     # Define physical scales
@@ -176,7 +176,9 @@ def build_melt_pool():
         ),
     }
 
-    return create_melt_pool(melt_pool_dict, enable_random_phases=True, tolerance = VOXEL_RESOLUTION)
+    return create_melt_pool(
+        melt_pool_dict, enable_random_phases=True, tolerance=VOXEL_RESOLUTION
+    )
 
 
 def main():
