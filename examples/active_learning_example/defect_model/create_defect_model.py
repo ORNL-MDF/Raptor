@@ -39,6 +39,7 @@ from dial_dataclass import (
     DialInputSingleOtherStrategy,
     DialWorkflowCreationParamsClient,
     DialWorkflowDatasetUpdate,
+    Normal,
 )
 
 
@@ -58,18 +59,18 @@ BOUNDS = ((70e-6, 140e-6),)
 UNIT_BOUNDS = ((0.0, 1.0),)
 NUM_DIMS = len(BOUNDS)
 
-INITIAL_DATA_SIZE = 5
-MAX_ITERATIONS = 30
+INITIAL_DATA_SIZE = 1
+MAX_ITERATIONS = 20
 
 SEED = 42
 
 VOXEL_RESOLUTION_M = 5e-6
 RVE_LENGTH_M = 1e-3
-QUERY_VOLUME_MM3 = 10  # decrease query_volume_mm3 to speed up
+QUERY_VOLUME_MM3 = 1.0  # decrease query_volume_mm3 from 10 to speed up
 
 MIN_LEN_DEFECTS = 50
 ANALYZE_MAX = False
-BACKEND = "sklearn"  # "sable"
+BACKEND = "sable"
 
 MESHGRID_SIZE = 150
 
@@ -354,14 +355,18 @@ class ActiveLearningOrchestrator:
     ) -> IntersectClientCallback:
         payload = None
         if operation == "initialize_workflow":
-
             # normalize and transform the output data
             y_norm, yerr_norm = y_to_unit(
                 self.dataset_y, self.dataset_yerr, self.y_scale
             )
+            # configure the output statistics and combined dataset
+            self.labels_y = ["y", "yerr"]
+            self.statistics_y = Normal(loc="y", scale="yerr")
+            initial_dataset_y = list(zip(y_norm, yerr_norm))
 
             # prior variance of the kernel (how large is uncertainty without data)
-            prior_variance = 2.0
+            prior_std = 1.5
+            prior_variance = prior_std**2
 
             self.backend = BACKEND
             if self.backend == "sklearn":
@@ -370,21 +375,15 @@ class ActiveLearningOrchestrator:
                 length_scale = 0.2
                 self.kernel_args = {
                     "length_scale": length_scale,
-                    "length_scale_bounds": "fixed",
                     "constant_value": prior_variance,
-                    "constant_value_bounds": "fixed",
-                    # set "noise_level" (nugget) to zero, and use alpha below for heteroscedastic noise
-                    "noise_level": 0.0,
-                    "noise_level_bounds": "fixed",
                 }
-                # use the nondimensionalized yerr to set alpha
-                y_variance = np.asarray(yerr_norm) ** 2
-                self.backend_args = {"alpha": y_variance}
+                self.backend_args = {}
 
             elif self.backend == "sable":
                 self.kernel = "rbf"
                 self.kernel_args = {
                     # x range of the data
+                    # the bounds are always [0, 1], since dial currently normalizes the input
                     "x_range": self.bounds_unit[0],
                     # sigma range of valid lengthscales
                     "sigma_range": [1e-3, 0.5],
@@ -397,20 +396,20 @@ class ActiveLearningOrchestrator:
                     # memory size for number of features:
                     # needs to be large enough, but becomes slower with more features
                     "n_features": 10000,
-                    # prior variance (scaled by problem specific hyperparameter)
-                    "alpha": 0.02 / prior_variance,
+                    # prior standard deviation
+                    "prior_std": prior_std,
                     # algorithm hyperparameters
                     # p is degree of adaptivity (p=2 is a GP, p=1 is fully sparse)
                     "p": 1.25,
                     # number of optimization steps (needs to be large enough, but slows performance)
                     "n_iter_irls": 100,
-                    # noise level of the data, standard deviation of each data point
-                    "noise_level": yerr_norm,
                 }
 
             payload = DialWorkflowCreationParamsClient(
                 dataset_x=self.dataset_x_unit,
-                dataset_y=y_norm,
+                dataset_y=initial_dataset_y,
+                labels_y=self.labels_y,
+                statistics_y=self.statistics_y,
                 bounds=self.bounds_unit,
                 kernel=self.kernel,
                 length_per_dimension=False,
@@ -421,28 +420,24 @@ class ActiveLearningOrchestrator:
                 seed=SEED,
                 preprocess_standardize=False,
             )
+
         elif operation == "update_workflow_with_data":
+            try:
+                next_x = kwargs["next_x"]
+                next_y = kwargs["next_y"]
+            except Exception as error:
+                print(f"could not extract next datapoint for update: {error}")
+
             # normalize / transform the output data
-            y_norm, yerr_norm = y_to_unit(
-                self.dataset_y, self.dataset_yerr, self.y_scale
-            )
-            # just pop the last element of the full dataset (TODO: this interface for updating needs to change)
-            next_y_norm = y_norm[-1]
+            y, yerr = next_y
+            y_norm, yerr_norm = y_to_unit(y, yerr, self.y_scale)
+            next_y = [y_norm, yerr_norm]
 
-            if self.backend == "sklearn":
-                # use the nondimensionalized yerr to set alpha
-                y_variance = np.asarray(yerr_norm) ** 2
-                new_backend_args = {"alpha": y_variance}
-            elif self.backend == "sable":
-                new_backend_args = {"noise_level": yerr_norm}
-            # update backend args with new noise level
-            self.backend_args |= new_backend_args
-
-            kwargs["next_y"] = float(next_y_norm)
             payload = DialWorkflowDatasetUpdate(
                 workflow_id=self.workflow_id,
                 backend_args=self.backend_args,
-                **kwargs,
+                next_x=next_x,
+                next_y=next_y,
             )
         elif operation == "get_next_point":
             payload = DialInputSingleOtherStrategy(
@@ -489,10 +484,14 @@ class ActiveLearningOrchestrator:
             return self.assemble_message("get_surrogate_values")
 
         if operation == "dial.get_surrogate_values":
-            data = payload["data"]
+            try:
+                means = payload["values"]
+                stddevs = payload["stddevs"]
+            except Exception as error:
+                print(f"Could not read surrogate values from payload: {error}")
 
-            y_norm_grid = np.array(data[0])
-            yerr_norm_grid = np.array(data[1])
+            y_norm_grid = np.array(means)
+            yerr_norm_grid = np.array(stddevs)
 
             # rescale / transform data back to original units for saving
             y_grid, yerr_grid = y_from_unit(y_norm_grid, yerr_norm_grid, self.y_scale)
@@ -538,13 +537,18 @@ class ActiveLearningOrchestrator:
             self.dataset_y.append(new_y)
             self.dataset_yerr.append(new_yerr)
 
-            new_x_unit = x_to_unit(new_x).flatten().tolist()
-            self.dataset_x_unit.append(new_x_unit)
+            # determine the next data (x,y) for the update message
+            next_y = [float(new_y), float(new_yerr)]
+            next_x = x_to_unit(new_x).flatten().tolist()
+
+            self.dataset_x_unit.append(next_x)
 
             self.iteration_count += 1
 
             return self.assemble_message(
-                "update_workflow_with_data", next_x=new_x_unit, next_y=float(new_y)
+                "update_workflow_with_data",
+                next_x=next_x,
+                next_y=next_y,
             )
 
 
