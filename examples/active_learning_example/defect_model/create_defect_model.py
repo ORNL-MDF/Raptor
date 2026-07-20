@@ -67,7 +67,7 @@ SEED = 42
 
 VOXEL_RESOLUTION_M = 5e-6
 RVE_LENGTH_M = 1e-3
-QUERY_VOLUME_MM3 = 3.0  # decrease query_volume_mm3 from 10 to speed up
+QUERY_VOLUME_MM3 = 5.0  # decrease query_volume_mm3 from 10 to speed up
 
 MIN_LEN_DEFECTS = 50
 
@@ -78,7 +78,7 @@ class AnalysisMode(StrEnum):
     LOG_MEAN = auto()
 
 
-ANALYZE = AnalysisMode.LOG_MEAN
+ANALYZE = AnalysisMode.MEAN
 
 BACKEND = "sable"  # "sable" or "sklearn"
 
@@ -234,6 +234,7 @@ def process_raptor_data(raptor_data):
 
     voxel_resolution_m = raptor_data["inputs"]["voxel_resolution_m"]
     combined_defects = raptor_data["outputs"]["equivalent_diameter_area"]
+    hatch_spacing = raptor_data["inputs"]["hatch_spacing_m"]
 
     min_len_defects = MIN_LEN_DEFECTS
     if len(combined_defects) < min_len_defects:
@@ -248,34 +249,106 @@ def process_raptor_data(raptor_data):
     # using a lightweight mcmc approach assuming a lognormal underlying distribution
     # target y - E[µ] in posterior, yerr - sqrt(Var[µ]) in posterior
     # Converting to microns for numerical stability in MCMC
+    norm_defect = np.sort(np.array(combined_defects) * 1e6)
+    log_norm_defect = np.log(norm_defect)
+    log_mean_defect = np.mean(log_norm_defect)
+    log_std_defect = np.std(log_norm_defect, ddof=1)
+    log_stderr_defect = log_std_defect / np.sqrt(len(combined_defects))
+
     trace = run_metropolis_hastings(
-        np.array(combined_defects) * 1e6,
+        norm_defect,
         iterations=5000,
         proposal_widths=np.array([1, 1]),
     )
-    burnin = 1000
+    burnin = 500
     trace = trace.T[:, burnin:]  # discard burn-in samples
+
+    logger.info("running MCMC")
+
+    # transform back to original coordinates
+    log_mean_pore = np.mean(trace[0])
+    log_std_pore = np.mean(trace[1])
+    log_stderr_pore = np.std(trace[0], ddof=1)
+
+    # Those should give the same answer
+    print("---\texpl.,\tMCMC")
+    print(f"mean:\t{log_mean_defect:.3f},\t{log_mean_pore:.3f}")
+    print(f"std:\t{log_std_defect:.3f},\t{log_std_pore:.3f}")
+    print(f"stderr:\t{log_stderr_defect:.3f},\t{log_stderr_pore:.3f}")
 
     max_pore = np.max(combined_defects)
     mean_pore = np.mean(combined_defects)
     std_pore = np.std(combined_defects, ddof=1)
     # compute the standard error, the standard deviation of the mean (Monte-Carlo error)
-    std_err_pore = std_pore / np.sqrt(len(combined_defects))
+    stderr_pore = std_pore / np.sqrt(len(combined_defects))
 
+    def plot_pore_distr():
+        logger.info("plotting pore distribution")
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        fig, ax = plt.subplots(figsize=(6.5, 4.5))
+        defect_mesh = np.linspace(0.01, (mean_pore + 3 * std_pore) * 1e6, 500)
+        ax.plot(
+            defect_mesh,
+            st.norm.pdf(defect_mesh, loc=mean_pore * 1e6, scale=std_pore * 1e6),
+            color="tab:blue",
+            linewidth=2,
+            label="Standard Gaussian estimate",
+        )
+        ax.plot(
+            defect_mesh,
+            st.norm.pdf(np.log(defect_mesh), loc=log_mean_defect, scale=log_std_defect)
+            / defect_mesh,
+            color="tab:green",
+            linewidth=2,
+            label="Log Gaussian estimate",
+        )
+        ax.plot(
+            defect_mesh,
+            st.gaussian_kde(norm_defect)(defect_mesh),
+            color="tab:orange",
+            linewidth=2,
+            label="Gaussian KDE",
+        )
+        ax.scatter(
+            norm_defect,
+            np.zeros(norm_defect.shape),
+            color="black",
+            marker="+",
+            s=15,
+            alpha=0.6,
+            label=f"Pore size data {hatch_spacing*1e6:.1f}um",
+        )
+        plt.tight_layout()
+        output_path = Path("pore_plots")
+        output_path.mkdir(exist_ok=True)
+        output_filename = f"pore_{hatch_spacing*1e6:.1f}.png"
+        plt.savefig(output_path / output_filename, dpi=300)
+        plt.close()
+
+    plot_pore_distr()
+
+    # exponential transform, to inspect values
+    mean_lognormal = np.exp(log_mean_defect).item() / 1e6
+    # std_lognormal = log_std_defect.item() * mean_lognormal
+    stderr_lognormal = log_stderr_defect.item() * mean_lognormal
     logger.info(
         f"Found {len(combined_defects)} defects: "
-        f"Hatch: {raptor_data['inputs']['hatch_spacing_m']*1e6:.1f}um | Mean and Max Pore: {mean_pore*1e6:.2f}, {max_pore*1e6:.2f}um, "
-        f"Estimated lognormal E[µ]: {np.mean(trace[0]):.6f} | sqrt(Var[µ]): {np.std(trace[0]):.6f}"
+        f"Hatch: {hatch_spacing*1e6:.1f}um | Mean and Max Pore: {mean_pore*1e6:.2f}, {max_pore*1e6:.2f}um | "
+        f"Estimated mean_lognormal: {mean_lognormal*1e6:.6f}, stderr_lognormal: {stderr_lognormal*1e6:.6f} | "
         f"Learning {ANALYZE}."
     )
 
     # TODO: discuss and refine the data analysis and extreme value statistics
     if ANALYZE == "mean":
-        y, yerr = float(mean_pore), float(std_err_pore)
+        y, yerr = float(mean_pore), float(stderr_pore)
     elif ANALYZE == "log_mean":
-        y, yerr = float(np.mean(trace[0])), float(np.std(trace[0]))
+        y, yerr = float(mean_lognormal), float(stderr_lognormal)
     elif ANALYZE == "max":
-        # return the maximum pore size, use the standard deveiation as approximate error estimate
+        # return the maximum pore size, use the standard deviation as approximate error estimate
         y, yerr = float(max_pore), float(std_pore)
 
     return y, yerr
