@@ -7,10 +7,12 @@ import random
 from pathlib import Path
 from typing import Any
 from dataclasses import dataclass
+from enum import StrEnum, auto
 
 import numpy as np
 from scipy.stats import qmc
 from scipy.interpolate import RegularGridInterpolator
+import scipy.stats as st
 
 # Raptor Imports
 from raptor.api import (
@@ -68,7 +70,16 @@ RVE_LENGTH_M = 1e-3
 QUERY_VOLUME_MM3 = 3.0  # decrease query_volume_mm3 from 10 to speed up
 
 MIN_LEN_DEFECTS = 50
-ANALYZE_MAX = False
+
+
+class AnalysisMode(StrEnum):
+    MEAN = auto()
+    MAX = auto()
+    LOG_MEAN = auto()
+
+
+ANALYZE = AnalysisMode.LOG_MEAN
+
 BACKEND = "sable"  # "sable" or "sklearn"
 
 MESHGRID_SIZE = 150
@@ -233,6 +244,18 @@ def process_raptor_data(raptor_data):
         more_defects = (voxel_resolution_m * np.random.rand(n_extra_defects)).tolist()
         combined_defects = combined_defects.tolist() + more_defects
 
+    # estimate distribution parameters for pore size distribution
+    # using a lightweight mcmc approach assuming a lognormal underlying distribution
+    # target y - E[µ] in posterior, yerr - sqrt(Var[µ]) in posterior
+    # Converting to microns for numerical stability in MCMC
+    trace = run_metropolis_hastings(
+        np.array(combined_defects) * 1e6,
+        iterations=5000,
+        proposal_widths=np.array([1, 1]),
+    )
+    burnin = 1000
+    trace = trace.T[:, burnin:]  # discard burn-in samples
+
     max_pore = np.max(combined_defects)
     mean_pore = np.mean(combined_defects)
     std_pore = np.std(combined_defects, ddof=1)
@@ -242,14 +265,16 @@ def process_raptor_data(raptor_data):
     logger.info(
         f"Found {len(combined_defects)} defects: "
         f"Hatch: {raptor_data['inputs']['hatch_spacing_m']*1e6:.1f}um | Mean and Max Pore: {mean_pore*1e6:.2f}, {max_pore*1e6:.2f}um, "
-        f"Learning {'Max' if ANALYZE_MAX else 'Mean'}."
+        f"Estimated lognormal E[µ]: {np.mean(trace[0]):.6f} | sqrt(Var[µ]): {np.std(trace[0]):.6f}"
+        f"Learning {ANALYZE}."
     )
 
     # TODO: discuss and refine the data analysis and extreme value statistics
-    return_mean = not ANALYZE_MAX
-    if return_mean:
+    if ANALYZE == "mean":
         y, yerr = float(mean_pore), float(std_err_pore)
-    else:
+    elif ANALYZE == "log_mean":
+        y, yerr = float(np.mean(trace[0])), float(np.std(trace[0]))
+    elif ANALYZE == "max":
         # return the maximum pore size, use the standard deveiation as approximate error estimate
         y, yerr = float(max_pore), float(std_pore)
 
@@ -346,6 +371,55 @@ scaler_reg = {
     "log1p": ScalerLog1p,
     "output_focus": ScalerOutputFocus,
 }
+
+
+def log_prior_lognormal(params):
+    mu, sigma = params
+    if sigma <= 0:
+        return -np.inf  # log(0)
+    mu_prior = st.norm.logpdf(mu, loc=0, scale=10)  # Example prior for mean
+    sigma_prior = st.norm.logpdf(sigma, loc=1, scale=5)  # Example prior for std
+    return mu_prior + sigma_prior
+
+
+def loglikelihood_lognormal(params, data):
+    mu, sigma = params
+    if sigma <= 0:
+        return -np.inf  # log(0)
+    return np.sum(st.lognorm.logpdf(data, s=sigma, scale=np.exp(mu)))
+
+
+def log_posterior_lognormal(params, data):
+    return loglikelihood_lognormal(params, data) + log_prior_lognormal(params)
+
+
+def run_metropolis_hastings(
+    data, iterations=10000, proposal_widths=np.array([1.0, 2.0])
+):
+    # Initial guesses
+    current_params = np.array([1, 1])  # Example initial guess
+    current_log_post = log_posterior_lognormal(current_params, data)
+
+    trace = []
+
+    for i in range(iterations):
+        # Propose new parameters (Random Walk)
+        proposal = current_params + np.random.normal(
+            0, proposal_widths, size=current_params.shape
+        )
+
+        proposal_log_post = log_posterior_lognormal(proposal, data)
+
+        # Acceptance ratio
+        ratio = np.exp((proposal_log_post - current_log_post))
+
+        if np.random.rand() < ratio:
+            current_params = proposal
+            current_log_post = proposal_log_post
+
+        trace.append(current_params)
+
+    return np.array(trace)
 
 
 # -----------------------------------------------------------------------------
