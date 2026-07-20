@@ -6,14 +6,13 @@ import sys
 import random
 from pathlib import Path
 from typing import Any
+from dataclasses import dataclass
 
 import numpy as np
 from scipy.stats import qmc
 from scipy.interpolate import RegularGridInterpolator
 
 # Raptor Imports
-from numba import njit
-from raptor.io import read_data
 from raptor.api import (
     create_grid,
     create_melt_pool,
@@ -24,7 +23,7 @@ from raptor.utilities import ScanPathBuilder, MeltPoolFilter
 
 # Intersect Imports
 from intersect_sdk import (
-    INTERSECT_JSON_VALUE,
+    INTERSECT_RESPONSE_VALUE,
     HierarchyConfig,
     IntersectClient,
     IntersectClientCallback,
@@ -60,17 +59,17 @@ UNIT_BOUNDS = ((0.0, 1.0),)
 NUM_DIMS = len(BOUNDS)
 
 INITIAL_DATA_SIZE = 1
-MAX_ITERATIONS = 20
+MAX_ITERATIONS = 40
 
 SEED = 42
 
 VOXEL_RESOLUTION_M = 5e-6
 RVE_LENGTH_M = 1e-3
-QUERY_VOLUME_MM3 = 1.0  # decrease query_volume_mm3 from 10 to speed up
+QUERY_VOLUME_MM3 = 3.0  # decrease query_volume_mm3 from 10 to speed up
 
 MIN_LEN_DEFECTS = 50
 ANALYZE_MAX = False
-BACKEND = "sable"
+BACKEND = "sable"  # "sable" or "sklearn"
 
 MESHGRID_SIZE = 150
 
@@ -242,7 +241,8 @@ def process_raptor_data(raptor_data):
 
     logger.info(
         f"Found {len(combined_defects)} defects: "
-        f"Hatch: {raptor_data['inputs']['hatch_spacing_m']*1e6:.1f}um | Max Pore: {max_pore*1e6:.2f}um"
+        f"Hatch: {raptor_data['inputs']['hatch_spacing_m']*1e6:.1f}um | Mean and Max Pore: {mean_pore*1e6:.2f}, {max_pore*1e6:.2f}um, "
+        f"Learning {'Max' if ANALYZE_MAX else 'Mean'}."
     )
 
     # TODO: discuss and refine the data analysis and extreme value statistics
@@ -284,25 +284,68 @@ def get_data_point(x_suggested, mp_interpolator):
     return x_, y_, yerr_, raptor_data
 
 
-def y_to_unit(y, yerr, y_scale=(1.0, 1.0)):
-    y_prescale, y_postscale = y_scale
-    # transformation to normalized output for training
-    #   y -> log(1 + y/y_prescale) / y_postscale
-    # scale the errors according to the derivative of the transformation
-    y = np.asarray(y, dtype=float)
-    yerr = np.asarray(yerr, dtype=float)
-    y_norm = np.log1p(y / y_prescale) / y_postscale
-    yerr_norm = yerr / (y + y_prescale) / y_postscale
-    return y_norm.tolist(), yerr_norm.tolist()
+# The unlist_list transformer
+def unlist_list(func):
+    def wrapper_func(self, *args):
+        args_np = [np.asarray(y, dtype=float) for y in args]
+        res_np = func(self, *args_np)
+        return [y.tolist() for y in res_np]
+
+    return wrapper_func
 
 
-def y_from_unit(y_norm, yerr_norm, y_scale=(1.0, 1.0)):
-    y_prescale, y_postscale = y_scale
-    y_norm = np.asarray(y_norm, dtype=float)
-    yerr_norm = np.asarray(yerr_norm, dtype=float)
-    y = y_prescale * np.expm1(y_postscale * y_norm)
-    yerr = yerr_norm * (y + y_prescale) * y_postscale
-    return y.tolist(), yerr.tolist()
+@dataclass
+class ScalerLog1p:
+    y_prescale: float = 1.0
+    y_postscale: float = 1.0
+
+    @unlist_list
+    def scale(self, y, yerr):
+        y_scale = np.log1p(y / self.y_prescale) / self.y_postscale
+        yerr_scale = yerr / (y + self.y_prescale) / self.y_postscale
+        return y_scale, yerr_scale
+
+    @unlist_list
+    def unscale(self, y_scale, yerr_scale):
+        y = self.y_prescale * np.expm1(self.y_postscale * y_scale)
+        yerr = yerr_scale * (y + self.y_prescale) * self.y_postscale
+        return y, yerr
+
+
+@dataclass
+class ScalerOutputFocus:
+    y_low: float = 0.5
+    y_high: float = 1.5
+    focus: float = 1.0
+
+    def params(self):
+        y_mean = (self.y_low + self.y_high) / 2.0
+        y_diff = (1 / self.focus) * (self.y_high - self.y_low) / 2.0
+        return y_mean, y_diff
+
+    @unlist_list
+    def scale(self, y, yerr):
+        y_mean, y_diff = self.params()
+        y_norm = (y - y_mean) / y_diff
+        yerr_norm = yerr / y_diff
+        y_scale = np.asinh(y_norm)
+        yerr_scale = 1 / np.sqrt(1 + y_norm**2) * yerr_norm
+        return y_scale, yerr_scale
+
+    @unlist_list
+    def unscale(self, y_scale, yerr_scale):
+        y_mean, y_diff = self.params()
+        y_norm = np.sinh(y_scale)
+        yerr_norm = np.sqrt(1 + y_norm**2) * yerr_scale
+        y = y_diff * y_norm + y_mean
+        yerr = y_diff * yerr_norm
+        return y, yerr
+
+
+scaler_reg = {
+    "log1p": ScalerLog1p,
+    "output_focus": ScalerOutputFocus,
+}
 
 
 # -----------------------------------------------------------------------------
@@ -340,12 +383,24 @@ class ActiveLearningOrchestrator:
             list(tuple) for tuple in zip(*dataset_statistics)
         ]
 
-        # scaling factor for output data transformation, pre-scaling, and post-scaling after log transform
-        # crucially, scling the outputs also scales the error bar, which influences the acquisition strategy
-        pre_to_post_scale_ratio = 0.05
-        y_prescale = pre_to_post_scale_ratio * np.max(self.dataset_y)
-        y_postscale = np.log1p(1 / pre_to_post_scale_ratio)
-        self.y_scale = (y_prescale, y_postscale)
+        scaler = "output_focus"
+        if scaler == "lop1p":
+            # scaling factor for output data transformation, pre-scaling, and post-scaling after log transform
+            # crucially, scling the outputs also scales the error bar, which influences the acquisition strategy
+            pre_to_post_scale_ratio = 0.05
+            y_prescale = pre_to_post_scale_ratio * np.max(self.dataset_y)
+            y_postscale = np.log1p(1 / pre_to_post_scale_ratio)
+            self.scaler = scaler_reg[scaler](
+                y_prescale=y_prescale, y_postscale=y_postscale
+            )
+        elif scaler == "output_focus":
+            D_CRIT_LIST = [10e-6, 20e-6, 40e-6]
+            # [y_low, y_high] roghly outlines the "interesting" output region
+            y_low = min(D_CRIT_LIST)
+            y_high = max(D_CRIT_LIST)
+            # focus is a scaling parameter that allows to zoom in (focus > 1) or zoom out (focus < 1) for the target region
+            focus = 2.0
+            self.scaler = scaler_reg[scaler](y_low=y_low, y_high=y_high, focus=focus)
 
         self.dataset_x_unit = x_to_unit(self.dataset_x).tolist()
         self.bounds_unit = UNIT_BOUNDS
@@ -356,9 +411,7 @@ class ActiveLearningOrchestrator:
         payload = None
         if operation == "initialize_workflow":
             # normalize and transform the output data
-            y_norm, yerr_norm = y_to_unit(
-                self.dataset_y, self.dataset_yerr, self.y_scale
-            )
+            y_norm, yerr_norm = self.scaler.scale(self.dataset_y, self.dataset_yerr)
             # configure the output statistics and combined dataset
             self.labels_y = ["y", "yerr"]
             self.statistics_y = Normal(loc="y", scale="yerr")
@@ -373,7 +426,7 @@ class ActiveLearningOrchestrator:
                 self.kernel = "matern"
                 # nondimensionalized GP lengthscale, on the normalized x data
                 length_scale = 0.2
-                self.kernel_args = {
+                self.kernel_args: dict[str, Any] = {
                     "length_scale": length_scale,
                     "constant_value": prior_variance,
                 }
@@ -412,7 +465,6 @@ class ActiveLearningOrchestrator:
                 statistics_y=self.statistics_y,
                 bounds=self.bounds_unit,
                 kernel=self.kernel,
-                length_per_dimension=False,
                 y_is_good=False,
                 backend=self.backend,
                 kernel_args=self.kernel_args,
@@ -430,7 +482,7 @@ class ActiveLearningOrchestrator:
 
             # normalize / transform the output data
             y, yerr = next_y
-            y_norm, yerr_norm = y_to_unit(y, yerr, self.y_scale)
+            y_norm, yerr_norm = self.scaler.scale(y, yerr)
             next_y = [y_norm, yerr_norm]
 
             payload = DialWorkflowDatasetUpdate(
@@ -467,11 +519,11 @@ class ActiveLearningOrchestrator:
         self,
         _source: str,
         operation: str,
-        has_error: bool,
-        payload: INTERSECT_JSON_VALUE,
+        _has_error: bool,
+        payload: INTERSECT_RESPONSE_VALUE,
     ) -> IntersectClientCallback:
 
-        if has_error:
+        if _has_error:
             print("============ERROR==============", file=sys.stderr)
             print(operation, payload, file=sys.stderr)
             raise Exception
@@ -494,7 +546,8 @@ class ActiveLearningOrchestrator:
             yerr_norm_grid = np.array(stddevs)
 
             # rescale / transform data back to original units for saving
-            y_grid, yerr_grid = y_from_unit(y_norm_grid, yerr_norm_grid, self.y_scale)
+            y_grid, yerr_grid = self.scaler.unscale(y_norm_grid, yerr_norm_grid)
+
             self.mean_grid = np.asarray(y_grid)
             self.variance_grid = np.asarray(yerr_grid) ** 2
 
@@ -518,7 +571,10 @@ class ActiveLearningOrchestrator:
             return self.assemble_message("get_next_point")
 
         if operation == "dial.get_next_point":
-            data = payload["data"]
+            try:
+                data = payload["data"]
+            except Exception as error:
+                print(f"Could not read next point from payload: {error}")
 
             x_suggested_unit = np.array(data).reshape(1, -1)
             x_suggested = x_from_unit(x_suggested_unit)[0].tolist()
@@ -537,7 +593,7 @@ class ActiveLearningOrchestrator:
             self.dataset_y.append(new_y)
             self.dataset_yerr.append(new_yerr)
 
-            # determine the next data (x,y) for the update message
+            # determine the next data (x, y) for the update message
             next_y = [float(new_y), float(new_yerr)]
             next_x = x_to_unit(new_x).flatten().tolist()
 
@@ -550,6 +606,10 @@ class ActiveLearningOrchestrator:
                 next_x=next_x,
                 next_y=next_y,
             )
+
+        else:
+            err_msg = f"Unknown operation received: {operation}"
+            raise Exception(err_msg)  # noqa: TRY002
 
 
 # -----------------------------------------------------------------------------
