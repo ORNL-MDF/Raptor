@@ -10,3 +10,6 @@ build
 
 # vscode settings cache
 .vscode
+
+# macOS Finder metadata
+.DS_Store

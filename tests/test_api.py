@@ -28,6 +28,7 @@ from pathlib import Path
 from raptor.api import (
     create_grid,
     create_path_vectors,
+    compute_required_modes,
     compute_spectral_components,
     create_melt_pool,
     compute_porosity,
@@ -88,7 +89,7 @@ def sample_process_parameters():
 @pytest.fixture
 def sample_time_series_data():
     """Fixture providing sample time series data for melt pool."""
-    t = np.linspace(0, 1, 100)
+    t = np.arange(100, dtype=np.float64) / 100.0
     values = 0.0001 + 0.00002 * np.sin(2 * np.pi * 5 * t)
     return np.column_stack([t, values])
 
@@ -325,25 +326,80 @@ class TestComputeSpectralComponents:
             )
             assert spectral_array.shape == (n_modes, 3)
 
-    def test_compute_spectral_components_mean_value(
-        self, sample_time_series_data, sample_voxel_resolution
-    ):
+    def test_compute_spectral_components_mean_value(self, sample_time_series_data):
         """Test that mode 0 matches the mean of input data."""
-        spectral_array = compute_spectral_components(
-            sample_time_series_data, n_modes=None, tolerance=sample_voxel_resolution
-        )
+        spectral_array = compute_spectral_components(sample_time_series_data, 3)
         expected_mean = sample_time_series_data[:, 1].mean()
 
         np.testing.assert_allclose(spectral_array[0, 0], expected_mean)
 
-        # assert spectral_array[1, 1] == pytest.approx(2000.0)
+    def test_compute_spectral_components_preserves_standard_deviation(
+        self, sample_time_series_data
+    ):
+        """Test correct amplitude when the signal frequency is retained."""
+        spectral_array = compute_spectral_components(sample_time_series_data, 6)
+        time = sample_time_series_data[:, 0]
+        reconstructed = np.zeros_like(time)
+
+        for amplitude, frequency, phase in spectral_array:
+            reconstructed += amplitude * np.cos(2.0 * np.pi * frequency * time + phase)
+
+        assert reconstructed.mean() == pytest.approx(
+            sample_time_series_data[:, 1].mean()
+        )
+        assert reconstructed.std() == pytest.approx(sample_time_series_data[:, 1].std())
+
+    def test_explicit_mode_count_retains_low_frequency_prefix(self):
+        """Explicit mode counts preserve the original truncation semantics."""
+        sampling_frequency = 10_000.0
+        time = np.arange(1000) / sampling_frequency
+        values = 1.0 + 0.2 * np.sin(2.0 * np.pi * 2000.0 * time)
+        spectral_array = compute_spectral_components(np.column_stack([time, values]), 2)
+
+        assert spectral_array[1, 1] == pytest.approx(10.0)
+
+    def test_tolerance_selects_minimum_modes_and_meets_rmse(self):
+        sampling_frequency = 1000.0
+        time = np.arange(1000) / sampling_frequency
+        values = (
+            2.0
+            + 0.30 * np.cos(2.0 * np.pi * 20.0 * time + 0.2)
+            + 0.04 * np.cos(2.0 * np.pi * 170.0 * time - 0.4)
+        )
+        data = np.column_stack([time, values])
+
+        spectral_array = compute_spectral_components(data, tolerance=0.03)
+        reconstructed = sum(
+            amplitude * np.cos(2.0 * np.pi * frequency * time + phase)
+            for amplitude, frequency, phase in spectral_array
+        )
+
+        assert spectral_array.shape == (2, 3)
+        assert spectral_array[1, 1] == pytest.approx(20.0)
+        assert np.sqrt(np.mean((values - reconstructed) ** 2)) <= 0.03
+        assert compute_required_modes(data, 0.03) == 2
+
+    def test_tolerance_zero_reconstructs_even_length_signal(self):
+        time = 0.25 + np.arange(100) / 100.0
+        values = 3.0 + 0.2 * np.cos(2.0 * np.pi * 5.0 * time)
+        values += 0.1 * np.cos(2.0 * np.pi * 50.0 * time)
+        spectral_array = compute_spectral_components(
+            np.column_stack([time, values]), tolerance=0.0
+        )
+        reconstructed = sum(
+            amplitude * np.cos(2.0 * np.pi * frequency * time + phase)
+            for amplitude, frequency, phase in spectral_array
+        )
+        np.testing.assert_allclose(reconstructed, values, atol=1.0e-13)
 
     def test_compute_spectral_components_invalid_input(self):
         """Test spectral component computation with invalid input."""
-        with pytest.raises(IndexError):
+        with pytest.raises(ValueError, match="shape"):
             compute_spectral_components(np.array([[0.0, 1.0]]), 1)
-        with pytest.raises(IndexError):
+        with pytest.raises(ValueError, match="shape"):
             compute_spectral_components(np.ones((4, 1)), 2)
+        with pytest.raises(ValueError, match="exactly one"):
+            compute_spectral_components(np.ones((4, 2)))
 
 
 # =============================================================================
@@ -387,8 +443,8 @@ class TestCreateMeltPool:
         )
         melt_pool = create_melt_pool(
             {
-                "width": (three_modes, 3, 1.0, 2.0),
-                "depth": (one_mode, 1, 1.0, 2.0),
+                "width": (one_mode, 1, 1.0, 2.0),
+                "depth": (three_modes, 3, 1.0, 2.0),
                 "height": (one_mode, 1, 1.0, 2.0),
             },
             enable_random_phases=False,
@@ -396,7 +452,7 @@ class TestCreateMeltPool:
         assert melt_pool.width_oscillations.shape == (3, 3)
         assert melt_pool.depth_oscillations.shape == (3, 3)
         assert melt_pool.height_oscillations.shape == (3, 3)
-        np.testing.assert_array_equal(melt_pool.depth_oscillations[1:], 0.0)
+        np.testing.assert_array_equal(melt_pool.width_oscillations[1:], 0.0)
 
     def test_create_melt_pool_scaling(self, sample_time_series_data):
         """Test that scaling is correctly applied."""
@@ -415,6 +471,21 @@ class TestCreateMeltPool:
         assert melt_pool.depth_mean == pytest.approx(
             sample_time_series_data[:, 1].mean()
         )
+
+    def test_create_melt_pool_allows_fixed_and_tolerance_mode_counts(
+        self, sample_time_series_data
+    ):
+        melt_pool = create_melt_pool(
+            {
+                "width": (sample_time_series_data, 2, 1.0, 2.0),
+                "depth": (sample_time_series_data, None, 1.0, 2.0),
+                "height": (sample_time_series_data, None, 1.0, 2.0),
+            },
+            enable_random_phases=False,
+            tolerance=1.0e-7,
+        )
+        assert melt_pool.width_oscillations.shape == melt_pool.depth_oscillations.shape
+        assert melt_pool.depth_oscillations.shape == melt_pool.height_oscillations.shape
 
     def test_create_melt_pool_shape_factors(self, sample_melt_pool_dict):
         """Test that shape factors are correctly set."""
