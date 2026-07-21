@@ -98,16 +98,16 @@ def build_melt_pool():
 
     # assign shape to melt pool and cap (1 = parabola, 2 = ellipse)
     melt_pool_dict = {
-        "width": (width_data, 1, 1.0, 2.0),
+        "width": (width_data, None, 1.0, 2.0),
         "depth": (
             width_data,
-            1,
+            None,
             depth_scale,
             DEPTH_SHAPE_FACTOR,
         ),
         "height": (
             width_data,
-            1,
+            None,
             height_scale,
             HEIGHT_SHAPE_FACTOR,
         ),
