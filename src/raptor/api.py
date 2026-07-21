@@ -137,20 +137,24 @@ def compute_spectral_components(
             )
         selected_bins = candidate_bins[: n_modes - 1]
 
-    # Frequency order is convenient for evaluation and deterministic output.
-    selected_bins = np.sort(selected_bins)
-    amplitudes = energy_weights[selected_bins] * np.abs(fft_values[selected_bins])
-    amplitudes /= n_samples
-    phases = np.angle(fft_values[selected_bins])
-    # FFT phases are relative to sample zero; account for an absolute time axis.
-    phases -= 2.0 * np.pi * frequencies[selected_bins] * time_values[0]
+    if n_modes == 1:
+        spectral_array = np.array([[mode0, 0, 0]])
+        return np.float64(spectral_array)
 
-    spectral_array = np.empty((selected_bins.size + 1, 3), dtype=np.float64)
-    spectral_array[0] = (signal.mean(), 0.0, 0.0)
-    spectral_array[1:, 0] = amplitudes
-    spectral_array[1:, 1] = frequencies[selected_bins]
-    spectral_array[1:, 2] = phases
-    return spectral_array
+    for i in range(1, n_modes):
+        F[i] = fft_resolution[i]
+        F[n_fft - i] = fft_resolution[n_fft - i]
+
+    frequencies = np.float64(1 / (dt * n_fft)) * np.arange(n_modes, dtype=np.float64)
+    phases = np.float64(np.angle(F[:n_modes]))
+    amplitudes = np.float64(np.abs(F[:n_modes]) / n_fft)
+    spectral_array = np.vstack(
+        [
+            np.array([mode0, 0, 0]),
+            np.vstack([amplitudes[1:], frequencies[1:], phases[1:]]).transpose(),
+        ]
+    )
+    return np.float64(spectral_array)
 
 
 def create_melt_pool(
@@ -161,8 +165,8 @@ def create_melt_pool(
 
     processed_components: Dict[str, np.ndarray] = {}
 
-    # Process every component before padding so results do not depend on
-    # dictionary insertion order.
+    # 1. Process each component into its spectral format, determine max_modes
+    max_modes = 0
     for key, (data, n_modes, scale, shape_factor) in melt_pool_dict.items():
         # Option A: Input data is a raw time-series [time, value]
         if data.shape[1] == 2:
@@ -175,10 +179,17 @@ def create_melt_pool(
                 tolerance=component_tolerance if n_modes is None else None,
             )
             spectral_array[:, 0] *= scale
+            melt_pool_dict[key] = (
+                spectral_array,
+                spectral_array.shape[0],
+                scale,
+                shape_factor,
+            )
 
         # Option B: Input data is a spectral array [amplitude, frequency, phase]
         elif data.shape[1] == 3:
             spectral_array = data.copy()
+            max_modes = max(max_modes, spectral_array.shape[0])
 
         else:
             raise ValueError(
@@ -186,10 +197,10 @@ def create_melt_pool(
                 f"Must be [time, value] or [amplitude, frequency, phase]"
             )
 
-        processed_components[key] = np.asarray(spectral_array, dtype=np.float64)
-
-    max_modes = max(array.shape[0] for array in processed_components.values())
-    for key, spectral_array in processed_components.items():
+    # 2. Pad each spectral array to have the same number of modes (max_modes)
+    for key, (data, n_modes, scale, shape_factor) in melt_pool_dict.items():
+        spectral_array = data
+        # Pad the array with zeros if it has fewer modes than the max.
         current_modes = spectral_array.shape[0]
         if current_modes != max_modes:
             pad_array = np.zeros(
