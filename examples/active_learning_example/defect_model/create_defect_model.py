@@ -67,7 +67,7 @@ SEED = 42
 
 VOXEL_RESOLUTION_M = 5e-6
 RVE_LENGTH_M = 1e-3
-QUERY_VOLUME_MM3 = 5.0  # decrease query_volume_mm3 from 10 to speed up
+QUERY_VOLUME_MM3 = 1.0  # decrease query_volume_mm3 from 10 to speed up
 
 MIN_LEN_DEFECTS = 50
 
@@ -245,16 +245,38 @@ def process_raptor_data(raptor_data):
         more_defects = (voxel_resolution_m * np.random.rand(n_extra_defects)).tolist()
         combined_defects = combined_defects.tolist() + more_defects
 
-    # estimate distribution parameters for pore size distribution
-    # using a lightweight mcmc approach assuming a lognormal underlying distribution
-    # target y - E[µ] in posterior, yerr - sqrt(Var[µ]) in posterior
-    # Converting to microns for numerical stability in MCMC
+    # direct analysis of mean, max and statistics
+    max_pore = np.max(combined_defects)
+    mean_pore = np.mean(combined_defects)
+    std_pore = np.std(combined_defects, ddof=1)
+    # compute the standard error, the standard deviation of the mean (Monte-Carlo error)
+    stderr_pore = std_pore / np.sqrt(len(combined_defects))
+
+    # estimate distribution parameters for lognormal pore size distribution
+    # Converting to microns for numerical stability
     norm_defect = np.sort(np.array(combined_defects) * 1e6)
+
+    # Approach 1: directly estimate the parameters using standard formulas base on log transform:
     log_norm_defect = np.log(norm_defect)
     log_mean_defect = np.mean(log_norm_defect)
     log_std_defect = np.std(log_norm_defect, ddof=1)
-    log_stderr_defect = log_std_defect / np.sqrt(len(combined_defects))
+    log_stderr_defect = np.sqrt(1.0 / len(combined_defects)) * log_std_defect
 
+    # formula to estimate variance of the sample variance, requires estimate of fourth moment
+    def var_of_sample_var():
+        n = len(norm_defect)
+        coeff_n = (n / (n - 1)) * (n / (n - 2)) * (n / (n - 3))
+        moment4 = coeff_n * np.mean((log_norm_defect - log_mean_defect) ** 4)
+        res = (moment4 - (n - 3) / (n - 1) * log_std_defect**4) / n
+        return res
+
+    log_stderr_var_defect = np.sqrt(var_of_sample_var())
+
+    # this simpler formula is only correct when log(norm_defect) is exactly normally distributed
+    # log_stderr_var_defect = np.sqrt(2.0 / (len(norm_defect) - 1)) * log_std_defect**2
+
+    # Approach 2: using a lightweight mcmc approach assuming a lognormal underlying distribution
+    # target y - E[µ] in posterior, yerr - sqrt(Var[µ]) in posterior
     trace = run_metropolis_hastings(
         norm_defect,
         iterations=5000,
@@ -267,20 +289,18 @@ def process_raptor_data(raptor_data):
 
     # transform back to original coordinates
     log_mean_pore = np.mean(trace[0])
-    log_std_pore = np.mean(trace[1])
+    log_std_pore = np.sqrt(np.mean(trace[1] ** 2))  ## square root of the mean variance
     log_stderr_pore = np.std(trace[0], ddof=1)
+    log_stderr_var_pore = np.std(
+        trace[1] ** 2, ddof=1
+    )  ## standard deviation of the variance
 
-    # Those should give the same answer
-    print("---\texpl.,\tMCMC")
+    # Approach 1 and 2 should give the same answer
+    print(f"-{len(combined_defects)}-\texpl.,\tMCMC")
     print(f"mean:\t{log_mean_defect:.3f},\t{log_mean_pore:.3f}")
     print(f"std:\t{log_std_defect:.3f},\t{log_std_pore:.3f}")
     print(f"stderr:\t{log_stderr_defect:.3f},\t{log_stderr_pore:.3f}")
-
-    max_pore = np.max(combined_defects)
-    mean_pore = np.mean(combined_defects)
-    std_pore = np.std(combined_defects, ddof=1)
-    # compute the standard error, the standard deviation of the mean (Monte-Carlo error)
-    stderr_pore = std_pore / np.sqrt(len(combined_defects))
+    print(f"stder2:\t{log_stderr_var_defect:.3f},\t{log_stderr_var_pore:.3f}")
 
     def plot_pore_distr():
         logger.info("plotting pore distribution")
@@ -352,6 +372,58 @@ def process_raptor_data(raptor_data):
         y, yerr = float(max_pore), float(std_pore)
 
     return y, yerr
+
+
+# -----------------------------------------------------------------------------
+# MCMC UTILITIES
+# -----------------------------------------------------------------------------
+def log_prior_lognormal(params):
+    mu, sigma = params
+    if sigma <= 0:
+        return -np.inf  # log(0)
+    mu_prior = st.norm.logpdf(mu, loc=0, scale=10)  # Example prior for mean
+    sigma_prior = st.norm.logpdf(sigma, loc=1, scale=5)  # Example prior for std
+    return mu_prior + sigma_prior
+
+
+def loglikelihood_lognormal(params, data):
+    mu, sigma = params
+    if sigma <= 0:
+        return -np.inf  # log(0)
+    return np.sum(st.lognorm.logpdf(data, s=sigma, scale=np.exp(mu)))
+
+
+def log_posterior_lognormal(params, data):
+    return loglikelihood_lognormal(params, data) + log_prior_lognormal(params)
+
+
+def run_metropolis_hastings(
+    data, iterations=10000, proposal_widths=np.array([1.0, 2.0])
+):
+    # Initial guesses
+    current_params = np.array([1, 1])  # Example initial guess
+    current_log_post = log_posterior_lognormal(current_params, data)
+
+    trace = []
+
+    for i in range(iterations):
+        # Propose new parameters (Random Walk)
+        proposal = current_params + np.random.normal(
+            0, proposal_widths, size=current_params.shape
+        )
+
+        proposal_log_post = log_posterior_lognormal(proposal, data)
+
+        # Acceptance ratio
+        ratio = np.exp((proposal_log_post - current_log_post))
+
+        if np.random.rand() < ratio:
+            current_params = proposal
+            current_log_post = proposal_log_post
+
+        trace.append(current_params)
+
+    return np.array(trace)
 
 
 # -----------------------------------------------------------------------------
@@ -444,55 +516,6 @@ scaler_reg = {
     "log1p": ScalerLog1p,
     "output_focus": ScalerOutputFocus,
 }
-
-
-def log_prior_lognormal(params):
-    mu, sigma = params
-    if sigma <= 0:
-        return -np.inf  # log(0)
-    mu_prior = st.norm.logpdf(mu, loc=0, scale=10)  # Example prior for mean
-    sigma_prior = st.norm.logpdf(sigma, loc=1, scale=5)  # Example prior for std
-    return mu_prior + sigma_prior
-
-
-def loglikelihood_lognormal(params, data):
-    mu, sigma = params
-    if sigma <= 0:
-        return -np.inf  # log(0)
-    return np.sum(st.lognorm.logpdf(data, s=sigma, scale=np.exp(mu)))
-
-
-def log_posterior_lognormal(params, data):
-    return loglikelihood_lognormal(params, data) + log_prior_lognormal(params)
-
-
-def run_metropolis_hastings(
-    data, iterations=10000, proposal_widths=np.array([1.0, 2.0])
-):
-    # Initial guesses
-    current_params = np.array([1, 1])  # Example initial guess
-    current_log_post = log_posterior_lognormal(current_params, data)
-
-    trace = []
-
-    for i in range(iterations):
-        # Propose new parameters (Random Walk)
-        proposal = current_params + np.random.normal(
-            0, proposal_widths, size=current_params.shape
-        )
-
-        proposal_log_post = log_posterior_lognormal(proposal, data)
-
-        # Acceptance ratio
-        ratio = np.exp((proposal_log_post - current_log_post))
-
-        if np.random.rand() < ratio:
-            current_params = proposal
-            current_log_post = proposal_log_post
-
-        trace.append(current_params)
-
-    return np.array(trace)
 
 
 # -----------------------------------------------------------------------------
