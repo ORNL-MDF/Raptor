@@ -67,7 +67,7 @@ SEED = 42
 
 VOXEL_RESOLUTION_M = 5e-6
 RVE_LENGTH_M = 1e-3
-QUERY_VOLUME_MM3 = 1.0  # decrease query_volume_mm3 from 10 to speed up
+QUERY_VOLUME_MM3 = 5.0  # decrease query_volume_mm3 from 10 to speed up
 
 MIN_LEN_DEFECTS = 50
 
@@ -76,9 +76,10 @@ class AnalysisMode(StrEnum):
     MEAN = auto()
     MAX = auto()
     LOG_MEAN = auto()
+    LOG_CVAR = auto()
 
 
-ANALYZE = AnalysisMode.MEAN
+ANALYZE = AnalysisMode.LOG_CVAR
 
 BACKEND = "sable"  # "sable" or "sklearn"
 
@@ -242,65 +243,86 @@ def process_raptor_data(raptor_data):
         # TODO: discuss how we should handle the fact that pores blow voxel_resolution can not be resolved
         random.seed()  # explicitly call rng seeding to make sure this is truly random
         n_extra_defects = min_len_defects - len(combined_defects)
-        more_defects = (voxel_resolution_m * np.random.rand(n_extra_defects)).tolist()
+        mu_subgrid = voxel_resolution_m / 2
+        sigma_subgrid = voxel_resolution_m / 4
+        more_defects = np.random.lognormal(
+            np.log(mu_subgrid), sigma_subgrid / mu_subgrid, n_extra_defects
+        ).tolist()
         combined_defects = combined_defects.tolist() + more_defects
 
     # direct analysis of mean, max and statistics
     max_pore = np.max(combined_defects)
     mean_pore = np.mean(combined_defects)
     std_pore = np.std(combined_defects, ddof=1)
-    # compute the standard error, the standard deviation of the mean (Monte-Carlo error)
-    stderr_pore = std_pore / np.sqrt(len(combined_defects))
+    # compute the standard error of the mean (SEM), the standard deviation of the mean (Monte-Carlo error)
+    sem_pore = std_pore / np.sqrt(len(combined_defects))
 
     # estimate distribution parameters for lognormal pore size distribution
     # Converting to microns for numerical stability
-    norm_defect = np.sort(np.array(combined_defects) * 1e6)
+    sort_defect = np.sort(np.array(combined_defects) * 1e6)
 
-    # Approach 1: directly estimate the parameters using standard formulas base on log transform:
-    log_norm_defect = np.log(norm_defect)
-    log_mean_defect = np.mean(log_norm_defect)
-    log_std_defect = np.std(log_norm_defect, ddof=1)
-    log_stderr_defect = np.sqrt(1.0 / len(combined_defects)) * log_std_defect
+    # direct estimate
+    (log_mean, log_sem), (log_std, log_sev) = estimate_lognormal_direct(sort_defect)
 
-    # formula to estimate variance of the sample variance, requires estimate of fourth moment
-    def var_of_sample_var():
-        n = len(norm_defect)
-        coeff_n = (n / (n - 1)) * (n / (n - 2)) * (n / (n - 3))
-        moment4 = coeff_n * np.mean((log_norm_defect - log_mean_defect) ** 4)
-        res = (moment4 - (n - 3) / (n - 1) * log_std_defect**4) / n
-        return res
-
-    log_stderr_var_defect = np.sqrt(var_of_sample_var())
-
-    # this simpler formula is only correct when log(norm_defect) is exactly normally distributed
-    # log_stderr_var_defect = np.sqrt(2.0 / (len(norm_defect) - 1)) * log_std_defect**2
-
-    # Approach 2: using a lightweight mcmc approach assuming a lognormal underlying distribution
-    # target y - E[µ] in posterior, yerr - sqrt(Var[µ]) in posterior
-    trace = run_metropolis_hastings(
-        norm_defect,
-        iterations=5000,
-        proposal_widths=np.array([1, 1]),
-    )
-    burnin = 500
-    trace = trace.T[:, burnin:]  # discard burn-in samples
-
+    # MCMC estimate
     logger.info("running MCMC")
-
-    # transform back to original coordinates
-    log_mean_pore = np.mean(trace[0])
-    log_std_pore = np.sqrt(np.mean(trace[1] ** 2))  ## square root of the mean variance
-    log_stderr_pore = np.std(trace[0], ddof=1)
-    log_stderr_var_pore = np.std(
-        trace[1] ** 2, ddof=1
-    )  ## standard deviation of the variance
+    (log_mean_pore, log_sem_pore), (log_std_pore, log_sev_pore) = (
+        estimate_lognormal_MCMC(sort_defect)
+    )
 
     # Approach 1 and 2 should give the same answer
     print(f"-{len(combined_defects)}-\texpl.,\tMCMC")
-    print(f"mean:\t{log_mean_defect:.3f},\t{log_mean_pore:.3f}")
-    print(f"std:\t{log_std_defect:.3f},\t{log_std_pore:.3f}")
-    print(f"stderr:\t{log_stderr_defect:.3f},\t{log_stderr_pore:.3f}")
-    print(f"stder2:\t{log_stderr_var_defect:.3f},\t{log_stderr_var_pore:.3f}")
+    print(f"mean:\t{log_mean:.3f},\t{log_mean_pore:.3f}")
+    print(f"std:\t{log_std:.3f},\t{log_std_pore:.3f}")
+    print(f"sem:\t{log_sem:.3f},\t{log_sem_pore:.3f}")
+    print(f"sev:\t{log_sev:.3f},\t{log_sev_pore:.3f}")
+
+    # TODO: if we want to transform these values back to meters we need to account for different scaling of sev
+    #       for now, I will do it after further use below.
+
+    def estimate_cvar(defects_list, level=0.05):
+        "Estimate the conditional value at risk from a finite sample."
+        n_defects = len(defects_list)
+        n_bad_defects = n_defects * level
+        remainder = n_bad_defects - np.floor(n_bad_defects)
+        n_bad_defects = int(np.floor(n_bad_defects))
+        weights = np.concat(([remainder], np.ones(n_bad_defects)))
+        weights /= np.sum(weights)
+        defects_sort = np.sort(np.asarray(defects_list))
+        cvar = np.sum(weights * defects_sort[-n_bad_defects - 1 :])
+        return cvar
+
+    def bootstrap_defects(n_defects):
+        while True:
+            # sample a big defect sample from a random realization of the estimated density
+            log_mu = log_mean + log_sem * np.random.randn(1)
+            log_s2 = log_std**2 + log_sev * np.random.randn(1)
+            log_sigma = np.sqrt(log_s2)
+            log_samples = log_mu + log_sigma * np.random.randn(n_defects)
+            yield np.exp(log_samples)
+
+    cvar_level = 0.2
+
+    def bootstrap_cvar(n_defects=1000, max_bootstrap=1000):
+        cvar_array = np.zeros((max_bootstrap, 1))
+        for n_bs, sample in enumerate(bootstrap_defects(n_defects)):
+            cvar = estimate_cvar(sample, cvar_level)
+            cvar_array[n_bs] = cvar
+            if n_bs > 1:
+                mean_cvar = np.mean(cvar_array[:n_bs])
+                std_cvar = np.std(cvar_array[:n_bs], ddof=1)
+            if n_bs + 1 >= max_bootstrap:
+                return mean_cvar, std_cvar
+
+    ## Use the lognormal estimates to bootstrap cvar
+    mean_cvar, err_cvar = bootstrap_cvar()
+    # transform back to meters
+    print(f"naive CVAR: {estimate_cvar(sort_defect, cvar_level):0.3f}")
+    print(
+        f"bootstrapped cvar based on lognormal distr: {mean_cvar=:.3f}, {err_cvar=:0.3f}"
+    )
+    mean_cvar = mean_cvar.item() / 1e6
+    err_cvar = err_cvar.item() / 1e6
 
     def plot_pore_distr():
         logger.info("plotting pore distribution")
@@ -320,28 +342,38 @@ def process_raptor_data(raptor_data):
         )
         ax.plot(
             defect_mesh,
-            st.norm.pdf(np.log(defect_mesh), loc=log_mean_defect, scale=log_std_defect)
-            / defect_mesh,
+            st.norm.pdf(np.log(defect_mesh), loc=log_mean, scale=log_std) / defect_mesh,
             color="tab:green",
             linewidth=2,
             label="Log Gaussian estimate",
         )
         ax.plot(
             defect_mesh,
-            st.gaussian_kde(norm_defect)(defect_mesh),
+            st.gaussian_kde(sort_defect)(defect_mesh),
             color="tab:orange",
             linewidth=2,
             label="Gaussian KDE",
         )
         ax.scatter(
-            norm_defect,
-            np.zeros(norm_defect.shape),
+            sort_defect,
+            np.zeros(sort_defect.shape),
             color="black",
             marker="+",
             s=15,
             alpha=0.6,
             label=f"Pore size data {hatch_spacing*1e6:.1f}um",
         )
+        ax.axvline(mean_cvar * 1e6, color="k", linestyle="-", label="CVAR")
+        ax.axvline(
+            (mean_cvar + err_cvar) * 1e6, color="k", linestyle=":", label="CVAR+"
+        )
+        ax.axvline(
+            (mean_cvar - err_cvar) * 1e6, color="k", linestyle=":", label="CVAR-"
+        )
+        ax.axvline(np.max(sort_defect), color="b", linestyle="-", label="maximum")
+        ax.legend()
+        ax.set_xlabel("defect size")
+        ax.set_ylabel("probability density")
         plt.tight_layout()
         output_path = Path("pore_plots")
         output_path.mkdir(exist_ok=True)
@@ -351,22 +383,24 @@ def process_raptor_data(raptor_data):
 
     plot_pore_distr()
 
-    # exponential transform, to inspect values
-    mean_lognormal = np.exp(log_mean_defect).item() / 1e6
-    # std_lognormal = log_std_defect.item() * mean_lognormal
-    stderr_lognormal = log_stderr_defect.item() * mean_lognormal
+    # renormalization and exponential transform, to compare and inspect values
+    mean_lognormal = np.exp(log_mean).item() / 1e6
+    sem_lognormal = log_sem.item() * mean_lognormal
     logger.info(
         f"Found {len(combined_defects)} defects: "
-        f"Hatch: {hatch_spacing*1e6:.1f}um | Mean and Max Pore: {mean_pore*1e6:.2f}, {max_pore*1e6:.2f}um | "
-        f"Estimated mean_lognormal: {mean_lognormal*1e6:.6f}, stderr_lognormal: {stderr_lognormal*1e6:.6f} | "
+        f"Hatch: {hatch_spacing*1e6:.1f}um | Mean and Max Pore: {mean_pore*1e6:.2f}, {max_pore*1e6:.2f}um\n | "
+        f"Estimated mean_lognormal: {mean_lognormal*1e6:.6f}, sem_lognormal: {sem_lognormal*1e6:.6f}\n | "
+        f"Estimated CVAR({cvar_level:.0%}): {mean_cvar*1e6:.6f}, err_CVAR {err_cvar*1e6:.6f}\n | "
         f"Learning {ANALYZE}."
     )
 
     # TODO: discuss and refine the data analysis and extreme value statistics
     if ANALYZE == "mean":
-        y, yerr = float(mean_pore), float(stderr_pore)
+        y, yerr = float(mean_pore), float(sem_pore)
     elif ANALYZE == "log_mean":
-        y, yerr = float(mean_lognormal), float(stderr_lognormal)
+        y, yerr = float(mean_lognormal), float(sem_lognormal)
+    elif ANALYZE == "log_cvar":
+        y, yerr = float(mean_cvar), float(err_cvar)
     elif ANALYZE == "max":
         # return the maximum pore size, use the standard deviation as approximate error estimate
         y, yerr = float(max_pore), float(std_pore)
@@ -375,8 +409,54 @@ def process_raptor_data(raptor_data):
 
 
 # -----------------------------------------------------------------------------
-# MCMC UTILITIES
+# STATISTICS UTILITIES
 # -----------------------------------------------------------------------------
+def estimate_lognormal_direct(norm_defect):
+    "Approach 1: directly estimate the parameters using standard formulas bases on log transform"
+    log_norm_defect = np.log(norm_defect)
+    log_mean_defect = np.mean(log_norm_defect)
+    log_std_defect = np.std(log_norm_defect, ddof=1)
+    log_sem_defect = np.sqrt(1.0 / len(norm_defect)) * log_std_defect
+
+    # formula to estimate variance of the sample variance, requires estimate of fourth moment
+    def var_of_sample_var():
+        n = len(norm_defect)
+        coeff_n = (n / (n - 1)) * (n / (n - 2)) * (n / (n - 3))
+        moment4 = coeff_n * np.mean((log_norm_defect - log_mean_defect) ** 4)
+        res = (moment4 - (n - 3) / (n - 1) * log_std_defect**4) / n
+        return res
+
+    # standard error of the variance (sev)
+    log_sev_defect = np.sqrt(var_of_sample_var())
+
+    # this simpler formula is only correct when log(norm_defect) is exactly normally distributed
+    # log_sev_defect = np.sqrt(2.0 / (len(norm_defect) - 1)) * log_std_defect**2
+
+    return (log_mean_defect, log_sem_defect), (log_std_defect, log_sev_defect)
+
+
+def estimate_lognormal_MCMC(norm_defect):
+    # Approach 2: using a lightweight mcmc approach assuming a lognormal underlying distribution
+    # target y - E[µ] in posterior, yerr - sqrt(Var[µ]) in posterior
+    trace = run_metropolis_hastings(
+        norm_defect,
+        iterations=5000,
+        proposal_widths=np.array([1, 1]),
+    )
+    burnin = 1000
+    trace = trace.T[:, burnin:]  # discard burn-in samples
+
+    # extract statistics from MCMC trace
+    log_mean_pore = np.mean(trace[0])
+    log_sem_pore = np.std(trace[0], ddof=1)
+    # square root of the mean variance
+    log_std_pore = np.sqrt(np.mean(trace[1] ** 2))
+    # standard deviation of the variance
+    log_sev_pore = np.std(trace[1] ** 2, ddof=1)
+
+    return (log_mean_pore, log_sem_pore), (log_std_pore, log_sev_pore)
+
+
 def log_prior_lognormal(params):
     mu, sigma = params
     if sigma <= 0:
