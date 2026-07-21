@@ -179,6 +179,7 @@ def create_melt_pool(
         # Option B: Input data is a spectral array [amplitude, frequency, phase]
         elif data.shape[1] == 3:
             spectral_array = data.copy()
+            spectral_array[:, 0] *= scale
 
         else:
             raise ValueError(

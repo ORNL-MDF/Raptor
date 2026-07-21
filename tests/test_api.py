@@ -435,6 +435,24 @@ class TestCreateMeltPool:
 
         assert isinstance(melt_pool, MeltPool)
 
+    def test_create_melt_pool_scales_spectral_amplitudes(
+        self, sample_spectral_components
+    ):
+        scale_factor = 2.0
+        melt_pool = create_melt_pool(
+            {
+                "width": (sample_spectral_components, 3, scale_factor, 2.0),
+                "depth": (sample_spectral_components, 3, 1.0, 2.0),
+                "height": (sample_spectral_components, 3, 1.0, 2.0),
+            },
+            enable_random_phases=False,
+        )
+
+        np.testing.assert_allclose(
+            melt_pool.width_oscillations[:, 0],
+            scale_factor * sample_spectral_components[:, 0],
+        )
+
     def test_create_melt_pool_mode_padding(self):
         """Test that melt pool correctly pads modes to match maximum."""
         one_mode = np.array([[1.0e-4, 0.0, 0.0]])

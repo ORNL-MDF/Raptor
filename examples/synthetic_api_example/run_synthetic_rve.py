@@ -51,6 +51,7 @@ VOXEL_RESOLUTION = 5.0e-6
 VTK_OUTPUT = "rve.vti"
 MORPHOLOGY_OUTPUT = "rve_morphology.csv"
 WIDTH_DATA_PLOT = "melt_pool_width_timeseries.png"
+ENABLE_VISUALIZATION = False
 
 
 def build_melt_pool():
@@ -152,8 +153,9 @@ def main():
     )
     write_morphology(morphology, MORPHOLOGY_OUTPUT)
 
-    # 7. Visualize using PyVista
-    visualize(VTK_OUTPUT)
+    # 7. Optionally visualize using PyVista (requires a graphical display)
+    if ENABLE_VISUALIZATION:
+        visualize(VTK_OUTPUT)
 
 
 if __name__ == "__main__":

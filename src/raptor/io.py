@@ -25,7 +25,10 @@ def read_data(fname: str) -> np.ndarray:
     """
     if not os.path.exists(fname):
         raise FileNotFoundError(f"Melt pool measurement file not found: {fname}")
-    return np.loadtxt(fname, delimiter=",", dtype=np.float32)
+    # Preserve timestamp precision.  Casting finely spaced absolute times to
+    # float32 can make an otherwise uniform series appear non-uniform to FFT
+    # consumers such as ``compute_spectral_components``.
+    return np.loadtxt(fname, delimiter=",", dtype=np.float64)
 
 
 def read_scan_path(fname: str) -> List[PathVector]:
