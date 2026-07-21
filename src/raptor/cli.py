@@ -95,9 +95,14 @@ def main() -> int:
                     filepath = melt_pool_dict[key]["file_name"]
                     scale = melt_pool_dict[key]["scale"]
                     nmodes = int(melt_pool_dict[key]["nmodes"])
-                    print("Scaling the zeroth mode (mean) of {} spectral array.")
+                    shape_factor = 2 if key == "width" else melt_pool_dict[key]["shape"]
                     spec_array = read_data(filepath)
-                    melt_pool_data[key] = (spec_array, scale, nmodes)
+                    melt_pool_data[key] = (
+                        spec_array,
+                        nmodes,
+                        scale,
+                        shape_factor,
+                    )
                 except:
                     print(
                         "Error reading the specified {} {} data format.".format(
@@ -165,8 +170,8 @@ def main() -> int:
     for key in melt_pool_data:
         print(f"    {key} datatype: " + melt_pool_dict[key]["type"])
         print(f"    {key} path : " + melt_pool_dict[key]["file_name"])
-        print(f"    {key} scaling : {melt_pool_data[key][1]}")
-        print(f"    {key} modes : {melt_pool_data[key][2]}")
+        print(f"    {key} scaling : {melt_pool_data[key][2]}")
+        print(f"    {key} modes : {melt_pool_data[key][1]}")
 
     if bounding_box is not None:
         print("  RVE data:")
