@@ -379,6 +379,39 @@ class TestComputeSpectralComponents:
         assert np.sqrt(np.mean((values - reconstructed) ** 2)) <= 0.03
         assert compute_required_modes(data, 0.03) == 2
 
+    def test_mode_cap_retains_highest_energy_tolerance_modes(self):
+        sampling_frequency = 1000.0
+        time = np.arange(1000) / sampling_frequency
+        values = (
+            1.0
+            + 0.1 * np.cos(2.0 * np.pi * 20.0 * time)
+            + 0.9 * np.cos(2.0 * np.pi * 170.0 * time)
+        )
+        data = np.column_stack([time, values])
+
+        with pytest.warns(RuntimeWarning, match="tolerance will not be met"):
+            spectral_array = compute_spectral_components(
+                data, n_modes=2, tolerance=0.01
+            )
+
+        assert spectral_array.shape == (2, 3)
+        assert spectral_array[1, 1] == pytest.approx(170.0)
+
+    def test_tolerance_modes_are_returned_in_frequency_order(self):
+        sampling_frequency = 1000.0
+        time = np.arange(1000) / sampling_frequency
+        values = (
+            1.0
+            + 0.1 * np.cos(2.0 * np.pi * 20.0 * time)
+            + 0.9 * np.cos(2.0 * np.pi * 170.0 * time)
+        )
+
+        spectral_array = compute_spectral_components(
+            np.column_stack([time, values]), tolerance=0.01
+        )
+
+        assert spectral_array[:, 1].tolist() == pytest.approx([0.0, 20.0, 170.0])
+
     def test_tolerance_zero_reconstructs_even_length_signal(self):
         time = 0.25 + np.arange(100) / 100.0
         values = 3.0 + 0.2 * np.cos(2.0 * np.pi * 5.0 * time)
@@ -398,8 +431,25 @@ class TestComputeSpectralComponents:
             compute_spectral_components(np.array([[0.0, 1.0]]), 1)
         with pytest.raises(ValueError, match="shape"):
             compute_spectral_components(np.ones((4, 1)), 2)
-        with pytest.raises(ValueError, match="exactly one"):
+        with pytest.raises(ValueError, match="either n_modes"):
             compute_spectral_components(np.ones((4, 2)))
+
+    @pytest.mark.parametrize("n_modes", [0, -1, 1.5])
+    def test_compute_spectral_components_rejects_invalid_mode_counts(
+        self, sample_time_series_data, n_modes
+    ):
+        with pytest.raises(ValueError, match="positive integer"):
+            compute_spectral_components(sample_time_series_data, n_modes=n_modes)
+
+    def test_tolerance_rejects_mode_count_above_available_bins(
+        self, sample_time_series_data
+    ):
+        with pytest.raises(ValueError, match="cannot exceed"):
+            compute_spectral_components(
+                sample_time_series_data,
+                n_modes=sample_time_series_data.shape[0],
+                tolerance=0.0,
+            )
 
 
 # =============================================================================

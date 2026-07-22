@@ -40,6 +40,7 @@ MELT_POOL_DEPTH = 118.0e-6
 MELT_POOL_HEIGHT = 30.0e-6
 MELT_POOL_WIDTH_STD_DEV = 18.0e-6
 MELT_POOL_LENGTH = 300.0e-6
+N_MODES = 50
 
 HEIGHT_SHAPE_FACTOR = 1.0
 DEPTH_SHAPE_FACTOR = 1.0
@@ -99,16 +100,16 @@ def build_melt_pool():
 
     # assign shape to melt pool and cap (1 = parabola, 2 = ellipse)
     melt_pool_dict = {
-        "width": (width_data, None, 1.0, 2.0),
+        "width": (width_data, N_MODES, 1.0, 2.0),
         "depth": (
             width_data,
-            None,
+            N_MODES,
             depth_scale,
             DEPTH_SHAPE_FACTOR,
         ),
         "height": (
             width_data,
-            None,
+            N_MODES,
             height_scale,
             HEIGHT_SHAPE_FACTOR,
         ),
