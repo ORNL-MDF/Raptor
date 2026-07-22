@@ -87,8 +87,8 @@ def compute_spectral_components(
         raise ValueError("melt_pool_data must have shape (n, 2) with n >= 2.")
     if not np.isfinite(data).all():
         raise ValueError("melt_pool_data must contain only finite values.")
-    if (n_modes is None) == (tolerance is None):
-        raise ValueError("Provide exactly one of n_modes or tolerance.")
+    if (n_modes is None) and (tolerance is None):
+        raise ValueError("Provide either n_modes, tolerance, or both.")
 
     time_values = data[:, 0]
     signal = data[:, 1]
@@ -128,17 +128,26 @@ def compute_spectral_components(
             + 1
         )
         selected_bins = energy_order[:retained_count]
-    else:
-        if not isinstance(n_modes, (int, np.integer)) or n_modes < 1:
-            raise ValueError("n_modes must be a positive integer.")
+    if n_modes is not None and tolerance is not None:
+        # selected_bins has been defined.
+        selected_bins = np.sort(selected_bins)[: n_modes - 1]
+        print(
+            "n_modes is less than the number of selected bins. Using {} modes.".format(
+                n_modes
+            )
+        )
+    elif n_modes is None and tolerance is not None:
+        print("n_modes is None. Using {} modes.".format(selected_bins.size + 1))
+    elif tolerance is None and n_modes is not None:
         if n_modes > fft_values.size:
             raise ValueError(
                 f"n_modes cannot exceed {fft_values.size} for this time series."
             )
         selected_bins = candidate_bins[: n_modes - 1]
+        print("tolerance is None. Using {} modes.".format(n_modes))
+    else:
+        raise ValueError("Unexpected condition: both n_modes and tolerance are None.")
 
-    # Frequency order is convenient for evaluation and deterministic output.
-    selected_bins = np.sort(selected_bins)
     amplitudes = energy_weights[selected_bins] * np.abs(fft_values[selected_bins])
     amplitudes /= n_samples
     phases = np.angle(fft_values[selected_bins])
@@ -172,7 +181,7 @@ def create_melt_pool(
             spectral_array = compute_spectral_components(
                 data,
                 n_modes=n_modes,
-                tolerance=component_tolerance if n_modes is None else None,
+                tolerance=component_tolerance,
             )
             spectral_array[:, 0] *= scale
 
