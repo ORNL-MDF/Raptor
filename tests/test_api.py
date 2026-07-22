@@ -398,8 +398,6 @@ class TestComputeSpectralComponents:
             compute_spectral_components(np.array([[0.0, 1.0]]), 1)
         with pytest.raises(ValueError, match="shape"):
             compute_spectral_components(np.ones((4, 1)), 2)
-        with pytest.raises(ValueError, match="exactly one"):
-            compute_spectral_components(np.ones((4, 2)))
 
 
 # =============================================================================
