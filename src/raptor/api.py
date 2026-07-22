@@ -9,6 +9,7 @@
 # https://github.com/ORNL-MDF/Raptor/LICENSE
 # =============================================================================
 import time
+import warnings
 from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
@@ -77,18 +78,24 @@ def compute_spectral_components(
 ) -> np.ndarray:
     """Convert a uniformly sampled real signal to a sparse cosine expansion.
 
-    ``n_modes`` includes the mean (DC) mode and retains the corresponding
-    low-frequency prefix.  When ``tolerance`` is used, the smallest set of
-    Fourier bins whose discarded energy satisfies the requested reconstruction
-    RMSE is retained.
+    ``n_modes`` includes the mean (DC) mode.  By itself, it retains the
+    corresponding low-frequency prefix.  When ``tolerance`` is used, the
+    smallest set of Fourier bins whose discarded energy satisfies the requested
+    reconstruction RMSE is retained.  If both are provided, ``n_modes`` caps
+    that set while preserving its highest-energy bins; the requested tolerance
+    cannot be met when the cap is smaller than the required set.
     """
     data = np.asarray(melt_pool_data, dtype=np.float64)
     if data.ndim != 2 or data.shape[1] != 2 or data.shape[0] < 2:
         raise ValueError("melt_pool_data must have shape (n, 2) with n >= 2.")
     if not np.isfinite(data).all():
         raise ValueError("melt_pool_data must contain only finite values.")
-    if (n_modes is None) and (tolerance is None):
+    if n_modes is None and tolerance is None:
         raise ValueError("Provide either n_modes, tolerance, or both.")
+    if n_modes is not None and (
+        not isinstance(n_modes, (int, np.integer)) or n_modes < 1
+    ):
+        raise ValueError("n_modes must be a positive integer.")
 
     time_values = data[:, 0]
     signal = data[:, 1]
@@ -101,6 +108,10 @@ def compute_spectral_components(
     fft_values = np.fft.rfft(signal)
     frequencies = np.fft.rfftfreq(n_samples, d=dt)
     candidate_bins = np.arange(1, fft_values.size)
+    if n_modes is not None and n_modes > fft_values.size:
+        raise ValueError(
+            f"n_modes cannot exceed {fft_values.size} for this time series."
+        )
 
     # Parseval energy represented by each positive-frequency cosine.  Interior
     # rFFT bins represent a conjugate pair; the Nyquist bin does not.
@@ -128,25 +139,20 @@ def compute_spectral_components(
             + 1
         )
         selected_bins = energy_order[:retained_count]
-    if n_modes is not None and tolerance is not None:
-        # selected_bins has been defined.
-        selected_bins = np.sort(selected_bins)[: n_modes - 1]
-        print(
-            "n_modes is less than the number of selected bins. Using {} modes.".format(
-                n_modes
+        if n_modes is not None and selected_bins.size > n_modes - 1:
+            warnings.warn(
+                f"Requested tolerance requires {selected_bins.size + 1} modes; "
+                f"limiting the result to {n_modes} modes, so the tolerance "
+                "will not be met.",
+                RuntimeWarning,
+                stacklevel=2,
             )
-        )
-    elif n_modes is None and tolerance is not None:
-        print("n_modes is None. Using {} modes.".format(selected_bins.size + 1))
-    elif tolerance is None and n_modes is not None:
-        if n_modes > fft_values.size:
-            raise ValueError(
-                f"n_modes cannot exceed {fft_values.size} for this time series."
-            )
-        selected_bins = candidate_bins[: n_modes - 1]
-        print("tolerance is None. Using {} modes.".format(n_modes))
+            selected_bins = selected_bins[: n_modes - 1]
     else:
-        raise ValueError("Unexpected condition: both n_modes and tolerance are None.")
+        selected_bins = candidate_bins[: n_modes - 1]
+
+    # Return modes in frequency order after any energy-ranked selection and cap.
+    selected_bins = np.sort(selected_bins)
 
     amplitudes = energy_weights[selected_bins] * np.abs(fft_values[selected_bins])
     amplitudes /= n_samples
