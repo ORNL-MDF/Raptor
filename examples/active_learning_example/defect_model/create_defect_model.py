@@ -162,13 +162,15 @@ def run_raptor(
         mp_stats["width_mean"],
         mp_stats["width_std"],
         LASER_VELOCITY_M_S,
-        VOXEL_RESOLUTION_M
+        voxel_resolution_m,
     )
 
     length_scale = 10.0 * mp_stats["depth_mean"]
     melt_pool_filter.add_effect("melt_pool", [length_scale, None, 1])
     melt_pool_filter.initialize()
-    width_data = melt_pool_filter.generate_fluctuations(1, melt_pool_filter.n_points, melt_pool_filter.t)
+    width_data = melt_pool_filter.generate_fluctuations(
+        1, melt_pool_filter.n_points, melt_pool_filter.t
+    )
 
     ellipse = 2
     parabola = 1
