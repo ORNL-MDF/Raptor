@@ -22,13 +22,21 @@ This project is licensed under the BSD 3-Clause [License](LICENSE).
 *  **Domain Voxelization**: A 3D bounding box, or Representative Volume Element (RVE), is defined and discretized into a uniform grid of voxels.
 *  **Scan Path Ingestion**: Scan path data is used to calculating the timing and trajectory for each laser vector.
 *  **Dynamic Melt Pool Definition**: For each melt pool dimension (width, depth, height), the input time-series data is converted into a Fourier series (a sum of cosine functions). This creates a dynamic, time-dependent model of the melt pool's cross-sectional shape, which is modeled using modified Lamé curves. To capture stochastic process variations, a random phase shift can be applied to the Fourier series for each scan vector.
-*  **Melt Mask Calculation**: The core of the simulation iterates through each voxel in the domain. For each scan vector that passes near the voxel, it calculates the instantaneous melt pool shape and determines if the voxel is inside the melt pool mask. This process, is executed with a high-performance parallel kernel, Just-In-Time (JIT) compiled with Numba. This enables the rapid analysis of large, industrially-relevant domains.
+*  **Melt Mask Calculation**: The core of the simulation iterates through each voxel in the domain. For each scan vector that passes near the voxel, it calculates the instantaneous melt pool shape and determines the voxel state. The voxel is either unmelted (0), on the interior of the melt pool (1), on the boundary of the melt pool (2), or at an intersection of melt pool boundaries (3). The voxel state updates dynamically as the scan vectors that interact with it successively melt / interact with it on the melt pool boundary. The outcome of this process is a simulated volume of overlapping melt pools, flagging melted voxels, boundary voxels, intersection voxels, and voxels that make up the defect structure. The core geometry computations are executed with a high-performance parallel kernel, Just-In-Time (JIT) compiled with Numba. This enables the rapid analysis of large, industrially-relevant domains.
 *  **Porosity Prediction**: Any voxel that is not melted by the end of the simulation is flagged as porosity.
-*  **Analysis and Output**: The final 3D porosity field is saved in the binary VTK ImageData (`.vti`) format. The morphological characteristics (e.g., volume, surface area, equivalent diameter) of contiguous pore structures can be quantified using the `scikit-image` library, and saved to a `.csv` file.
+*  **Boundary Tracking**: Voxels that are close to local melt pool boundaries are flagged as boundaries.
+*  **Intersection Tracking**: Voxels that are incident with two or more boundaries are flagged as intersection points.
+*  **Analysis and Output**: The final 3D volume is saved in the binary VTK ImageData (`.vti`) format. The morphological characteristics (e.g., volume, surface area, equivalent diameter) of contiguous pore structures can be quantified using the `scikit-image` library, and saved to a `.csv` file.
 
-<figure>
-  <img src="https://raw.githubusercontent.com/ORNL-MDF/raptor-media/main/images/example_defects.png" alt="example figure">
-  <figcaption>Stochastic undermelting defects occurring between tracks due to melt pool fluctuations.</figcaption>
+<figure style="text-align:center;">
+  <img
+    src="https://raw.githubusercontent.com/ORNL-MDF/raptor-media/main/images/example_phases_annotated.gif"
+    alt="example animation"
+    style="width:60%; height:auto;"
+  >
+  <figcaption>
+    Visualization of the melt pool overlaps with defects, interior, boundaries and intersections tracked.
+  </figcaption>
 </figure>
 
 ## Installation

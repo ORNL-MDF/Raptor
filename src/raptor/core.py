@@ -14,8 +14,8 @@ from typing import List, Tuple
 from .structures import MeltPool, PathVector
 
 
-@njit(inline="always", fastmath=True)
-def is_inside(
+@njit(fastmath=True)
+def compute_distance_to_boundary(
     y: float,
     z: float,
     width: float,
@@ -23,9 +23,10 @@ def is_inside(
     depth: float,
     height_shape_factor: float,
     depth_shape_factor: float,
-) -> bool:
+    resolution: float,
+) -> float:
     """
-    Checks if a point (y, z) is inside a modified Lamé curve cross-section:
+    Computes the distance from a point (y, z) to the boundary of a modified Lamé curve cross-section:
     (y/a)^2 + (|z|/b)^n <= 1
 
     Args:
@@ -42,7 +43,7 @@ def is_inside(
             - n=10:  Box-shaped
 
     Returns:
-        bool: True if the point is inside or on the boundary, False otherwise.
+        float: The distance from the point to the boundary. Positive if outside, negative if inside.
     """
 
     a = width / 2.0
@@ -55,19 +56,49 @@ def is_inside(
     b = b_choices[selector]
     n = n_choices[selector]
 
-    test_value = (y / a) ** 2 + (np.abs(z) / b) ** n
+    rv_sqr = y * y + z * z
 
-    return test_value <= 1.0
+    if rv_sqr < resolution * resolution:
+        return -min(a, height, depth)
+
+    rv = np.sqrt(rv_sqr)
+    r0 = rv
+    inv_r0 = 1.0 / r0
+    cos_theta = y * inv_r0
+    sin_theta = np.abs(z) * inv_r0
+
+    c2 = (cos_theta / a) ** 2
+    cn = (sin_theta / b) ** n
+
+    tol = resolution + 1e-24
+    max_iter = 20
+
+    for _ in range(max_iter):
+        r_n_minus_1 = r0 ** (n - 1.0)
+
+        f = c2 * r0 * r0 + cn * r_n_minus_1 * r0 - 1.0
+        df_dr = 2.0 * c2 * r0 + n * cn * r_n_minus_1
+
+        step = f / df_dr
+        r0 -= step
+
+        if np.abs(step) <= tol:
+            break
+
+    return rv - r0
 
 
 def compute_melt_mask(
-    voxels: np.ndarray, melt_pool: MeltPool, path_vectors: List[PathVector]
+    voxels: np.ndarray,
+    resolution: float,
+    melt_pool: MeltPool,
+    path_vectors: List[PathVector],
 ):
     """
     Unpacks jitclasses into arrays to pass to compute_melt_mask_implicit().
     """
     n_voxels = voxels.shape[0]
-    melt_mask = np.zeros(n_voxels, dtype=np.bool_)
+    melt_mask = np.zeros(n_voxels, dtype=np.int8)
 
     # --- Unpack MeltPool object ---
     width_amplitudes = melt_pool.width_oscillations[:, 0]
@@ -104,6 +135,7 @@ def compute_melt_mask(
 
     return compute_melt_mask_implicit(
         voxels,
+        resolution,
         melt_mask,
         start_points,
         end_points,
@@ -133,6 +165,7 @@ def compute_melt_mask(
 @njit(parallel=True, fastmath=True)
 def compute_melt_mask_implicit(
     voxels: np.ndarray,
+    resolution: float,
     melt_mask: np.ndarray,
     start_points: np.ndarray,
     end_points: np.ndarray,
@@ -167,7 +200,7 @@ def compute_melt_mask_implicit(
 
     for i in prange(n_voxels):
         vx, vy, vz = voxels[i, 0], voxels[i, 1], voxels[i, 2]
-        is_voxel_melted = False
+        is_voxel_melted = 0
 
         for j in range(n_vectors):
             if (
@@ -244,7 +277,7 @@ def compute_melt_mask_implicit(
                     two_pi_t * height_frequencies[k] + phase_k
                 )
 
-            is_voxel_melted = is_inside(
+            signed_dist = compute_distance_to_boundary(
                 local_y,
                 local_z,
                 width,
@@ -252,11 +285,20 @@ def compute_melt_mask_implicit(
                 depth,
                 height_shape_factor,
                 depth_shape_factor,
+                resolution,
             )
 
-            if is_voxel_melted:
-                break
+            is_voxel_melted = signed_dist < 1e-12
 
-        melt_mask[i] = is_voxel_melted
+            is_voxel_boundary = np.abs(signed_dist) - resolution <= 1e-12
+
+            melt_mask_previous = melt_mask[i]
+
+            if is_voxel_melted:
+                melt_mask[i] = 1
+            if is_voxel_boundary:
+                melt_mask[i] = 2
+            if melt_mask_previous > 1 and is_voxel_boundary:
+                melt_mask[i] = 3
 
     return melt_mask

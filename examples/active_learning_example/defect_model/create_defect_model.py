@@ -65,7 +65,7 @@ MAX_ITERATIONS = 40
 
 SEED = 42
 
-VOXEL_RESOLUTION_M = 5e-6
+VOXEL_RESOLUTION_M = 5.0e-6
 RVE_LENGTH_M = 1e-3
 QUERY_VOLUME_MM3 = 5.0  # decrease query_volume_mm3 from 10 to speed up
 
@@ -162,13 +162,15 @@ def run_raptor(
         mp_stats["width_mean"],
         mp_stats["width_std"],
         LASER_VELOCITY_M_S,
-        [250000, 0.08],
+        voxel_resolution_m,
     )
 
     length_scale = 10.0 * mp_stats["depth_mean"]
     melt_pool_filter.add_effect("melt_pool", [length_scale, None, 1])
     melt_pool_filter.initialize()
-    width_data = melt_pool_filter.generate_fluctuations(1)
+    width_data = melt_pool_filter.generate_fluctuations(
+        1, melt_pool_filter.n_points, melt_pool_filter.t
+    )
 
     ellipse = 2
     parabola = 1
