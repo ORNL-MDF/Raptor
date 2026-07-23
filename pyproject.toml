@@ -30,7 +30,7 @@ dependencies = [
     "pandas",
     "pyvista",
     "intersect-sdk",
-    "dial @ git+https://github.com/INTERSECT-DIAL/dial@develop"
+    "dial @ git+https://github.com/INTERSECT-DIAL/dial@sable"
 ]
 
 [project.scripts]

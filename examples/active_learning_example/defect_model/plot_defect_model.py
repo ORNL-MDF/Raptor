@@ -108,7 +108,7 @@ def main(filepath):
     ax.set_yscale("symlog", linthresh=10)
     ax.set_ylim(bottom=0, top=np.max(actual_mean_um) * 1.5)
     ax.set_xlabel("Hatch Spacing (mm)")
-    ax.set_ylabel("Maximum Pore Diameter ($\mu$m)")
+    ax.set_ylabel("Maximum Pore Diameter ($\\mu$m)")
     ax.set_title(f"P={laser_power}W, V={laser_velocity}m/s")
     ax.minorticks_on()
 
