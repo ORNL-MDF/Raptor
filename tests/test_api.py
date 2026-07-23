@@ -18,15 +18,17 @@ melt pool creation, porosity computation, and VTK output generation.
 
 import pytest
 import numpy as np
+import pandas as pd
 import tempfile
-import os
+import vtk
+import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import List, Dict, Any
 
 # Import the module under test
 from raptor.api import (
     create_grid,
     create_path_vectors,
+    compute_required_modes,
     compute_spectral_components,
     create_melt_pool,
     compute_porosity,
@@ -87,7 +89,7 @@ def sample_process_parameters():
 @pytest.fixture
 def sample_time_series_data():
     """Fixture providing sample time series data for melt pool."""
-    t = np.linspace(0, 1, 100)
+    t = np.arange(100, dtype=np.float64) / 100.0
     values = 0.0001 + 0.00002 * np.sin(2 * np.pi * 5 * t)
     return np.column_stack([t, values])
 
@@ -127,6 +129,38 @@ def temp_output_dir():
     """Fixture providing a temporary directory for output files."""
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
+
+
+@pytest.fixture
+def minimal_simulation():
+    resolution = 10.0e-6
+    bound_box = np.array([[0.0, 0.0, 0.0], [20.0e-6, 20.0e-6, 10.0e-6]])
+    grid = create_grid(resolution, bound_box=bound_box)
+
+    vector = PathVector(
+        np.array([0.0, 10.0e-6, 0.0], dtype=np.float64),
+        np.array([20.0e-6, 10.0e-6, 0.0], dtype=np.float64),
+        0.0,
+        1.0,
+    )
+    vector.set_coordinate_frame()
+
+    width = np.array([[20.0e-6, 0.0, 0.0]], dtype=np.float64)
+    depth = np.array([[10.0e-6, 0.0, 0.0]], dtype=np.float64)
+    height = np.array([[10.0e-6, 0.0, 0.0]], dtype=np.float64)
+    melt_pool = MeltPool(
+        width,
+        depth,
+        height,
+        20.0e-6,
+        10.0e-6,
+        10.0e-6,
+        2.0,
+        2.0,
+        2.0,
+        False,
+    )
+    return grid, [vector], melt_pool
 
 
 # =============================================================================
@@ -206,8 +240,8 @@ class TestCreatePathVectors:
 
         path_vectors = create_path_vectors(sample_bound_box, **params)
 
-        # TODO: Verify single layer generation
         assert len(path_vectors) > 0
+        assert min(vector.start_point[2] for vector in path_vectors) == 0.0
 
     def test_create_path_vectors_multiple_layers(
         self, sample_bound_box, sample_process_parameters
@@ -218,27 +252,44 @@ class TestCreatePathVectors:
 
         path_vectors = create_path_vectors(sample_bound_box, **params)
 
-        # TODO: Verify multiple layer generation
-        assert len(path_vectors) > 0
+        base_params = sample_process_parameters.copy()
+        base_params["extra_layers"] = 0
+        base_vectors = create_path_vectors(sample_bound_box, **base_params)
+        assert len(path_vectors) > len(base_vectors)
+        assert max(v.start_point[2] for v in path_vectors) > max(
+            v.start_point[2] for v in base_vectors
+        )
 
     def test_create_path_vectors_rotation(
         self, sample_bound_box, sample_process_parameters
     ):
         """Test path vector generation with rotation."""
-        # TODO: Test different rotation angles
-        pass
+        params = sample_process_parameters.copy()
+        params["rotation"] = 90.0
+        vectors = create_path_vectors(sample_bound_box, **params)
+        points_per_layer = len(
+            np.arange(
+                sample_bound_box[0, 1] - params["scan_extension"],
+                sample_bound_box[1, 1] + params["scan_extension"],
+                params["hatch_spacing"],
+            )
+        )
+        np.testing.assert_allclose(vectors[0].e1, [1.0, 0.0, 0.0], atol=1.0e-12)
+        np.testing.assert_allclose(
+            vectors[points_per_layer].e1, [0.0, 1.0, 0.0], atol=1.0e-12
+        )
 
     def test_create_path_vectors_hatch_spacing(
         self, sample_bound_box, sample_process_parameters
     ):
         """Test path vector generation with different hatch spacings."""
-        # TODO: Test effect of hatch spacing on vector count
-        pass
-
-    def test_create_path_vectors_invalid_parameters(self, sample_bound_box):
-        """Test path vector generation with invalid parameters."""
-        # TODO: Test with negative or invalid values
-        pass
+        fine = sample_process_parameters.copy()
+        coarse = sample_process_parameters.copy()
+        fine["hatch_spacing"] = 0.05
+        coarse["hatch_spacing"] = 0.2
+        assert len(create_path_vectors(sample_bound_box, **fine)) > len(
+            create_path_vectors(sample_bound_box, **coarse)
+        )
 
 
 # =============================================================================
@@ -282,10 +333,123 @@ class TestComputeSpectralComponents:
 
         np.testing.assert_allclose(spectral_array[0, 0], expected_mean)
 
+    def test_compute_spectral_components_preserves_standard_deviation(
+        self, sample_time_series_data
+    ):
+        """Test correct amplitude when the signal frequency is retained."""
+        spectral_array = compute_spectral_components(sample_time_series_data, 6)
+        time = sample_time_series_data[:, 0]
+        reconstructed = np.zeros_like(time)
+
+        for amplitude, frequency, phase in spectral_array:
+            reconstructed += amplitude * np.cos(2.0 * np.pi * frequency * time + phase)
+
+        assert reconstructed.mean() == pytest.approx(
+            sample_time_series_data[:, 1].mean()
+        )
+        assert reconstructed.std() == pytest.approx(sample_time_series_data[:, 1].std())
+
+    def test_explicit_mode_count_retains_low_frequency_prefix(self):
+        """Explicit mode counts preserve the original truncation semantics."""
+        sampling_frequency = 10_000.0
+        time = np.arange(1000) / sampling_frequency
+        values = 1.0 + 0.2 * np.sin(2.0 * np.pi * 2000.0 * time)
+        spectral_array = compute_spectral_components(np.column_stack([time, values]), 2)
+
+        assert spectral_array[1, 1] == pytest.approx(10.0)
+
+    def test_tolerance_selects_minimum_modes_and_meets_rmse(self):
+        sampling_frequency = 1000.0
+        time = np.arange(1000) / sampling_frequency
+        values = (
+            2.0
+            + 0.30 * np.cos(2.0 * np.pi * 20.0 * time + 0.2)
+            + 0.04 * np.cos(2.0 * np.pi * 170.0 * time - 0.4)
+        )
+        data = np.column_stack([time, values])
+
+        spectral_array = compute_spectral_components(data, tolerance=0.03)
+        reconstructed = sum(
+            amplitude * np.cos(2.0 * np.pi * frequency * time + phase)
+            for amplitude, frequency, phase in spectral_array
+        )
+
+        assert spectral_array.shape == (2, 3)
+        assert spectral_array[1, 1] == pytest.approx(20.0)
+        assert np.sqrt(np.mean((values - reconstructed) ** 2)) <= 0.03
+        assert compute_required_modes(data, 0.03) == 2
+
+    def test_mode_cap_retains_highest_energy_tolerance_modes(self):
+        sampling_frequency = 1000.0
+        time = np.arange(1000) / sampling_frequency
+        values = (
+            1.0
+            + 0.1 * np.cos(2.0 * np.pi * 20.0 * time)
+            + 0.9 * np.cos(2.0 * np.pi * 170.0 * time)
+        )
+        data = np.column_stack([time, values])
+
+        with pytest.warns(RuntimeWarning, match="tolerance will not be met"):
+            spectral_array = compute_spectral_components(
+                data, n_modes=2, tolerance=0.01
+            )
+
+        assert spectral_array.shape == (2, 3)
+        assert spectral_array[1, 1] == pytest.approx(170.0)
+
+    def test_tolerance_modes_are_returned_in_frequency_order(self):
+        sampling_frequency = 1000.0
+        time = np.arange(1000) / sampling_frequency
+        values = (
+            1.0
+            + 0.1 * np.cos(2.0 * np.pi * 20.0 * time)
+            + 0.9 * np.cos(2.0 * np.pi * 170.0 * time)
+        )
+
+        spectral_array = compute_spectral_components(
+            np.column_stack([time, values]), tolerance=0.01
+        )
+
+        assert spectral_array[:, 1].tolist() == pytest.approx([0.0, 20.0, 170.0])
+
+    def test_tolerance_zero_reconstructs_even_length_signal(self):
+        time = 0.25 + np.arange(100) / 100.0
+        values = 3.0 + 0.2 * np.cos(2.0 * np.pi * 5.0 * time)
+        values += 0.1 * np.cos(2.0 * np.pi * 50.0 * time)
+        spectral_array = compute_spectral_components(
+            np.column_stack([time, values]), tolerance=0.0
+        )
+        reconstructed = sum(
+            amplitude * np.cos(2.0 * np.pi * frequency * time + phase)
+            for amplitude, frequency, phase in spectral_array
+        )
+        np.testing.assert_allclose(reconstructed, values, atol=1.0e-13)
+
     def test_compute_spectral_components_invalid_input(self):
         """Test spectral component computation with invalid input."""
-        # TODO: Test with malformed input data
-        pass
+        with pytest.raises(ValueError, match="shape"):
+            compute_spectral_components(np.array([[0.0, 1.0]]), 1)
+        with pytest.raises(ValueError, match="shape"):
+            compute_spectral_components(np.ones((4, 1)), 2)
+        with pytest.raises(ValueError, match="either n_modes"):
+            compute_spectral_components(np.ones((4, 2)))
+
+    @pytest.mark.parametrize("n_modes", [0, -1, 1.5])
+    def test_compute_spectral_components_rejects_invalid_mode_counts(
+        self, sample_time_series_data, n_modes
+    ):
+        with pytest.raises(ValueError, match="positive integer"):
+            compute_spectral_components(sample_time_series_data, n_modes=n_modes)
+
+    def test_tolerance_rejects_mode_count_above_available_bins(
+        self, sample_time_series_data
+    ):
+        with pytest.raises(ValueError, match="cannot exceed"):
+            compute_spectral_components(
+                sample_time_series_data,
+                n_modes=sample_time_series_data.shape[0],
+                tolerance=0.0,
+            )
 
 
 # =============================================================================
@@ -321,10 +485,42 @@ class TestCreateMeltPool:
 
         assert isinstance(melt_pool, MeltPool)
 
+    def test_create_melt_pool_scales_spectral_amplitudes(
+        self, sample_spectral_components
+    ):
+        scale_factor = 2.0
+        melt_pool = create_melt_pool(
+            {
+                "width": (sample_spectral_components, 3, scale_factor, 2.0),
+                "depth": (sample_spectral_components, 3, 1.0, 2.0),
+                "height": (sample_spectral_components, 3, 1.0, 2.0),
+            },
+            enable_random_phases=False,
+        )
+
+        np.testing.assert_allclose(
+            melt_pool.width_oscillations[:, 0],
+            scale_factor * sample_spectral_components[:, 0],
+        )
+
     def test_create_melt_pool_mode_padding(self):
         """Test that melt pool correctly pads modes to match maximum."""
-        # TODO: Create inputs with different mode counts
-        pass
+        one_mode = np.array([[1.0e-4, 0.0, 0.0]])
+        three_modes = np.array(
+            [[1.0e-4, 0.0, 0.0], [1.0e-6, 1.0, 0.0], [1.0e-6, 2.0, 0.0]]
+        )
+        melt_pool = create_melt_pool(
+            {
+                "width": (one_mode, 1, 1.0, 2.0),
+                "depth": (three_modes, 3, 1.0, 2.0),
+                "height": (one_mode, 1, 1.0, 2.0),
+            },
+            enable_random_phases=False,
+        )
+        assert melt_pool.width_oscillations.shape == (3, 3)
+        assert melt_pool.depth_oscillations.shape == (3, 3)
+        assert melt_pool.height_oscillations.shape == (3, 3)
+        np.testing.assert_array_equal(melt_pool.width_oscillations[1:], 0.0)
 
     def test_create_melt_pool_scaling(self, sample_time_series_data):
         """Test that scaling is correctly applied."""
@@ -337,8 +533,27 @@ class TestCreateMeltPool:
 
         melt_pool = create_melt_pool(melt_pool_dict, enable_random_phases=False)
 
-        # TODO: Verify scaling is applied correctly
-        assert isinstance(melt_pool, MeltPool)
+        assert melt_pool.width_mean == pytest.approx(
+            scale_factor * sample_time_series_data[:, 1].mean()
+        )
+        assert melt_pool.depth_mean == pytest.approx(
+            sample_time_series_data[:, 1].mean()
+        )
+
+    def test_create_melt_pool_allows_fixed_and_tolerance_mode_counts(
+        self, sample_time_series_data
+    ):
+        melt_pool = create_melt_pool(
+            {
+                "width": (sample_time_series_data, 2, 1.0, 2.0),
+                "depth": (sample_time_series_data, None, 1.0, 2.0),
+                "height": (sample_time_series_data, None, 1.0, 2.0),
+            },
+            enable_random_phases=False,
+            tolerance=1.0e-7,
+        )
+        assert melt_pool.width_oscillations.shape == melt_pool.depth_oscillations.shape
+        assert melt_pool.depth_oscillations.shape == melt_pool.height_oscillations.shape
 
     def test_create_melt_pool_shape_factors(self, sample_melt_pool_dict):
         """Test that shape factors are correctly set."""
@@ -349,8 +564,10 @@ class TestCreateMeltPool:
 
     def test_create_melt_pool_invalid_data_shape(self):
         """Test melt pool creation with invalid data shape."""
-        # TODO: Test with data that is not Nx2 or Nx3
-        pass
+        invalid = np.ones((5, 4))
+        data = {key: (invalid, 2, 1.0, 2.0) for key in ("width", "depth", "height")}
+        with pytest.raises(ValueError, match="Unsupported data shape"):
+            create_melt_pool(data, enable_random_phases=False)
 
 
 # =============================================================================
@@ -361,35 +578,41 @@ class TestCreateMeltPool:
 class TestComputePorosity:
     """Test cases for the compute_porosity function."""
 
-    def test_compute_porosity_basic(self):
+    def test_compute_porosity_basic(self, minimal_simulation):
         """Test basic porosity computation."""
-        # TODO: Create minimal grid, path vectors, and melt pool
-        pass
+        grid, vectors, melt_pool = minimal_simulation
+        result = compute_porosity(grid, vectors, melt_pool, jit_warmup=False)
+        assert np.any(result != 0)
 
-    def test_compute_porosity_with_warmup(self):
+    def test_compute_porosity_with_warmup(self, minimal_simulation, capsys):
         """Test porosity computation with JIT warmup enabled."""
-        # TODO: Test with jit_warmup=True
-        pass
+        grid, vectors, melt_pool = minimal_simulation
+        compute_porosity(grid, vectors, melt_pool, jit_warmup=True)
+        assert "JIT warmup complete" in capsys.readouterr().out
 
-    def test_compute_porosity_without_warmup(self):
+    def test_compute_porosity_without_warmup(self, minimal_simulation, capsys):
         """Test porosity computation with JIT warmup disabled."""
-        # TODO: Test with jit_warmup=False
-        pass
+        grid, vectors, melt_pool = minimal_simulation
+        compute_porosity(grid, vectors, melt_pool, jit_warmup=False)
+        assert "JIT Warmup" not in capsys.readouterr().out
 
-    def test_compute_porosity_output_shape(self):
+    def test_compute_porosity_output_shape(self, minimal_simulation):
         """Test that output porosity field has correct shape."""
-        # TODO: Verify output shape matches grid shape
-        pass
+        grid, vectors, melt_pool = minimal_simulation
+        result = compute_porosity(grid, vectors, melt_pool, jit_warmup=False)
+        assert result.shape == grid.shape
 
-    def test_compute_porosity_output_dtype(self):
+    def test_compute_porosity_output_dtype(self, minimal_simulation):
         """Test that output porosity field has correct dtype."""
-        # TODO: Verify output dtype is int8
-        pass
+        grid, vectors, melt_pool = minimal_simulation
+        result = compute_porosity(grid, vectors, melt_pool, jit_warmup=False)
+        assert result.dtype == np.int8
 
-    def test_compute_porosity_single_vector(self):
+    def test_compute_porosity_single_vector(self, minimal_simulation):
         """Test porosity computation with a single path vector."""
-        # TODO: Test minimal case
-        pass
+        grid, vectors, melt_pool = minimal_simulation
+        result = compute_porosity(grid, vectors[:1], melt_pool, jit_warmup=False)
+        assert result.shape == grid.shape
 
 
 # =============================================================================
@@ -413,6 +636,11 @@ class TestWriteVtk:
 
         assert output_path.exists()
         assert output_path.stat().st_size > 0
+        root = ET.parse(output_path).getroot()
+        data_array = root.find("./ImageData/Piece/PointData/DataArray")
+        assert data_array is not None
+        assert data_array.attrib["format"] == "binary"
+        assert root.find("AppendedData") is None
 
     def test_write_vtk_file_creation(self, temp_output_dir):
         """Test that VTK file is created at specified path."""
@@ -426,23 +654,22 @@ class TestWriteVtk:
 
     def test_write_vtk_different_origins(self, temp_output_dir):
         """Test VTK writing with different origin points."""
-        # TODO: Test with various origin coordinates
-        pass
+        origin = np.array([1.0, -2.0, 3.0])
+        output_path = temp_output_dir / "origin.vti"
+        write_vtk(origin, 0.25, np.ones((2, 3, 4), dtype=np.int8), output_path)
+        reader = vtk.vtkXMLImageDataReader()
+        reader.SetFileName(str(output_path))
+        reader.Update()
+        np.testing.assert_allclose(reader.GetOutput().GetOrigin(), origin)
 
     def test_write_vtk_different_resolutions(self, temp_output_dir):
         """Test VTK writing with different voxel resolutions."""
-        # TODO: Test with various resolutions
-        pass
-
-    def test_write_vtk_large_array(self, temp_output_dir):
-        """Test VTK writing with large porosity array."""
-        # TODO: Test with larger array sizes
-        pass
-
-    def test_write_vtk_invalid_path(self):
-        """Test VTK writing with invalid output path."""
-        # TODO: Test with invalid file path
-        pass
+        output_path = temp_output_dir / "spacing.vti"
+        write_vtk(np.zeros(3), 2.5e-6, np.ones((2, 2, 2), dtype=np.int8), output_path)
+        reader = vtk.vtkXMLImageDataReader()
+        reader.SetFileName(str(output_path))
+        reader.Update()
+        np.testing.assert_allclose(reader.GetOutput().GetSpacing(), [2.5e-6] * 3)
 
 
 # =============================================================================
@@ -455,39 +682,52 @@ class TestComputeMorphology:
 
     def test_compute_morphology_basic(self):
         """Test basic morphology computation."""
-        porosity = np.zeros((20, 20, 20), dtype=np.uint8)
-        porosity[5:8, 5:8, 5:8] = 1  # Add a pore
-        porosity[15:18, 15:18, 15:18] = 1  # Add another pore
+        porosity = np.ones((20, 20, 20), dtype=np.uint8)
+        porosity[5:8, 5:8, 5:8] = 0
+        porosity[15:18, 15:18, 15:18] = 0
 
         morphology_fields = ["area", "centroid"]
         properties = compute_morphology(porosity, 0.01, morphology_fields)
 
-        assert isinstance(properties, (dict, np.ndarray))
-        # TODO: Add more specific assertions
+        assert len(properties["area"]) == 2
+        assert properties["centroid-0"].shape == (2,)
 
     def test_compute_morphology_single_pore(self):
         """Test morphology computation with a single pore."""
-        # TODO: Create porosity with single isolated pore
-        pass
+        porosity = np.ones((8, 8, 8), dtype=np.uint8)
+        porosity[2:4, 2:4, 2:4] = 0
+        properties = compute_morphology(porosity, 1.0, ["area"])
+        np.testing.assert_array_equal(properties["area"], [8.0])
 
     def test_compute_morphology_multiple_pores(self):
         """Test morphology computation with multiple pores."""
-        # TODO: Create porosity with multiple isolated pores
-        pass
+        porosity = np.ones((10, 10, 10), dtype=np.uint8)
+        porosity[1:3, 1:3, 1:3] = 0
+        porosity[7:9, 7:9, 7:9] = 0
+        properties = compute_morphology(porosity, 1.0, ["area"])
+        np.testing.assert_array_equal(np.sort(properties["area"]), [8.0, 8.0])
 
     def test_compute_morphology_no_pores(self):
         """Test morphology computation with no pores."""
-        porosity = np.zeros((10, 10, 10), dtype=np.uint8)
+        porosity = np.ones((10, 10, 10), dtype=np.uint8)
 
         properties = compute_morphology(porosity, 0.01, ["area"])
 
-        # TODO: Verify behavior with no pores
-        assert isinstance(properties, (dict, np.ndarray))
+        assert properties["area"].size == 0
 
     def test_compute_morphology_all_fields(self):
         """Test morphology computation with all available fields."""
-        # TODO: Test with comprehensive list of morphology fields
-        pass
+        porosity = np.ones((8, 8, 8), dtype=np.uint8)
+        porosity[2:5, 2:5, 2:5] = 0
+        fields = ["area", "centroid", "equivalent_diameter_area"]
+        properties = compute_morphology(porosity, 1.0, fields)
+        assert set(properties) == {
+            "area",
+            "centroid-0",
+            "centroid-1",
+            "centroid-2",
+            "equivalent_diameter_area",
+        }
 
 
 # =============================================================================
@@ -516,18 +756,30 @@ class TestWriteMorphology:
 
     def test_write_morphology_file_format(self, temp_output_dir):
         """Test that morphology file has correct CSV format."""
-        # TODO: Parse and verify CSV structure
-        pass
+        properties = {"area": np.array([1.0, 2.0]), "label": np.array([3, 4])}
+        output_path = temp_output_dir / "format.csv"
+        write_morphology(properties, output_path)
+        frame = pd.read_csv(output_path)
+        pd.testing.assert_frame_equal(frame, pd.DataFrame(properties))
 
     def test_write_morphology_empty_properties(self, temp_output_dir):
         """Test morphology writing with empty properties."""
-        # TODO: Test edge case with no defects
-        pass
+        output_path = temp_output_dir / "empty.csv"
+        result = write_morphology({"area": np.array([])}, output_path)
+        assert result is None
+        assert not output_path.exists()
 
     def test_write_morphology_column_headers(self, temp_output_dir):
         """Test that column headers match property keys."""
-        # TODO: Verify CSV headers
-        pass
+        output_path = temp_output_dir / "headers.csv"
+        write_morphology(
+            {"area": np.array([1.0]), "equivalent_diameter": np.array([2.0])},
+            output_path,
+        )
+        assert list(pd.read_csv(output_path).columns) == [
+            "area",
+            "equivalent_diameter",
+        ]
 
 
 # =============================================================================

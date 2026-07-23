@@ -113,6 +113,9 @@ class PathVector:
 
     def set_coordinate_frame(self) -> None:
         self.distance = self.end_point - self.start_point
+        self.distance = np.sign(self.distance) * np.maximum(
+            np.abs(self.distance), 1e-12
+        )
         self.centroid = (self.end_point + self.start_point) / 2.0
 
         self.duration = self.end_time - self.start_time

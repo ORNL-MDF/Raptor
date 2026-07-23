@@ -23,6 +23,8 @@ classifiers = [
 dependencies = [
     "numpy",
     "numba",
+    "scipy",
+    "matplotlib",
     "PyYAML",
     "vtk",
     "scikit-image",
