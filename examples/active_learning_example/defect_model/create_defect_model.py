@@ -6,13 +6,11 @@ import sys
 import random
 from pathlib import Path
 from typing import Any
-from dataclasses import dataclass
 from enum import StrEnum, auto
 
 import numpy as np
 from scipy.stats import qmc
 from scipy.interpolate import RegularGridInterpolator
-import scipy.stats as st
 
 # Raptor Imports
 from raptor.api import (
@@ -43,6 +41,14 @@ from dial_dataclass import (
     Normal,
 )
 
+from scalers import SCALER_REGISTRY, InputScaler
+from statistics_utilities import (
+    estimate_lognormal_direct,
+    estimate_lognormal_MCMC,
+    estimate_cvar,
+    estimate_lognormal_cvar,
+    plot_defect_distribution,
+)
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)-8s %(message)s"
@@ -130,7 +136,7 @@ def run_raptor(
     mp_interpolator: MeltPoolInterpolator,
     layer_thickness_m: float = 40e-6,
     query_volume_mm3: float = QUERY_VOLUME_MM3,
-    voxel_resolution_m: float = 5e-6,
+    voxel_resolution_m: float = VOXEL_RESOLUTION_M,
     metric_names: list[str] = ["equivalent_diameter_area"],
 ):
     # Query melt pool statistics for processing conditions
@@ -264,13 +270,16 @@ def process_raptor_data(raptor_data):
     sort_defect = np.sort(np.array(combined_defects) * 1e6)
 
     # direct estimate
-    (log_mean, log_sem), (log_std, log_sev) = estimate_lognormal_direct(sort_defect)
+    lognormal_params = estimate_lognormal_direct(sort_defect)
 
     # MCMC estimate
     logger.info("running MCMC")
-    (log_mean_pore, log_sem_pore), (log_std_pore, log_sev_pore) = (
-        estimate_lognormal_MCMC(sort_defect)
-    )
+    lognormal_params_MCMC = estimate_lognormal_MCMC(sort_defect)
+
+    # TODO: if we want to transform these values back to meters we need to account for different scaling of sev
+    #       for now, I will do it after further use below.
+    (log_mean, log_sem), (log_std, log_sev) = lognormal_params
+    (log_mean_pore, log_sem_pore), (log_std_pore, log_sev_pore) = lognormal_params_MCMC
 
     # Approach 1 and 2 should give the same answer
     print(f"-{len(combined_defects)}-\texpl.,\tMCMC")
@@ -279,112 +288,30 @@ def process_raptor_data(raptor_data):
     print(f"sem:\t{log_sem:.3f},\t{log_sem_pore:.3f}")
     print(f"sev:\t{log_sev:.3f},\t{log_sev_pore:.3f}")
 
-    # TODO: if we want to transform these values back to meters we need to account for different scaling of sev
-    #       for now, I will do it after further use below.
-
-    def estimate_cvar(defects_list, level=0.05):
-        "Estimate the conditional value at risk from a finite sample."
-        n_defects = len(defects_list)
-        n_bad_defects = n_defects * level
-        remainder = n_bad_defects - np.floor(n_bad_defects)
-        n_bad_defects = int(np.floor(n_bad_defects))
-        weights = np.concat(([remainder], np.ones(n_bad_defects)))
-        weights /= np.sum(weights)
-        defects_sort = np.sort(np.asarray(defects_list))
-        cvar = np.sum(weights * defects_sort[-n_bad_defects - 1 :])
-        return cvar
-
-    def bootstrap_defects(n_defects):
-        while True:
-            # sample a big defect sample from a random realization of the estimated density
-            log_mu = log_mean + log_sem * np.random.randn(1)
-            log_s2 = log_std**2 + log_sev * np.random.randn(1)
-            log_sigma = np.sqrt(log_s2)
-            log_samples = log_mu + log_sigma * np.random.randn(n_defects)
-            yield np.exp(log_samples)
-
     # set the level in (0.0, 1.0) for the estimation of the conditional value at risk (CVAR)
     cvar_level = 0.2
 
-    def bootstrap_cvar(n_defects=1000, max_bootstrap=1000):
-        cvar_array = np.zeros((max_bootstrap, 1))
-        for n_bs, sample in enumerate(bootstrap_defects(n_defects)):
-            cvar = estimate_cvar(sample, cvar_level)
-            cvar_array[n_bs] = cvar
-            if n_bs > 1:
-                mean_cvar = np.mean(cvar_array[:n_bs])
-                std_cvar = np.std(cvar_array[:n_bs], ddof=1)
-            if n_bs + 1 >= max_bootstrap:
-                return mean_cvar, std_cvar
-
-    ## Use the lognormal estimates to bootstrap cvar
-    mean_cvar, err_cvar = bootstrap_cvar()
-    # transform back to meters
+    # Use the lognormal estimates to estimate CVAR with error
+    mean_cvar, err_cvar = estimate_lognormal_cvar(
+        lognormal_params, cvar_level=cvar_level
+    )
     print(f"naive CVAR: {estimate_cvar(sort_defect, cvar_level):0.3f}")
     print(
-        f"bootstrapped cvar based on lognormal distr: {mean_cvar=:.3f}, {err_cvar=:0.3f}"
+        f"estimated CVAR based on lognormal distr: {mean_cvar=:.3f}, {err_cvar=:0.3f}"
     )
+    # transform back to meters
     mean_cvar = mean_cvar.item() / 1e6
     err_cvar = err_cvar.item() / 1e6
 
-    def plot_pore_distr():
-        logger.info("plotting pore distribution")
-        import matplotlib
-
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-
-        fig, ax = plt.subplots(figsize=(6.5, 4.5))
-        defect_mesh = np.linspace(0.01, (mean_pore + 3 * std_pore) * 1e6, 500)
-        ax.plot(
-            defect_mesh,
-            st.norm.pdf(defect_mesh, loc=mean_pore * 1e6, scale=std_pore * 1e6),
-            color="tab:blue",
-            linewidth=2,
-            label="Standard Gaussian estimate",
-        )
-        ax.plot(
-            defect_mesh,
-            st.norm.pdf(np.log(defect_mesh), loc=log_mean, scale=log_std) / defect_mesh,
-            color="tab:green",
-            linewidth=2,
-            label="Log Gaussian estimate",
-        )
-        ax.plot(
-            defect_mesh,
-            st.gaussian_kde(sort_defect)(defect_mesh),
-            color="tab:orange",
-            linewidth=2,
-            label="Gaussian KDE",
-        )
-        ax.scatter(
-            sort_defect,
-            np.zeros(sort_defect.shape),
-            color="black",
-            marker="+",
-            s=15,
-            alpha=0.6,
-            label=f"Pore size data {hatch_spacing*1e6:.1f}um",
-        )
-        ax.axvline(mean_cvar * 1e6, color="k", linestyle="-", label="CVAR")
-        ax.axvline(
-            (mean_cvar + err_cvar) * 1e6, color="k", linestyle=":", label="CVAR+"
-        )
-        ax.axvline(
-            (mean_cvar - err_cvar) * 1e6, color="k", linestyle=":", label="CVAR-"
-        )
-        ax.axvline(np.max(sort_defect), color="b", linestyle="-", label="maximum")
-        ax.legend()
-        ax.set_xlabel("defect size")
-        ax.set_ylabel("probability density")
-        plt.tight_layout()
-        output_path = Path("pore_plots")
-        output_path.mkdir(exist_ok=True)
-        output_filename = f"pore_{hatch_spacing*1e6:.1f}.png"
-        plt.savefig(output_path / output_filename, dpi=300)
-        plt.close()
-
-    plot_pore_distr()
+    logger.info("plotting pore distribution")
+    output_filename = f"pore_{hatch_spacing*1e6:.1f}.png"
+    plot_defect_distribution(
+        output_filename,
+        sort_defect,
+        (mean_pore, std_pore),
+        lognormal_params,
+        (mean_cvar, err_cvar),
+    )
 
     # renormalization and exponential transform, to compare and inspect values
     mean_lognormal = np.exp(log_mean).item() / 1e6
@@ -397,7 +324,6 @@ def process_raptor_data(raptor_data):
         f"Learning {ANALYZE}."
     )
 
-    # TODO: discuss and refine the data analysis and extreme value statistics
     if ANALYZE == "mean":
         y, yerr = float(mean_pore), float(sem_pore)
     elif ANALYZE == "log_mean":
@@ -412,118 +338,8 @@ def process_raptor_data(raptor_data):
 
 
 # -----------------------------------------------------------------------------
-# STATISTICS UTILITIES
-# -----------------------------------------------------------------------------
-def estimate_lognormal_direct(norm_defect):
-    "Approach 1: directly estimate the parameters using standard formulas bases on log transform"
-    log_norm_defect = np.log(norm_defect)
-    log_mean_defect = np.mean(log_norm_defect)
-    log_std_defect = np.std(log_norm_defect, ddof=1)
-    log_sem_defect = np.sqrt(1.0 / len(norm_defect)) * log_std_defect
-
-    # formula to estimate variance of the sample variance, requires estimate of fourth moment
-    def var_of_sample_var():
-        n = len(norm_defect)
-        coeff_n = (n / (n - 1)) * (n / (n - 2)) * (n / (n - 3))
-        moment4 = coeff_n * np.mean((log_norm_defect - log_mean_defect) ** 4)
-        res = (moment4 - (n - 3) / (n - 1) * log_std_defect**4) / n
-        return res
-
-    # standard error of the variance (sev)
-    log_sev_defect = np.sqrt(var_of_sample_var())
-
-    # this simpler formula is only correct when log(norm_defect) is exactly normally distributed
-    # log_sev_defect = np.sqrt(2.0 / (len(norm_defect) - 1)) * log_std_defect**2
-
-    return (log_mean_defect, log_sem_defect), (log_std_defect, log_sev_defect)
-
-
-def estimate_lognormal_MCMC(norm_defect):
-    # Approach 2: using a lightweight mcmc approach assuming a lognormal underlying distribution
-    # target y - E[µ] in posterior, yerr - sqrt(Var[µ]) in posterior
-    trace = run_metropolis_hastings(
-        norm_defect,
-        iterations=5000,
-        proposal_widths=np.array([1, 1]),
-    )
-    burnin = 1000
-    trace = trace.T[:, burnin:]  # discard burn-in samples
-
-    # extract statistics from MCMC trace
-    log_mean_pore = np.mean(trace[0])
-    log_sem_pore = np.std(trace[0], ddof=1)
-    # square root of the mean variance
-    log_std_pore = np.sqrt(np.mean(trace[1] ** 2))
-    # standard deviation of the variance
-    log_sev_pore = np.std(trace[1] ** 2, ddof=1)
-
-    return (log_mean_pore, log_sem_pore), (log_std_pore, log_sev_pore)
-
-
-def log_prior_lognormal(params):
-    mu, sigma = params
-    if sigma <= 0:
-        return -np.inf  # log(0)
-    mu_prior = st.norm.logpdf(mu, loc=0, scale=10)  # Example prior for mean
-    sigma_prior = st.norm.logpdf(sigma, loc=1, scale=5)  # Example prior for std
-    return mu_prior + sigma_prior
-
-
-def loglikelihood_lognormal(params, data):
-    mu, sigma = params
-    if sigma <= 0:
-        return -np.inf  # log(0)
-    return np.sum(st.lognorm.logpdf(data, s=sigma, scale=np.exp(mu)))
-
-
-def log_posterior_lognormal(params, data):
-    return loglikelihood_lognormal(params, data) + log_prior_lognormal(params)
-
-
-def run_metropolis_hastings(
-    data, iterations=10000, proposal_widths=np.array([1.0, 2.0])
-):
-    # Initial guesses
-    current_params = np.array([1, 1])  # Example initial guess
-    current_log_post = log_posterior_lognormal(current_params, data)
-
-    trace = []
-
-    for i in range(iterations):
-        # Propose new parameters (Random Walk)
-        proposal = current_params + np.random.normal(
-            0, proposal_widths, size=current_params.shape
-        )
-
-        proposal_log_post = log_posterior_lognormal(proposal, data)
-
-        # Acceptance ratio
-        ratio = np.exp((proposal_log_post - current_log_post))
-
-        if np.random.rand() < ratio:
-            current_params = proposal
-            current_log_post = proposal_log_post
-
-        trace.append(current_params)
-
-    return np.array(trace)
-
-
-# -----------------------------------------------------------------------------
 # UTILITIES
 # -----------------------------------------------------------------------------
-def x_to_unit(x):
-    x = np.asarray(x, dtype=float)
-    lo = np.array([b[0] for b in BOUNDS])
-    hi = np.array([b[1] for b in BOUNDS])
-    return (x - lo) / (hi - lo + 1e-12)
-
-
-def x_from_unit(x):
-    x = np.asarray(x, dtype=float)
-    lo = np.array([b[0] for b in BOUNDS])
-    hi = np.array([b[1] for b in BOUNDS])
-    return x * (hi - lo) + lo
 
 
 def get_data_point(x_suggested, mp_interpolator):
@@ -535,107 +351,6 @@ def get_data_point(x_suggested, mp_interpolator):
     )
     y_, yerr_ = process_raptor_data(raptor_data)
     return x_, y_, yerr_, raptor_data
-
-
-# The unlist_list transformer
-def unlist_list(func):
-    def wrapper_func(self, *args):
-        args_np = [np.asarray(y, dtype=float) for y in args]
-        res_np = func(self, *args_np)
-        return [y.tolist() for y in res_np]
-
-    return wrapper_func
-
-
-@dataclass
-class ScalerLog1p:
-    y_prescale: float = 1.0
-    y_postscale: float = 1.0
-
-    @unlist_list
-    def scale(self, y, yerr):
-        y_scale = np.log1p(y / self.y_prescale) / self.y_postscale
-        yerr_scale = yerr / (y + self.y_prescale) / self.y_postscale
-        return y_scale, yerr_scale
-
-    @unlist_list
-    def unscale(self, y_scale, yerr_scale):
-        y = self.y_prescale * np.expm1(self.y_postscale * y_scale)
-        yerr = yerr_scale * (y + self.y_prescale) * self.y_postscale
-        return y, yerr
-
-
-@dataclass
-class ScalerOutputFocus:
-    y_low: float = 0.5
-    y_high: float = 1.5
-    focus: float = 1.0
-
-    def params(self):
-        y_mean = (self.y_low + self.y_high) / 2.0
-        y_diff = (1 / self.focus) * (self.y_high - self.y_low) / 2.0
-        return y_mean, y_diff
-
-    @unlist_list
-    def scale(self, y, yerr):
-        y_mean, y_diff = self.params()
-        y_norm = (y - y_mean) / y_diff
-        yerr_norm = yerr / y_diff
-        y_scale = np.asinh(y_norm)
-        yerr_scale = 1 / np.sqrt(1 + y_norm**2) * yerr_norm
-        return y_scale, yerr_scale
-
-    @unlist_list
-    def unscale(self, y_scale, yerr_scale):
-        y_mean, y_diff = self.params()
-        y_norm = np.sinh(y_scale)
-        yerr_norm = np.sqrt(1 + y_norm**2) * yerr_scale
-        y = y_diff * y_norm + y_mean
-        yerr = y_diff * yerr_norm
-        return y, yerr
-
-
-@dataclass
-class ScalerOutputFocusLog:
-    y_low: float = 0.5
-    y_high: float = 1.5
-    focus: float = 1.0
-
-    def params(self):
-        ly_low = np.log(self.y_low)
-        ly_high = np.log(self.y_high)
-        y_mean = (ly_low + ly_high) / 2.0
-        y_diff = (1 / self.focus) * (ly_high - ly_low) / 2.0
-        return y_mean, y_diff
-
-    @unlist_list
-    def scale(self, y, yerr):
-        logy = np.log(y)
-        logyerr = yerr / y
-        y_mean, y_diff = self.params()
-        y_norm = (logy - y_mean) / y_diff
-        yerr_norm = logyerr / y_diff
-        y_scale = np.asinh(y_norm)
-        yerr_scale = 1 / np.sqrt(1 + y_norm**2) * yerr_norm
-        return y_scale, yerr_scale
-
-    @unlist_list
-    def unscale(self, y_scale, yerr_scale):
-        y_mean, y_diff = self.params()
-        y_norm = np.sinh(y_scale)
-        yerr_norm = np.sqrt(1 + y_norm**2) * yerr_scale
-        logy = y_diff * y_norm + y_mean
-        logyerr = y_diff * yerr_norm
-        y = np.exp(logy)
-        yerr = logyerr * y
-        return y, yerr
-
-
-scaler_reg = {
-    "log1p": ScalerLog1p,
-    "output_focus": ScalerOutputFocus,
-    "output_focus_log": ScalerOutputFocusLog,
-}
 
 
 # -----------------------------------------------------------------------------
@@ -680,7 +395,7 @@ class ActiveLearningOrchestrator:
             pre_to_post_scale_ratio = 0.05
             y_prescale = pre_to_post_scale_ratio * np.max(self.dataset_y)
             y_postscale = np.log1p(1 / pre_to_post_scale_ratio)
-            self.scaler = scaler_reg[scaler](
+            self.scaler = SCALER_REGISTRY[scaler](
                 y_prescale=y_prescale, y_postscale=y_postscale
             )
         elif scaler.startswith("output_focus"):
@@ -690,9 +405,12 @@ class ActiveLearningOrchestrator:
             y_high = max(D_CRIT_LIST)
             # focus is a scaling parameter that allows to zoom in (focus > 1) or zoom out (focus < 1) for the target region
             focus = 2.0
-            self.scaler = scaler_reg[scaler](y_low=y_low, y_high=y_high, focus=focus)
+            self.scaler = SCALER_REGISTRY[scaler](
+                y_low=y_low, y_high=y_high, focus=focus
+            )
 
-        self.dataset_x_unit = x_to_unit(self.dataset_x).tolist()
+        self.input_scaler = InputScaler(bounds=list(BOUNDS))
+        self.dataset_x_unit = self.input_scaler.to_unit(self.dataset_x)
         self.bounds_unit = UNIT_BOUNDS
 
     def assemble_message(
@@ -715,7 +433,7 @@ class ActiveLearningOrchestrator:
             if self.backend == "sklearn":
                 self.kernel = "matern"
                 # nondimensionalized GP lengthscale, on the normalized x data
-                length_scale = 0.2
+                length_scale = 0.5
                 self.kernel_args: dict[str, Any] = {
                     "length_scale": length_scale,
                     "constant_value": prior_variance,
@@ -789,7 +507,7 @@ class ActiveLearningOrchestrator:
                 bounds=self.bounds_unit,
             )
         elif operation == "get_surrogate_values":
-            points_unit = x_to_unit(INITIAL_POINTS_TO_PREDICT).tolist()
+            points_unit = self.input_scaler.to_unit(INITIAL_POINTS_TO_PREDICT)
             payload = DialInputPredictions(
                 workflow_id=self.workflow_id, points_to_predict=points_unit
             )
@@ -867,7 +585,7 @@ class ActiveLearningOrchestrator:
                 print(f"Could not read next point from payload: {error}")
 
             x_suggested_unit = np.array(data).reshape(1, -1)
-            x_suggested = x_from_unit(x_suggested_unit)[0].tolist()
+            x_suggested = self.input_scaler.from_unit(x_suggested_unit)[0]
 
             logger.info(
                 f"Iteration {self.iteration_count}: "
@@ -885,7 +603,7 @@ class ActiveLearningOrchestrator:
 
             # determine the next data (x, y) for the update message
             next_y = [float(new_y), float(new_yerr)]
-            next_x = x_to_unit(new_x).flatten().tolist()
+            next_x = self.input_scaler.to_unit(new_x)
 
             self.dataset_x_unit.append(next_x)
 
