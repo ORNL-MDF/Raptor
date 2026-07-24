@@ -56,18 +56,18 @@ logger = logging.getLogger(__name__)
 LASER_POWER_WATTS = 200.0
 LASER_VELOCITY_M_S = 1.0
 
-BOUNDS = ((70e-6, 140e-6),)
+BOUNDS = ((80e-6, 150e-6),)
 UNIT_BOUNDS = ((0.0, 1.0),)
 NUM_DIMS = len(BOUNDS)
 
 INITIAL_DATA_SIZE = 1
-MAX_ITERATIONS = 40
+MAX_ITERATIONS = 15
 
 SEED = 42
 
-VOXEL_RESOLUTION_M = 5.0e-6
+VOXEL_RESOLUTION_M = 5.0e-6  # reference 5.0e-6
 RVE_LENGTH_M = 1e-3
-QUERY_VOLUME_MM3 = 5.0  # decrease query_volume_mm3 from 10 to speed up
+QUERY_VOLUME_MM3 = 1.0  # decrease query_volume_mm3 from 10 to speed up
 
 MIN_LEN_DEFECTS = 50
 
@@ -152,7 +152,7 @@ def run_raptor(
         layer_thickness_m,
         67.0,
         max(rve_max_point - rve_min_point),
-        0,
+        10,
     )
     scan_path_builder.generate_layers()
     path_vectors = scan_path_builder.process_vectors()
@@ -162,13 +162,15 @@ def run_raptor(
         mp_stats["width_mean"],
         mp_stats["width_std"],
         LASER_VELOCITY_M_S,
-        VOXEL_RESOLUTION_M
+        VOXEL_RESOLUTION_M,
     )
 
     length_scale = 10.0 * mp_stats["depth_mean"]
     melt_pool_filter.add_effect("melt_pool", [length_scale, None, 1])
     melt_pool_filter.initialize()
-    width_data = melt_pool_filter.generate_fluctuations(1, melt_pool_filter.n_points, melt_pool_filter.t)
+    width_data = melt_pool_filter.generate_fluctuations(
+        1, melt_pool_filter.n_points, melt_pool_filter.t
+    )
 
     ellipse = 2
     parabola = 1
@@ -244,7 +246,7 @@ def process_raptor_data(raptor_data):
         random.seed()  # explicitly call rng seeding to make sure this is truly random
         n_extra_defects = min_len_defects - len(combined_defects)
         mu_subgrid = voxel_resolution_m / 2
-        sigma_subgrid = voxel_resolution_m / 4
+        sigma_subgrid = voxel_resolution_m / 6
         more_defects = np.random.lognormal(
             np.log(mu_subgrid), sigma_subgrid / mu_subgrid, n_extra_defects
         ).tolist()
@@ -301,6 +303,7 @@ def process_raptor_data(raptor_data):
             log_samples = log_mu + log_sigma * np.random.randn(n_defects)
             yield np.exp(log_samples)
 
+    # set the level in (0.0, 1.0) for the estimation of the conditional value at risk (CVAR)
     cvar_level = 0.2
 
     def bootstrap_cvar(n_defects=1000, max_bootstrap=1000):
@@ -592,9 +595,46 @@ class ScalerOutputFocus:
         return y, yerr
 
 
+@dataclass
+class ScalerOutputFocusLog:
+    y_low: float = 0.5
+    y_high: float = 1.5
+    focus: float = 1.0
+
+    def params(self):
+        ly_low = np.log(self.y_low)
+        ly_high = np.log(self.y_high)
+        y_mean = (ly_low + ly_high) / 2.0
+        y_diff = (1 / self.focus) * (ly_high - ly_low) / 2.0
+        return y_mean, y_diff
+
+    @unlist_list
+    def scale(self, y, yerr):
+        logy = np.log(y)
+        logyerr = yerr / y
+        y_mean, y_diff = self.params()
+        y_norm = (logy - y_mean) / y_diff
+        yerr_norm = logyerr / y_diff
+        y_scale = np.asinh(y_norm)
+        yerr_scale = 1 / np.sqrt(1 + y_norm**2) * yerr_norm
+        return y_scale, yerr_scale
+
+    @unlist_list
+    def unscale(self, y_scale, yerr_scale):
+        y_mean, y_diff = self.params()
+        y_norm = np.sinh(y_scale)
+        yerr_norm = np.sqrt(1 + y_norm**2) * yerr_scale
+        logy = y_diff * y_norm + y_mean
+        logyerr = y_diff * yerr_norm
+        y = np.exp(logy)
+        yerr = logyerr * y
+        return y, yerr
+
+
 scaler_reg = {
     "log1p": ScalerLog1p,
     "output_focus": ScalerOutputFocus,
+    "output_focus_log": ScalerOutputFocusLog,
 }
 
 
@@ -633,7 +673,7 @@ class ActiveLearningOrchestrator:
             list(tuple) for tuple in zip(*dataset_statistics)
         ]
 
-        scaler = "output_focus"
+        scaler = "output_focus_log"
         if scaler == "lop1p":
             # scaling factor for output data transformation, pre-scaling, and post-scaling after log transform
             # crucially, scling the outputs also scales the error bar, which influences the acquisition strategy
@@ -643,7 +683,7 @@ class ActiveLearningOrchestrator:
             self.scaler = scaler_reg[scaler](
                 y_prescale=y_prescale, y_postscale=y_postscale
             )
-        elif scaler == "output_focus":
+        elif scaler.startswith("output_focus"):
             D_CRIT_LIST = [10e-6, 20e-6, 40e-6]
             # [y_low, y_high] roghly outlines the "interesting" output region
             y_low = min(D_CRIT_LIST)
