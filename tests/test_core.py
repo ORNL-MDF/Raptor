@@ -14,11 +14,16 @@ import numpy as np
 import pytest
 
 from raptor.core import (
-    compute_distance_to_boundary,
-    compute_melt_mask,
-    compute_melt_mask_implicit,
+    _spectral_approximation_error_bound,
+    build_spectral_tables,
+    build_spatial_index,
+    classify_horizontal_melt_and_boundary,
+    conservative_vertical_interval,
+    compute_melt_mask_grid,
+    evaluate_spectra_fast,
+    evaluate_spectral_table,
 )
-from raptor.structures import MeltPool, PathVector
+from raptor.structures import Grid, MeltPool, PathVector
 
 
 RESOLUTION = 5.0e-6
@@ -58,74 +63,243 @@ def path_vector():
     return vector
 
 
-def distance(y, z, height_shape=2.0, depth_shape=2.0):
-    return compute_distance_to_boundary(
-        y,
-        z,
-        WIDTH,
-        HEIGHT,
-        DEPTH,
-        height_shape,
-        depth_shape,
-        RESOLUTION,
+def radial_signed_distance(y, z, shape_factor):
+    """Independent bisection reference for the radial boundary distance."""
+    radius = np.hypot(y, z)
+    half_width = WIDTH / 2.0
+    if radius < RESOLUTION:
+        return -min(half_width, HEIGHT, DEPTH)
+    vertical_scale = HEIGHT if z >= 0.0 else DEPTH
+    direction_y = y / radius
+    direction_z = abs(z) / radius
+    lower = 0.0
+    upper = max(half_width, vertical_scale)
+    while (upper * direction_y / half_width) ** 2 + (
+        upper * direction_z / vertical_scale
+    ) ** shape_factor < 1.0:
+        upper *= 2.0
+    for _ in range(80):
+        midpoint = 0.5 * (lower + upper)
+        value = (midpoint * direction_y / half_width) ** 2 + (
+            midpoint * direction_z / vertical_scale
+        ) ** shape_factor
+        if value < 1.0:
+            lower = midpoint
+        else:
+            upper = midpoint
+    return radius - 0.5 * (lower + upper)
+
+
+def classify_reference(y, z, shape_factor):
+    signed_distance = radial_signed_distance(y, z, shape_factor)
+    return (
+        signed_distance < 1.0e-12,
+        abs(signed_distance) - RESOLUTION <= 1.0e-12,
     )
 
 
-class TestDistanceToBoundary:
-    def test_center_is_inside(self):
-        result = distance(0.0, 0.0)
-        assert np.isfinite(result)
-        assert result == -min(WIDTH / 2.0, HEIGHT, DEPTH)
+def evaluate_spectra_reference(
+    time,
+    vector_index,
+    width_phases,
+    depth_phases,
+    height_phases,
+    width_amplitudes,
+    width_frequencies,
+    depth_amplitudes,
+    depth_frequencies,
+    height_amplitudes,
+    height_frequencies,
+):
+    result = []
+    for phases, amplitudes, frequencies in (
+        (width_phases, width_amplitudes, width_frequencies),
+        (depth_phases, depth_amplitudes, depth_frequencies),
+        (height_phases, height_amplitudes, height_frequencies),
+    ):
+        angles = 2.0 * np.pi * time * frequencies + phases[vector_index]
+        result.append(float(np.sum(amplitudes * np.cos(angles))))
+    return tuple(result)
 
+
+class TestOptimizedGeometry:
     @pytest.mark.parametrize(
         ("y", "z"),
         [
+            (0.0, 0.0),
             (WIDTH / 2.0, 0.0),
             (-WIDTH / 2.0, 0.0),
             (0.0, HEIGHT),
             (0.0, -DEPTH),
         ],
     )
-    def test_axis_boundaries_have_zero_distance(self, y, z):
-        assert distance(y, z) == pytest.approx(0.0, abs=1.0e-15)
+    def test_axis_and_center_classification(self, y, z):
+        expected = classify_reference(y, z, 2.0)
+        half_width = WIDTH / 2.0
+        actual = classify_horizontal_melt_and_boundary(
+            y * y,
+            (y / half_width) ** 2,
+            half_width,
+            z,
+            HEIGHT,
+            DEPTH,
+            2.0,
+            2.0,
+            RESOLUTION,
+        )
+        assert actual == expected
 
+    @pytest.mark.parametrize("shape_factor", [0.5, 1.0, 2.0, 10.0])
+    def test_classifier_matches_radial_reference(self, shape_factor):
+        rng = np.random.default_rng(123)
+        for y, z in rng.uniform(-250.0e-6, 250.0e-6, size=(200, 2)):
+            expected = classify_reference(y, z, shape_factor)
+            a = WIDTH / 2.0
+            horizontal = classify_horizontal_melt_and_boundary(
+                y * y,
+                (y / a) ** 2,
+                a,
+                z,
+                HEIGHT,
+                DEPTH,
+                shape_factor,
+                shape_factor,
+                RESOLUTION,
+            )
+            assert horizontal == expected
+
+    @pytest.mark.parametrize("shape_factor", [0.5, 1.0, 2.0, 10.0])
+    def test_conservative_interval_never_excludes_interactions(
+        self, shape_factor
+    ):
+        rng = np.random.default_rng(789)
+        for y, z in rng.uniform(-250.0e-6, 250.0e-6, size=(1000, 2)):
+            is_melted, is_boundary = classify_reference(y, z, shape_factor)
+            status, lower, upper = conservative_vertical_interval(
+                y,
+                WIDTH,
+                HEIGHT,
+                DEPTH,
+                shape_factor,
+                shape_factor,
+                RESOLUTION,
+            )
+            if is_melted or is_boundary:
+                assert status == 1
+                assert lower <= z <= upper
+
+
+class TestPathVectorValidation:
     @pytest.mark.parametrize(
-        ("y", "z"),
-        [(WIDTH / 4.0, 0.0), (0.0, HEIGHT / 2.0), (0.0, -DEPTH / 2.0)],
+        ("start", "end", "start_time", "end_time"),
+        [
+            (np.zeros(2), np.zeros(3), 0.0, 1.0),
+            (np.array([np.nan, 0.0, 0.0]), np.zeros(3), 0.0, 1.0),
+            (np.zeros(3), np.zeros(3), 2.0, 1.0),
+        ],
     )
-    def test_interior_points_are_negative(self, y, z):
-        assert distance(y, z) < 0.0
+    def test_invalid_path_vectors_are_rejected(
+        self, start, end, start_time, end_time
+    ):
+        with pytest.raises(ValueError):
+            PathVector(start, end, start_time, end_time)
 
-    @pytest.mark.parametrize(
-        ("y", "z"),
-        [(WIDTH, 0.0), (0.0, 2.0 * HEIGHT), (0.0, -2.0 * DEPTH)],
-    )
-    def test_exterior_points_are_positive(self, y, z):
-        assert distance(y, z) > 0.0
 
-    def test_width_symmetry(self):
-        positive = distance(40.0e-6, 20.0e-6)
-        negative = distance(-40.0e-6, 20.0e-6)
-        assert positive == pytest.approx(negative)
+class TestFastSpectralMath:
+    def test_fast_path_respects_error_budget_and_rejects_unsafe_input(self):
+        amplitudes = np.array(
+            [148.0e-6, 12.0e-6, -4.0e-6, 2.0e-6],
+            dtype=np.float64,
+        )
+        frequencies = np.array([0.0, 3100.0, 6200.0, 9300.0])
+        phases = np.array([[0.0, 0.7, 2.1, 5.4]], dtype=np.float64)
+        duration = 1.0e-3
+        bound = _spectral_approximation_error_bound(
+            amplitudes, frequencies, duration
+        )
+        maximum_error = 0.0
+        for time in np.linspace(0.0, duration, 201):
+            exact, _, _ = evaluate_spectra_reference(
+                time,
+                0,
+                phases,
+                phases,
+                phases,
+                amplitudes,
+                frequencies,
+                amplitudes,
+                frequencies,
+                amplitudes,
+                frequencies,
+            )
+            approximate, _, _ = evaluate_spectra_fast(
+                time,
+                0,
+                phases.astype(np.float32),
+                phases.astype(np.float32),
+                phases.astype(np.float32),
+                amplitudes.astype(np.float32),
+                frequencies.astype(np.float32),
+                amplitudes.astype(np.float32),
+                frequencies.astype(np.float32),
+                amplitudes.astype(np.float32),
+                frequencies.astype(np.float32),
+            )
+            maximum_error = max(maximum_error, abs(exact - approximate))
+        assert maximum_error <= bound
+        assert bound <= RESOLUTION * 0.25
+        unsafe_bound = _spectral_approximation_error_bound(
+            np.array([1.0e-3]),
+            np.array([1.0e12]),
+            1.0,
+        )
+        assert unsafe_bound > RESOLUTION * 0.25
 
-    def test_positive_and_negative_z_use_different_dimensions(self):
-        assert distance(0.0, HEIGHT) == pytest.approx(0.0, abs=1.0e-15)
-        assert distance(0.0, -DEPTH) == pytest.approx(0.0, abs=1.0e-15)
-
-    def test_parabolic_shape(self):
-        y = 0.8 * WIDTH / 2.0
-        z = 0.5 * HEIGHT
-        assert distance(y, z, height_shape=1.0) > 0.0
-
-    def test_elliptical_shape(self):
-        y = 0.8 * WIDTH / 2.0
-        z = 0.5 * HEIGHT
-        assert distance(y, z, height_shape=2.0) < 0.0
-
-    def test_bell_shape(self):
-        y = 0.5 * WIDTH / 2.0
-        z = 0.64 * HEIGHT
-        assert distance(y, z, height_shape=0.5) > 0.0
+        remaining_error = RESOLUTION * 0.25 - bound
+        curvature = np.sum(
+            np.abs(amplitudes) * (2.0 * np.pi * frequencies) ** 2
+        )
+        time_step = np.sqrt(8.0 * remaining_error / curvature)
+        point_count = int(np.ceil(duration / time_step)) + 1
+        offsets = np.array([0, point_count], dtype=np.int64)
+        phases32 = phases.astype(np.float32)
+        amplitudes32 = amplitudes.astype(np.float32)
+        frequencies32 = frequencies.astype(np.float32)
+        table = build_spectral_tables(
+            np.array([duration]),
+            offsets,
+            phases32,
+            phases32,
+            phases32,
+            amplitudes32,
+            frequencies32,
+            amplitudes32,
+            frequencies32,
+            amplitudes32,
+            frequencies32,
+        )
+        maximum_table_error = 0.0
+        for fraction in np.linspace(0.0, 1.0, 201):
+            exact, _, _ = evaluate_spectra_reference(
+                fraction * duration,
+                0,
+                phases,
+                phases,
+                phases,
+                amplitudes,
+                frequencies,
+                amplitudes,
+                frequencies,
+                amplitudes,
+                frequencies,
+            )
+            interpolated, _, _ = evaluate_spectral_table(
+                fraction, 0, offsets, table
+            )
+            maximum_table_error = max(
+                maximum_table_error, abs(exact - interpolated)
+            )
+        assert maximum_table_error <= RESOLUTION * 0.25
 
 
 def prepare_vector(vector, melt_pool):
@@ -133,112 +307,233 @@ def prepare_vector(vector, melt_pool):
     return vector
 
 
-def unpack_kernel_arguments(voxels, melt_pool, vectors):
-    return (
-        voxels,
-        RESOLUTION,
-        np.zeros(voxels.shape[0], dtype=np.int8),
-        np.array([v.start_point for v in vectors]),
-        np.array([v.end_point for v in vectors]),
-        np.array([v.e0 for v in vectors]),
-        np.array([v.e1 for v in vectors]),
-        np.array([v.e2 for v in vectors]),
-        np.array([v.L0 for v in vectors]),
-        np.array([v.L1 for v in vectors]),
-        np.array([v.L2 for v in vectors]),
-        np.array([v.start_time for v in vectors]),
-        np.array([v.end_time for v in vectors]),
-        np.array([v.AABB for v in vectors]),
-        np.array([v.phases for v in vectors]),
-        np.array([v.centroid for v in vectors]),
-        np.array([v.distance for v in vectors]),
-        melt_pool.width_oscillations[:, 0],
-        melt_pool.width_oscillations[:, 1],
-        melt_pool.depth_oscillations[:, 0],
-        melt_pool.depth_oscillations[:, 1],
-        melt_pool.height_oscillations[:, 0],
-        melt_pool.height_oscillations[:, 1],
-        melt_pool.height_shape_factor,
-        melt_pool.depth_shape_factor,
-    )
-
-
 class TestComputeMeltMask:
-    def test_center_boundary_and_outside_labels(self, constant_melt_pool, path_vector):
-        prepare_vector(path_vector, constant_melt_pool)
-        voxels = np.array(
-            [
-                [0.5e-3, 0.0, 0.0],
-                [0.5e-3, WIDTH / 2.0, 0.0],
-                [0.5e-3, 2.0 * WIDTH, 0.0],
-            ],
-            dtype=np.float64,
-        )
-
-        result = compute_melt_mask(
-            voxels, RESOLUTION, constant_melt_pool, [path_vector]
-        )
-
-        np.testing.assert_array_equal(result, np.array([1, 2, 0], dtype=np.int8))
-
-    def test_output_shape_and_dtype(self, constant_melt_pool, path_vector):
-        prepare_vector(path_vector, constant_melt_pool)
-        voxels = np.zeros((7, 3), dtype=np.float64)
-        result = compute_melt_mask(
-            voxels, RESOLUTION, constant_melt_pool, [path_vector]
-        )
-        assert result.shape == (7,)
-        assert result.dtype == np.int8
-
-    def test_aabb_culls_distant_voxel(self, constant_melt_pool, path_vector):
-        prepare_vector(path_vector, constant_melt_pool)
-        voxel = np.array([[10.0, 10.0, 10.0]], dtype=np.float64)
-        result = compute_melt_mask(voxel, RESOLUTION, constant_melt_pool, [path_vector])
-        assert result[0] == 0
-
-    def test_overlapping_boundaries_are_intersections(
+    def test_optimized_grid_kernel_and_orientation_contract(
         self, constant_melt_pool, path_vector
     ):
-        duplicate = PathVector(
-            path_vector.start_point.copy(),
-            path_vector.end_point.copy(),
-            path_vector.start_time,
-            path_vector.end_time,
-        )
-        duplicate.set_coordinate_frame()
-        vectors = [path_vector, duplicate]
-        for vector in vectors:
-            prepare_vector(vector, constant_melt_pool)
-        voxel = np.array([[0.5e-3, WIDTH / 2.0, 0.0]], dtype=np.float64)
-
-        result = compute_melt_mask(voxel, RESOLUTION, constant_melt_pool, vectors)
-
-        assert result[0] == 3
-
-    def test_zero_length_vector(self, constant_melt_pool):
-        point = np.array([0.5e-3, 0.0, 0.0], dtype=np.float64)
-        vector = PathVector(point.copy(), point.copy(), 0.0, 0.0)
-        vector.set_coordinate_frame()
-        prepare_vector(vector, constant_melt_pool)
-
-        result = compute_melt_mask(
-            point.reshape(1, 3), RESOLUTION, constant_melt_pool, [vector]
-        )
-
-        assert result[0] == 1
-
-    def test_implicit_kernel_matches_wrapper(self, constant_melt_pool, path_vector):
         prepare_vector(path_vector, constant_melt_pool)
-        voxels = np.array(
-            [[0.25e-3, 0.0, 0.0], [0.75e-3, WIDTH / 2.0, 0.0]],
-            dtype=np.float64,
+        grid = Grid(
+            RESOLUTION,
+            bound_box=np.array([[0.0, 0.0, 0.0], [20.0e-6, 200.0e-6, 10.0e-6]]),
         )
-        expected = compute_melt_mask(
-            voxels, RESOLUTION, constant_melt_pool, [path_vector]
+        active, shape, tile_size, offsets, indices = build_spatial_index(
+            grid.origin, grid.shape, grid.resolution, [path_vector]
         )
-
-        actual = compute_melt_mask_implicit(
-            *unpack_kernel_arguments(voxels, constant_melt_pool, [path_vector])
-        )
-
+        actual = compute_melt_mask_grid(
+            grid.origin,
+            grid.shape,
+            grid.resolution,
+            constant_melt_pool,
+            active,
+            tile_size=tile_size,
+            candidate_offsets=offsets,
+            candidate_indices=indices,
+        ).reshape(grid.shape)
+        expected = np.zeros(grid.shape, dtype=np.int8)
+        half_width = float(np.float32(WIDTH)) / 2.0
+        height = float(np.float32(HEIGHT))
+        depth = float(np.float32(DEPTH))
+        for voxel_y in range(grid.shape[1]):
+            y = grid.origin[1] + voxel_y * grid.resolution
+            for voxel_z in range(grid.shape[2]):
+                z = grid.origin[2] + voxel_z * grid.resolution
+                melted, boundary = classify_horizontal_melt_and_boundary(
+                    y * y,
+                    (y / half_width) ** 2,
+                    half_width,
+                    z,
+                    height,
+                    depth,
+                    2.0,
+                    2.0,
+                    RESOLUTION,
+                )
+                expected[:, voxel_y, voxel_z] = 2 if boundary else int(melted)
         np.testing.assert_array_equal(actual, expected)
+        assert actual.dtype == np.int8
+
+        sloped_vector = PathVector(
+            np.array([0.0, 0.0, 0.0]),
+            np.array([20.0e-6, 0.0, 10.0e-6]),
+            0.0,
+            1.0e-3,
+        )
+        sloped_vector.set_coordinate_frame()
+        prepare_vector(sloped_vector, constant_melt_pool)
+        active, shape, tile_size, offsets, indices = build_spatial_index(
+            grid.origin, grid.shape, grid.resolution, [sloped_vector]
+        )
+        with pytest.raises(ValueError, match="horizontal path vectors"):
+            compute_melt_mask_grid(
+                grid.origin,
+                grid.shape,
+                grid.resolution,
+                constant_melt_pool,
+                active,
+                tile_size=tile_size,
+                candidate_offsets=offsets,
+                candidate_indices=indices,
+            )
+
+    def test_tile_size_changes_index_only(
+        self,
+        constant_melt_pool,
+        path_vector,
+    ):
+        prepare_vector(path_vector, constant_melt_pool)
+        grid = Grid(
+            RESOLUTION,
+            bound_box=np.array(
+                [[0.0, -100.0e-6, -10.0e-6], [50.0e-6, 100.0e-6, 10.0e-6]]
+            ),
+        )
+        reference = None
+        for requested_tile_size in (1, 7, 128):
+            active, _, tile_size, offsets, indices = build_spatial_index(
+                grid.origin,
+                grid.shape,
+                grid.resolution,
+                [path_vector],
+                tile_size=requested_tile_size,
+            )
+            actual = compute_melt_mask_grid(
+                grid.origin,
+                grid.shape,
+                grid.resolution,
+                constant_melt_pool,
+                active,
+                tile_size=tile_size,
+                candidate_offsets=offsets,
+                candidate_indices=indices,
+            )
+            if reference is None:
+                reference = actual
+            else:
+                np.testing.assert_array_equal(actual, reference)
+
+    def test_spectral_controls_change_density_and_enforce_memory_limit(
+        self,
+        path_vector,
+    ):
+        width = np.array([[WIDTH, 0.0, 0.0], [10.0e-6, 1000.0, 0.2]])
+        depth = np.array([[DEPTH, 0.0, 0.0], [5.0e-6, 1000.0, 0.3]])
+        height = np.array([[HEIGHT, 0.0, 0.0], [5.0e-6, 1000.0, 0.4]])
+        melt_pool = MeltPool(
+            width,
+            depth,
+            height,
+            WIDTH,
+            DEPTH,
+            HEIGHT,
+            2.0,
+            2.0,
+            2.0,
+            False,
+        )
+        prepare_vector(path_vector, melt_pool)
+        grid = Grid(
+            RESOLUTION,
+            bound_box=np.array(
+                [[0.0, -20.0e-6, 0.0], [20.0e-6, 20.0e-6, 10.0e-6]]
+            ),
+        )
+        active, _, tile_size, offsets, indices = build_spatial_index(
+            grid.origin,
+            grid.shape,
+            grid.resolution,
+            [path_vector],
+        )
+
+        diagnostics = {}
+        compute_melt_mask_grid(
+            grid.origin,
+            grid.shape,
+            grid.resolution,
+            melt_pool,
+            active,
+            tile_size=tile_size,
+            candidate_offsets=offsets,
+            candidate_indices=indices,
+            spectral_error_fraction=0.5,
+            diagnostics=diagnostics,
+        )
+        loose_points = diagnostics["spectral_table_points"]
+        loose_bytes = diagnostics["spectral_table_bytes"]
+
+        compute_melt_mask_grid(
+            grid.origin,
+            grid.shape,
+            grid.resolution,
+            melt_pool,
+            active,
+            tile_size=tile_size,
+            candidate_offsets=offsets,
+            candidate_indices=indices,
+            spectral_error_fraction=0.125,
+            diagnostics=diagnostics,
+        )
+        assert diagnostics["spectral_table_points"] > loose_points
+
+        with pytest.raises(MemoryError, match="spectral table"):
+            compute_melt_mask_grid(
+                grid.origin,
+                grid.shape,
+                grid.resolution,
+                melt_pool,
+                active,
+                tile_size=tile_size,
+                candidate_offsets=offsets,
+                candidate_indices=indices,
+                spectral_error_fraction=0.5,
+                max_spectral_table_bytes=loose_bytes - 1,
+            )
+
+    def test_spatial_index_retains_vector_whose_melt_envelope_reaches_grid(
+        self, constant_melt_pool
+    ):
+        near = PathVector(
+            np.array([0.0, 120.0e-6, 0.0]),
+            np.array([1.0e-3, 120.0e-6, 0.0]),
+            0.0,
+            1.0,
+        )
+        far = PathVector(
+            np.array([0.0, 1.0e-3, 0.0]),
+            np.array([1.0e-3, 1.0e-3, 0.0]),
+            0.0,
+            1.0,
+        )
+        for vector in (near, far):
+            vector.set_coordinate_frame()
+            vector.set_melt_pool_properties(constant_melt_pool)
+        active, *_ = build_spatial_index(
+            np.zeros(3),
+            (101, 21, 21),
+            RESOLUTION,
+            [near, far],
+        )
+        assert near in active
+        assert far not in active
+
+    def test_supplied_dimension_phases_remain_independent(self):
+        width = np.array([[WIDTH, 0.0, 0.1], [1.0e-6, 1.0, 0.2]])
+        depth = np.array([[DEPTH, 0.0, 0.3]])
+        height = np.array([[HEIGHT, 0.0, 0.4], [1.0e-6, 2.0, 0.5]])
+        melt_pool = MeltPool(
+            width,
+            depth,
+            height,
+            WIDTH,
+            DEPTH,
+            HEIGHT,
+            2.0,
+            2.0,
+            2.0,
+            False,
+        )
+        vector = PathVector(np.zeros(3), np.ones(3), 0.0, 1.0)
+        vector.set_coordinate_frame()
+        vector.set_melt_pool_properties(melt_pool)
+        np.testing.assert_array_equal(vector.width_phases, width[:, 2])
+        np.testing.assert_array_equal(vector.depth_phases, depth[:, 2])
+        np.testing.assert_array_equal(vector.height_phases, height[:, 2])

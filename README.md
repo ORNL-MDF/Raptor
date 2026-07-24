@@ -4,6 +4,10 @@
 
 Raptor is a Python-based simulation tool for estimating porosity-related defects in Laser Powder Bed Fusion (LPBF) additive manufacturing processes. It uses a computationally efficient geometric approach to model the dynamic melt pool and identify regions of unmelted material, which correspond to lack-of-fusion pores. The core of Raptor is a geometric model of the melt pool cross-section whose dimensions (width, depth, and height) oscillate over time. By analyzing the volume swept by this dynamic melt pool along the laser scan paths, Raptor generates a 3D map of the final part's porosity.
 
+Journal-ready algorithm, numerical-method, optimization, validation, and
+scaling documentation is available in the
+[`docs/` directory](https://github.com/ORNL-MDF/Raptor/tree/main/docs).
+
 ## License
 
 This project is licensed under the BSD 3-Clause [License](LICENSE).
@@ -25,7 +29,7 @@ This project is licensed under the BSD 3-Clause [License](LICENSE).
 *  **Melt Mask Calculation**: The core of the simulation iterates through each voxel in the domain. For each scan vector that passes near the voxel, it calculates the instantaneous melt pool shape and determines the voxel state. The voxel is either unmelted (0), on the interior of the melt pool (1), on the boundary of the melt pool (2), or at an intersection of melt pool boundaries (3). The voxel state updates dynamically as the scan vectors that interact with it successively melt / interact with it on the melt pool boundary. The outcome of this process is a simulated volume of overlapping melt pools, flagging melted voxels, boundary voxels, intersection voxels, and voxels that make up the defect structure. The core geometry computations are executed with a high-performance parallel kernel, Just-In-Time (JIT) compiled with Numba. This enables the rapid analysis of large, industrially-relevant domains.
 *  **Porosity Prediction**: Any voxel that is not melted by the end of the simulation is flagged as porosity.
 *  **Boundary Tracking**: Voxels that are close to local melt pool boundaries are flagged as boundaries.
-*  **Intersection Tracking**: Voxels that are incident with two or more boundaries are flagged as intersection points.
+*  **Intersection Tracking**: A boundary update applied to a voxel already carrying a boundary or intersection code is flagged as an intersection point.
 *  **Analysis and Output**: The final 3D volume is saved in the binary VTK ImageData (`.vti`) format. The morphological characteristics (e.g., volume, surface area, equivalent diameter) of contiguous pore structures can be quantified using the `scikit-image` library, and saved to a `.csv` file.
 
 <figure style="text-align:center;">
@@ -41,9 +45,10 @@ This project is licensed under the BSD 3-Clause [License](LICENSE).
 
 ## Installation
 
-Raptor requires requires Python 3 (tested with Python 3.8+). The following Python packages are necessary:
+Raptor requires Python 3.10 or newer. The following Python packages are installed
+with the package:
 ```bash
-    numpy, numba, pyyaml, vtk, scikit-image, pandas, pyvista
+    numpy, numba, scipy, matplotlib, pyyaml, vtk, scikit-image, pandas, pyvista
 ```
 
 *   **NumPy**: For numerical operations and array manipulation.
@@ -54,9 +59,58 @@ Raptor requires requires Python 3 (tested with Python 3.8+). The following Pytho
 *   **pandas**: For writing morphology information to .csv
 *   **pyvista**: For visualization of `.vti` results.
 
-You can install all dependencies and Raptor itself by running ```pip install .``` in the cloned Raptor directory.
+You can install all runtime dependencies and Raptor itself by running
+`python -m pip install .` in the cloned Raptor directory. Contributors can
+install the development checks with
+`python -m pip install -e ".[test,dev]"`.
 
 It's highly recommended to use a virtual environment (e.g., `venv` or `conda`) to manage these dependencies.
+
+### Numba cache and cold-start setup
+
+Raptor is a Python package and does not require the user to build a C/C++
+extension. Its performance-critical CPU kernels are compiled by Numba when
+they are first used and then cached. For development, use an editable
+installation so the imported source and its cache identity remain stable:
+
+```bash
+python -m pip install -e .
+```
+
+For containers, batch jobs, or compute nodes, select a persistent directory
+and precompile the production signatures before launching simulations:
+
+```bash
+export NUMBA_CACHE_DIR=/path/to/persistent/raptor-numba-cache
+raptor-warm-cache --cache-dir "$NUMBA_CACHE_DIR"
+```
+
+Use a separate cache for each Python/Numba version and CPU model. Cache warming
+moves compilation out of the first simulation; it does not change the
+numerical result. The optimized CPU kernel operates on horizontal scan vectors
+and reports a clear error if a different vector orientation is supplied.
+
+### Run the synthetic example
+
+From a fresh clone, the complete installation, precompilation, and example
+workflow is:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -e .
+export NUMBA_CACHE_DIR="$PWD/.numba-cache"
+raptor-warm-cache --cache-dir "$NUMBA_CACHE_DIR"
+cd examples/synthetic_api_example
+python run_synthetic_rve.py
+```
+
+The cache-warming command is optional: without it, the first simulation
+compiles the kernels automatically. The synthetic example contains about one
+billion voxels, uses approximately 1.35 GiB of peak working memory for the
+melt-mask calculation, and writes `rve.vti` plus `rve_morphology.csv` in the
+example directory. Its elapsed time depends strongly on CPU core count, memory
+bandwidth, and whether the Numba cache is warm.
 
 ## Usage
 
@@ -102,6 +156,10 @@ parameters:
   layer_height: 5.0e-5      # Layer height in meters
   voxel_resolution: 5.0e-6  # Voxel resolution in meters
   enable_random_segment_phase: true # Use random phases for melt pool oscillations per vector
+  random_seed: 42            # Optional reproducible segment phases
+  tile_width: null           # Optional physical tile width in meters
+  spectral_error_fraction: 0.25
+  max_spectral_table_bytes: 268435456
 
 # Melt pool dimension data. Can be 'time_series' or 'spectral_components'.
 melt_pool_data:
@@ -165,6 +223,8 @@ output:
 * **Melt Pool Data Files**: These files provide the data for the `melt_pool_data` section of the config.
    *   If `type: "time_series"`, the file should be a two-column text or CSV file: `[time, value]`.
    *   If `type: "spectral_components"`, the file should be a three-column text or CSV file: `[amplitude, frequency, phase]`.
+   *   Each dimension must contain finite values, use a positive scale and shape factor, begin with a positive zero-frequency component, and evaluate to positive physical dimensions. Signed coefficients are normalized to an equivalent shifted-phase form and are included conservatively when constructing the interaction envelope.
+   *   The transverse width exponent is fixed at `2.0`; depth and height may use other positive shape factors.
 
 ### 2. Python Library (API)
 
@@ -239,7 +299,7 @@ depth_scale = 0.8
 height_scale = 0.4
 
 # assign shape to melt pool and cap (1 = parabola, 2 = ellipse)
-width_shape = 2  # placeholder
+width_shape = 2  # The transverse exponent is fixed at two.
 height_shape = 1
 depth_shape = 1
 
@@ -263,11 +323,28 @@ porosity = compute_porosity(
     grid,
     path_vectors,
     melt_pool,
+    # Optional numerical and resource policies:
+    spectral_error_fraction=0.25,
+    max_spectral_table_bytes=256 * 1024**2,
+    # None uses the automatic tile heuristic.
+    tile_width=None,
 )
 ```
 
+`spectral_error_fraction` bounds the independent width, depth, and height
+spectral-table errors relative to the voxel spacing. Smaller values construct
+denser tables and can be rejected when the guarded Float32 cosine error alone
+exceeds the requested tolerance. `max_spectral_table_bytes=None` removes the
+table-memory limit. `tile_width` is specified in metres and affects spatial
+indexing performance only; an explicit value overrides the automatic
+80-micrometre target and its 16-voxel minimum. These keyword-only controls do
+not create additional Numba signatures.
+
 #### Step 5:  Write Results to a VTK File
-Use the write_vtk helper function to save the resulting porosity NumPy array to a `.vti` file for visualization in tools like ParaView. Note that this `.vti` will contain 0 for the voxels that are melted, and 1 for unmelted voxels. Paraview's contour feature can be used to isolate the defects within the RVE.
+Use the write_vtk helper function to save the resulting porosity NumPy array to
+a `.vti` file for visualization in tools like ParaView. The phase codes are
+0 for defects, 1 for melted interiors, 2 for boundaries, and 3 for repeated
+boundary interactions. ParaView's threshold feature can isolate any phase.
 
 ```python
 from raptor.api import write_vtk
@@ -287,7 +364,10 @@ morphology = compute_morphology(porosity, voxel_resolution, ['area', 'equivalent
 write_morphology(morphology, "rve_morphology.csv")
 ```
 #### Step 7:  Visualize the Output
-Optionally use the `visualize` function to open an interactive window via `pyvista`. To perform more advanced visualizations, the output `.vti` file needs to be contoured to isolate the unmelted voxels (value 1) from the melted voxels (value 0). This contouring is automatically performed in `visualize`. The default scaling converts meters to microns for cleaner labeling in the interactive plot, but the scaling argument can be user-assigned.
+Optionally use the `visualize` function to open an interactive window via
+`pyvista`. The helper thresholds phase-zero defect voxels automatically. The
+VTK direction matrix preserves the physical Raptor axes without a full array
+transpose.
 
 ```python
 from raptor.api import visualize

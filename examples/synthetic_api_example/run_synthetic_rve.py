@@ -8,10 +8,13 @@
 # For details, see the top-level LICENSE file at:
 # https://github.com/ORNL-MDF/Raptor/LICENSE
 # =============================================================================
+import hashlib
+
 import numpy as np
 
 from raptor.api import (
     compute_morphology,
+    compute_phase_histogram,
     compute_porosity,
     compute_spectral_components,
     create_grid,
@@ -40,14 +43,19 @@ MELT_POOL_DEPTH = 118.0e-6
 MELT_POOL_HEIGHT = 30.0e-6
 MELT_POOL_WIDTH_STD_DEV = 18.0e-6
 MELT_POOL_LENGTH = 300.0e-6
-N_MODES = 50
+# Let the reconstruction tolerance determine each dimension's mode count.
+N_MODES = None
+RANDOM_SEED = 42
 
 HEIGHT_SHAPE_FACTOR = 1.0
 DEPTH_SHAPE_FACTOR = 1.0
 
 RVE_MIN_POINT = np.array([0.0, 0.0, 0.0])
-RVE_MAX_POINT = np.array([5.0e-4, 5.0e-4, 5.0e-4])
-VOXEL_RESOLUTION = 5.0e-6
+RVE_MAX_POINT = np.array([1.0e-3, 1.0e-3, 1.0e-3])
+VOXEL_RESOLUTION = 1.0e-6
+TILE_WIDTH = 80.0e-6
+SPECTRAL_ERROR_FRACTION = 0.25
+MAX_SPECTRAL_TABLE_BYTES = 256 * 1024**2
 
 VTK_OUTPUT = "rve.vti"
 MORPHOLOGY_OUTPUT = "rve_morphology.csv"
@@ -72,9 +80,15 @@ def build_melt_pool():
 
     # Generate stochastic melt pool
     mp_filter.initialize()
-    width_data = mp_filter.generate_fluctuations(1.0, mp_filter.n_points, mp_filter.t)
-    width_spectral = compute_spectral_components(width_data, tolerance=VOXEL_RESOLUTION)
-    reconstructed_width = reconstruct_spectral_signal(width_data[:, 0], width_spectral)
+    width_data = mp_filter.generate_fluctuations(
+        1.0, mp_filter.n_points, mp_filter.t
+    )
+    width_spectral = compute_spectral_components(
+        width_data, tolerance=VOXEL_RESOLUTION
+    )
+    reconstructed_width = reconstruct_spectral_signal(
+        width_data[:, 0], width_spectral
+    )
     reconstruction_rmse = np.sqrt(
         np.mean((width_data[:, 1] - reconstructed_width) ** 2)
     )
@@ -140,8 +154,21 @@ def main():
     # 3. Create melt pools from convolution filter
     melt_pool = build_melt_pool()
 
-    # 4. Compute porosity using conic section / superellipse curves for melt pool mask
-    porosity = compute_porosity(grid, path_vectors, melt_pool, jit_warmup=True)
+    # 4. Compute porosity using the superellipse melt-pool mask.
+    porosity = compute_porosity(
+        grid,
+        path_vectors,
+        melt_pool,
+        jit_warmup=True,
+        random_seed=RANDOM_SEED,
+        tile_width=TILE_WIDTH,
+        spectral_error_fraction=SPECTRAL_ERROR_FRACTION,
+        max_spectral_table_bytes=MAX_SPECTRAL_TABLE_BYTES,
+    )
+    phase_histogram = compute_phase_histogram(porosity)
+    phase_checksum = hashlib.sha256(memoryview(porosity)).hexdigest()
+    print(f"Phase histogram: {phase_histogram}")
+    print(f"Phase checksum: {phase_checksum}")
 
     # 5. Write porosity field to .VTI
     write_vtk(grid.origin, grid.resolution, porosity, VTK_OUTPUT)

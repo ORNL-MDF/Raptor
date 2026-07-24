@@ -5,6 +5,10 @@ parameters:
   layer_height: 50.0e-6              # (meters)
   voxel_resolution: 5.0e-6           # (meters)
   enable_random_segment_phase: false # Default: true
+  random_seed: 42                    # Used when random phases are enabled
+  tile_width: null                   # Automatic spatial-index width
+  spectral_error_fraction: 0.25      # Fraction of one voxel
+  max_spectral_table_bytes: 268435456
 
 melt_pool_data:
   width:

@@ -10,9 +10,21 @@ repos:
     rev: 24.3.0
     hooks:
       - id: black
+        entry: >-
+          bash -c 'for file in "$@"; do
+          black --line-length=80 "$file" || exit 1;
+          done' --
 
   - repo: https://github.com/codespell-project/codespell
     rev: v2.2.6
     hooks:
       - id: codespell
         args: ["-L", "mater,nd,coefficent,ot"]
+
+  - repo: local
+    hooks:
+      - id: python-line-length
+        name: Enforce Python line length
+        language: pygrep
+        entry: "^.{81}"
+        types: [python]

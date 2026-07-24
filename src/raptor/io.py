@@ -20,15 +20,27 @@ def read_data(fname: str) -> np.ndarray:
     Reads data from a .txt or .csv file.
     Two types of input data structures are supported:
         1. Melt pool timeseries -- T x 2 array of time, measurement
-        2. Spectral component array -- N x 3 array of amplitudes, frequencies, and phases,
-                                       indexed by modenumber (low to high frequency)
+        2. Spectral component array -- N x 3 array of amplitudes,
+           frequencies, and phases indexed by mode number.
     """
     if not os.path.exists(fname):
-        raise FileNotFoundError(f"Melt pool measurement file not found: {fname}")
-    # Preserve timestamp precision.  Casting finely spaced absolute times to
+        raise FileNotFoundError(
+            f"Melt pool measurement file not found: {fname}"
+        )
+    with open(fname, "r") as input_file:
+        first_data_line = next(
+            (
+                line
+                for line in input_file
+                if line.strip() and not line.lstrip().startswith("#")
+            ),
+            "",
+        )
+    delimiter = "," if "," in first_data_line else None
+    # Preserve timestamp precision. Casting finely spaced absolute times to
     # float32 can make an otherwise uniform series appear non-uniform to FFT
     # consumers such as ``compute_spectral_components``.
-    return np.loadtxt(fname, delimiter=",", dtype=np.float64)
+    return np.loadtxt(fname, delimiter=delimiter, dtype=np.float64)
 
 
 def read_scan_path(fname: str) -> List[PathVector]:
@@ -47,15 +59,46 @@ def read_scan_path(fname: str) -> List[PathVector]:
         except StopIteration:
             return []
 
-        for scan_vec_num, line in enumerate(f, 1):
+        for line_number, line in enumerate(f, 2):
             # reads each scan vector in layer
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
             parts = line.split()
             if len(parts) < 6:
-                continue
-            m_str, x_str, y_str, z_str, p_str, pr_str = parts[:6]
-            mode = int(float(m_str))
-            position = np.array([float(x_str), float(y_str), float(z_str)])
-            parameter = float(pr_str)
+                raise ValueError(
+                    f"Invalid scan-path row {line_number}: expected at least "
+                    "six columns."
+                )
+            try:
+                m_str, x_str, y_str, z_str, p_str, pr_str = parts[:6]
+                mode_value = float(m_str)
+                mode = int(mode_value)
+                position = np.array([float(x_str), float(y_str), float(z_str)])
+                power = float(p_str)
+                parameter = float(pr_str)
+            except ValueError as error:
+                raise ValueError(
+                    f"Invalid numeric value on scan-path row {line_number}."
+                ) from error
+            if mode_value != mode or mode not in (0, 1):
+                raise ValueError(
+                    f"Invalid mode on scan-path row {line_number}; "
+                    "expected 0 or 1."
+                )
+            if (
+                not np.isfinite(position).all()
+                or not np.isfinite(power)
+                or not np.isfinite(parameter)
+            ):
+                raise ValueError(
+                    f"Non-finite value on scan-path row {line_number}."
+                )
+            if (mode == 0 and parameter <= 0.0) or (
+                mode == 1 and parameter < 0.0
+            ):
+                raise ValueError(
+                    f"Invalid parameter on scan-path row {line_number}."
+                )
             path_vector_mode.append(mode)
             path_vector_position.append(position)
             path_vector_parameter.append(parameter)
@@ -65,6 +108,9 @@ def read_scan_path(fname: str) -> List[PathVector]:
     end_t: List[float] = []
     start_pos: List[np.ndarray] = []
     end_pos: List[np.ndarray] = []
+
+    if not path_vector_mode:
+        return []
 
     if path_vector_mode[0] == 1:
         path_vector_time.append(path_vector_parameter[0])

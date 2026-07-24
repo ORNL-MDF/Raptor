@@ -68,7 +68,7 @@ depth_scale = 0.8
 height_scale = 0.4
 
 # assign shape to melt pool and cap (1 = parabola, 2 = ellipse)
-width_shape = 2  # placeholder
+width_shape = 2  # The transverse exponent is fixed at two.
 height_shape = 1
 depth_shape = 1
 
@@ -80,7 +80,7 @@ melt_pool_dict = {
 
 melt_pool = create_melt_pool(melt_pool_dict, enable_random_phases=True)
 
-# 4. Compute porosity using conic section / superellipse curves for melt pool mask
+# 4. Compute porosity using the superellipse melt-pool mask.
 porosity = compute_porosity(grid, path_vectors, melt_pool, jit_warmup=True)
 
 # 5. Write porosity field to .VTI
