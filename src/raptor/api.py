@@ -295,7 +295,6 @@ def compute_porosity(
     grid: Grid,
     path_vectors: List[PathVector],
     melt_pool: MeltPool,
-    jit_warmup: Optional[bool] = True,
     random_seed: Optional[int] = None,
     *,
     tile_width: Optional[float] = None,
@@ -338,17 +337,6 @@ def compute_porosity(
             1,
             int(round(tile_width / grid.resolution)),
         )
-
-    if jit_warmup:
-        print("JIT Warmup...")
-        t_start_warmup = time.time()
-        from .warmup import warm_numba_cache
-
-        warm_numba_cache(
-            include_morphology=False,
-        )
-
-        print(f" -> JIT warmup complete ({time.time() - t_start_warmup:.8f}s).")
 
     print(f"Preparing {len(path_vectors)} path vectors for simulation...")
     t0_setup = time.time()

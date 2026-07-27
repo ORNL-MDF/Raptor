@@ -624,7 +624,7 @@ class TestComputePorosity:
 
     def test_compute_porosity_contract(self, minimal_simulation):
         grid, vectors, melt_pool = minimal_simulation
-        result = compute_porosity(grid, vectors, melt_pool, jit_warmup=False)
+        result = compute_porosity(grid, vectors, melt_pool)
         assert np.any(result != 0)
         assert result.shape == grid.shape
         assert result.dtype == np.int8
@@ -633,7 +633,6 @@ class TestComputePorosity:
             grid,
             vectors,
             melt_pool,
-            jit_warmup=False,
             tile_width=grid.resolution,
         )
         np.testing.assert_array_equal(explicit_tile, result)
@@ -662,7 +661,6 @@ class TestComputePorosity:
                 grid,
                 vectors,
                 melt_pool,
-                jit_warmup=False,
                 **options,
             )
 
@@ -675,14 +673,12 @@ class TestComputePorosity:
             grid,
             vectors,
             melt_pool,
-            jit_warmup=False,
             random_seed=42,
         )
         second = compute_porosity(
             grid,
             vectors,
             melt_pool,
-            jit_warmup=False,
             random_seed=42,
         )
         np.testing.assert_array_equal(first, second)
@@ -709,7 +705,6 @@ class TestComputePorosity:
                 grid,
                 vectors,
                 melt_pool,
-                jit_warmup=False,
             )
 
     def test_compute_phase_histogram(self):
@@ -898,9 +893,7 @@ class TestApiIntegration:
         melt_pool = create_melt_pool(
             sample_melt_pool_dict, enable_random_phases=False
         )
-        porosity = compute_porosity(
-            grid, path_vectors, melt_pool, jit_warmup=True
-        )
+        porosity = compute_porosity(grid, path_vectors, melt_pool)
         vtk_output_path = temp_output_dir / "full_workflow.vti"
         write_vtk(grid.origin, grid.resolution, porosity, vtk_output_path)
         morphology = compute_morphology(

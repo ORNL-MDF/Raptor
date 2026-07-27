@@ -162,7 +162,6 @@ def main():
         grid,
         path_vectors,
         melt_pool,
-        jit_warmup=True,
         random_seed=RANDOM_SEED,
         spectral_error_fraction=SPECTRAL_ERROR_FRACTION,
     )

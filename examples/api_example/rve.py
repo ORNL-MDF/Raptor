@@ -81,7 +81,7 @@ melt_pool_dict = {
 melt_pool = create_melt_pool(melt_pool_dict, enable_random_phases=True)
 
 # 4. Compute porosity using the superellipse melt-pool mask.
-porosity = compute_porosity(grid, path_vectors, melt_pool, jit_warmup=True)
+porosity = compute_porosity(grid, path_vectors, melt_pool)
 
 # 5. Write porosity field to .VTI
 write_vtk(grid.origin, grid.resolution, porosity, "rve.vti")
