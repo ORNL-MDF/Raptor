@@ -43,7 +43,6 @@ MELT_POOL_DEPTH = 118.0e-6
 MELT_POOL_HEIGHT = 30.0e-6
 MELT_POOL_WIDTH_STD_DEV = 18.0e-6
 MELT_POOL_LENGTH = 300.0e-6
-# Let the reconstruction tolerance determine each dimension's mode count.
 N_MODES = None
 RANDOM_SEED = 42
 
@@ -53,8 +52,7 @@ DEPTH_SHAPE_FACTOR = 1.0
 RVE_MIN_POINT = np.array([0.0, 0.0, 0.0])
 RVE_MAX_POINT = np.array([5.0e-4, 5.0e-4, 5.0e-4])
 VOXEL_RESOLUTION = 5.0e-6
-# TILE_WIDTH = 80.0e-6
-SPECTRAL_ERROR_FRACTION = 0.25
+TILE_WIDTH = 160.0e-6
 
 VTK_OUTPUT = "rve.vti"
 MORPHOLOGY_OUTPUT = "rve_morphology.csv"
@@ -163,7 +161,7 @@ def main():
         path_vectors,
         melt_pool,
         random_seed=RANDOM_SEED,
-        spectral_error_fraction=SPECTRAL_ERROR_FRACTION,
+        tile_width=TILE_WIDTH,
     )
     phase_histogram = compute_phase_histogram(porosity)
     phase_checksum = hashlib.sha256(memoryview(porosity)).hexdigest()

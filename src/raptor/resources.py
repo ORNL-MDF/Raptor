@@ -122,7 +122,6 @@ class MemoryExecutionPlan:
     budget_bytes: int
     budget_source: str
     fixed_bytes: int
-    full_table_bytes: int
     peak_bytes: int
     mode: str
     batches: List[Tuple[int, int]]
@@ -134,9 +133,7 @@ def insufficient_memory_error(
     budget_source: str,
 ) -> MemoryError:
     """Build an actionable error without reducing spectral accuracy."""
-    minimum_mb = (
-        minimum_bytes + MEMORY_UNIT_BYTES - 1
-    ) // MEMORY_UNIT_BYTES
+    minimum_mb = (minimum_bytes + MEMORY_UNIT_BYTES - 1) // MEMORY_UNIT_BYTES
     return MemoryError(
         "Raptor cannot fit the phase field and required core workspace.\n\n"
         f"Resolved memory budget: "
@@ -188,10 +185,10 @@ def plan_memory_execution(
     """Choose resident or ordered streamed execution under one budget.
 
     ``fixed_bytes`` includes the phase field and immutable kernel inputs.
-    Resident mode allocates the complete packed spectral table. Streamed mode
-    preserves vector order and table density while limiting peak table storage.
+    Resident mode allocates every stored RVE window. Streamed mode preserves
+    vector order and table density while limiting peak table storage.
     """
-    offsets_bytes = (spectral_plan.point_counts.size + 1) * np.dtype(
+    offsets_bytes = (spectral_plan.stored_point_counts.size + 1) * np.dtype(
         np.int64
     ).itemsize
     resident_peak = fixed_bytes + spectral_plan.table_bytes + offsets_bytes
@@ -200,21 +197,20 @@ def plan_memory_execution(
             budget_bytes,
             budget_source,
             fixed_bytes,
-            spectral_plan.table_bytes,
             resident_peak,
             "resident",
-            [(0, spectral_plan.point_counts.size)],
+            [(0, spectral_plan.stored_point_counts.size)],
         )
 
     streaming_fixed = fixed_bytes + streaming_workspace_bytes
     maximum_table_bytes = budget_bytes - streaming_fixed - offsets_bytes
     batches = _plan_contiguous_batches(
-        spectral_plan.point_counts,
+        spectral_plan.stored_point_counts,
         maximum_table_bytes,
     )
     if not batches:
         largest_vector_bytes = (
-            int(np.max(spectral_plan.point_counts, initial=0))
+            int(np.max(spectral_plan.stored_point_counts, initial=0))
             * 3
             * np.dtype(np.float32).itemsize
         )
@@ -226,7 +222,10 @@ def plan_memory_execution(
         )
 
     largest_batch_bytes = max(
-        sum(int(count) for count in spectral_plan.point_counts[start:stop])
+        sum(
+            int(count)
+            for count in spectral_plan.stored_point_counts[start:stop]
+        )
         * 3
         * np.dtype(np.float32).itemsize
         for start, stop in batches
@@ -235,7 +234,6 @@ def plan_memory_execution(
         budget_bytes,
         budget_source,
         fixed_bytes,
-        spectral_plan.table_bytes,
         streaming_fixed + offsets_bytes + largest_batch_bytes,
         "streamed",
         batches,

@@ -115,24 +115,34 @@ class PathVector:
             self.e1 = np.array([dx / Lxy, dy / Lxy, 0.0], dtype=np.float64)
         self.e2 = np.array([0.0, 0.0, 1.0], dtype=np.float64)
 
-    def set_melt_pool_properties(self, melt_pool: MeltPool, rng=None) -> None:
+    def set_melt_pool_properties(
+        self,
+        melt_pool: MeltPool,
+        rng=None,
+        common_phases: Optional[np.ndarray] = None,
+    ) -> None:
+        """Attach dimension phases and a conservative melt-pool envelope.
+
+        ``common_phases`` allows callers to generate many phase rows in one
+        vectorized operation. Each spectral dimension retains its own mode
+        count and receives a copy of the corresponding prefix.
         """
-        Sets melt pool dependent properties on the vector.
-        """
-        # Setting cosine expansion phases for the vector.
         if melt_pool.enable_random_phases:
-            if rng is None:
-                rng = np.random
             max_modes = max(
                 melt_pool.width_oscillations.shape[0],
                 melt_pool.depth_oscillations.shape[0],
                 melt_pool.height_oscillations.shape[0],
             )
-            random_phase = rng.uniform(0.0, 2.0 * np.pi, max_modes - 1)
-            zero_phase = np.array([0.0], dtype=np.float64)
-            common_phases = np.hstack((zero_phase, random_phase)).astype(
-                np.float64
-            )
+            if common_phases is None:
+                if rng is None:
+                    rng = np.random
+                common_phases = np.empty(max_modes, dtype=np.float64)
+                common_phases[0] = 0.0
+                common_phases[1:] = rng.uniform(
+                    0.0,
+                    2.0 * np.pi,
+                    max_modes - 1,
+                )
             self.width_phases = common_phases[
                 : melt_pool.width_oscillations.shape[0]
             ].copy()
@@ -155,8 +165,7 @@ class PathVector:
         # Backward-compatible alias for consumers that used the original field.
         self.phases = self.width_phases
 
-        # Setting bounding box properties for the vector.
-        # 1. --- Calculate Axis-Aligned Bounding Box (AABB) ---
+        # Axis-aligned bounds conservatively cull whole path vectors.
         width_max, depth_max, height_max = (
             melt_pool.width_max,
             melt_pool.depth_max,
@@ -177,7 +186,7 @@ class PathVector:
             dtype=np.float64,
         )
 
-        # 2. --- Calculate Oriented Bounding Box (OBB) half-lengths ---
+        # Oriented bounds support exact in-plane candidate tests.
         self.L0 = width_max / 2.0
         self.L1 = np.hypot(p_max[0] - p_min[0], p_max[1] - p_min[1]) / 2.0
         self.L2 = max(height_max, depth_max)

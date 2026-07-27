@@ -81,7 +81,8 @@ The project is organized into several modules:
 
 *   `cli.py`: Handles command-line argument parsing and manages the main simulation workflow.
 *   `api.py`: Provides high-level functions for creating the grid, melt pool, running the simulation, and writing output files.
-*   `core.py`: Contains spatial indexing, melt geometry, and the Numba-accelerated voxel kernel.
+*   `core.py`: Contains melt geometry and the Numba-accelerated voxel kernel.
+*   `spatial.py`: Builds exact, ordered spatial candidates for path vectors.
 *   `spectral.py`: Plans and evaluates accuracy-controlled melt-pool histories.
 *   `resources.py`: Resolves memory budgets and spectral-table batching.
 *   `morphology.py`: Counts phases and labels sparse defects.

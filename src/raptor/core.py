@@ -8,7 +8,7 @@
 # For details, see the top-level LICENSE file at:
 # https://github.com/ORNL-MDF/Raptor/LICENSE
 # =============================================================================
-"""Spatial indexing, melt geometry, and the production voxel kernel."""
+"""Melt geometry, orchestration, and the production voxel kernel."""
 
 from typing import List, Optional, Tuple
 
@@ -27,14 +27,44 @@ from .spectral import (
     build_spectral_history_batch,
     evaluate_spectral_table,
     prepare_spectral_history_plan,
+    window_spectral_history_plan,
 )
 from .structures import MeltPool, PathVector
 
 
-# Performance-only spatial-index defaults; neither changes melt geometry.
-DEFAULT_TARGET_TILE_WIDTH = 80.0e-6
-_MINIMUM_AUTOMATIC_TILE_SIZE = 16
 _GEOMETRY_EPSILON = 1.0e-12
+
+
+def _conservative_time_fraction_bounds(
+    origin: np.ndarray,
+    voxel_shape: np.ndarray,
+    resolution: float,
+    start_points: np.ndarray,
+    distances: np.ndarray,
+    inv_distance_sqr: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Bound every scan-time fraction reachable by an RVE voxel center."""
+    grid_max = origin + (voxel_shape - 1) * resolution
+    product_at_min = (origin[:2] - start_points[:, :2]) * distances[:, :2]
+    product_at_max = (grid_max[:2] - start_points[:, :2]) * distances[:, :2]
+    lower_products = np.minimum(product_at_min, product_at_max)
+    upper_products = np.maximum(product_at_min, product_at_max)
+    lower = lower_products.sum(axis=1) * inv_distance_sqr
+    upper = upper_products.sum(axis=1) * inv_distance_sqr
+
+    # Enclose roundoff from the two products, their sum, and final multiply.
+    magnitude = np.maximum(np.abs(product_at_min), np.abs(product_at_max)).sum(
+        axis=1
+    ) * np.abs(inv_distance_sqr)
+    roundoff = (
+        16.0
+        * np.finfo(np.float64).eps
+        * (magnitude + np.abs(lower) + np.abs(upper) + 1.0)
+    )
+    return (
+        np.clip(lower - roundoff, 0.0, 1.0),
+        np.clip(upper + roundoff, 0.0, 1.0),
+    )
 
 
 @njit(cache=True, inline="always", fastmath=True)
@@ -146,84 +176,6 @@ def conservative_vertical_interval(
     )
 
 
-def build_spatial_index(
-    origin: np.ndarray,
-    voxel_shape: Tuple[int, int, int],
-    resolution: float,
-    path_vectors: List[PathVector],
-    tile_size: Optional[int] = None,
-):
-    """Build ordered path candidates for rectangular tiles in the x-y plane."""
-    shape = np.asarray(voxel_shape, dtype=np.int64)
-    grid_min = np.asarray(origin, dtype=np.float64)
-    grid_max = grid_min + (shape - 1) * resolution
-    if tile_size is None:
-        tile_size = max(
-            _MINIMUM_AUTOMATIC_TILE_SIZE,
-            int(round(DEFAULT_TARGET_TILE_WIDTH / resolution)),
-        )
-        tile_size = min(tile_size, int(max(shape[0], shape[1])))
-    elif tile_size < 1:
-        raise ValueError("tile_size must be a positive integer.")
-
-    active_vectors = []
-    for vector in path_vectors:
-        bounds = vector.AABB
-        if (
-            bounds[1] < grid_min[0]
-            or bounds[0] > grid_max[0]
-            or bounds[3] < grid_min[1]
-            or bounds[2] > grid_max[1]
-            or bounds[5] < grid_min[2]
-            or bounds[4] > grid_max[2]
-        ):
-            continue
-        active_vectors.append(vector)
-
-    tile_shape = (shape[:2] + tile_size - 1) // tile_size
-    n_tiles = int(tile_shape[0] * tile_shape[1])
-    tile_candidates = [[] for _ in range(n_tiles)]
-
-    for vector_index, vector in enumerate(active_vectors):
-        bounds = vector.AABB
-        lower = np.array([bounds[0], bounds[2]])
-        upper = np.array([bounds[1], bounds[3]])
-        lower_voxel = np.ceil((lower - grid_min[:2]) / resolution).astype(
-            np.int64
-        )
-        upper_voxel = np.floor((upper - grid_min[:2]) / resolution).astype(
-            np.int64
-        )
-        lower_voxel = np.maximum(lower_voxel, 0)
-        upper_voxel = np.minimum(upper_voxel, shape[:2] - 1)
-        lower_tile = lower_voxel // tile_size
-        upper_tile = upper_voxel // tile_size
-
-        for tx in range(lower_tile[0], upper_tile[0] + 1):
-            for ty in range(lower_tile[1], upper_tile[1] + 1):
-                tile_index = tx * tile_shape[1] + ty
-                tile_candidates[int(tile_index)].append(vector_index)
-
-    candidate_offsets = np.empty(n_tiles + 1, dtype=np.int64)
-    candidate_offsets[0] = 0
-    for tile_index, candidates in enumerate(tile_candidates):
-        candidate_offsets[tile_index + 1] = candidate_offsets[tile_index] + len(
-            candidates
-        )
-    candidate_indices = np.empty(candidate_offsets[-1], dtype=np.int32)
-    for tile_index, candidates in enumerate(tile_candidates):
-        start = candidate_offsets[tile_index]
-        candidate_indices[start : start + len(candidates)] = candidates
-
-    return (
-        active_vectors,
-        shape,
-        tile_size,
-        candidate_offsets,
-        candidate_indices,
-    )
-
-
 def compute_melt_mask_grid(
     origin: np.ndarray,
     voxel_shape: Tuple[int, int, int],
@@ -276,6 +228,8 @@ def compute_melt_mask_grid(
                 {
                     "spectral_table_points": 0,
                     "spectral_table_bytes": 0,
+                    "full_spectral_table_points": 0,
+                    "full_spectral_table_bytes": 0,
                     "spectral_error_bound": 0.0,
                     **memory_diagnostics,
                 }
@@ -301,12 +255,14 @@ def compute_melt_mask_grid(
     start_points = np.array([p.start_point for p in path_vectors])
     distances = np.array([p.distance for p in path_vectors])
     inv_distance_sqr = np.array([p.inv_distance_sqr for p in path_vectors])
+    inv_distances = np.sqrt(inv_distance_sqr)
     e0 = np.array([p.e0 for p in path_vectors])
     e1 = np.array([p.e1 for p in path_vectors])
     e2 = np.array([p.e2 for p in path_vectors])
     L0_sqr = np.array([p.L0_sqr for p in path_vectors])
     L1_sqr = np.array([p.L1_sqr for p in path_vectors])
     AABB = np.array([p.AABB for p in path_vectors])
+    z_bounds = np.ascontiguousarray(AABB[:, 4:6])
     centroids = np.array([p.centroid for p in path_vectors])
 
     horizontal_paths = (
@@ -323,10 +279,10 @@ def compute_melt_mask_grid(
     del e2
 
     lower_z = (
-        np.floor((AABB[:, 4] - origin[2]) / resolution).astype(np.int64) - 1
+        np.floor((z_bounds[:, 0] - origin[2]) / resolution).astype(np.int64) - 1
     )
     upper_z = (
-        np.ceil((AABB[:, 5] - origin[2]) / resolution).astype(np.int64) + 1
+        np.ceil((z_bounds[:, 1] - origin[2]) / resolution).astype(np.int64) + 1
     )
     lower_z = np.maximum(lower_z, 0)
     upper_z = np.minimum(upper_z, voxel_shape_array[2] - 1)
@@ -337,20 +293,36 @@ def compute_melt_mask_grid(
         path_vectors,
         spectral_error_fraction=spectral_error_fraction,
     )
+    fraction_lower, fraction_upper = _conservative_time_fraction_bounds(
+        origin,
+        voxel_shape_array,
+        resolution,
+        start_points,
+        distances,
+        inv_distance_sqr,
+    )
+    spectral_plan = window_spectral_history_plan(
+        spectral_plan,
+        fraction_lower,
+        fraction_upper,
+    )
+    path_z_values = np.ascontiguousarray(start_points[:, 2])
+    del AABB, distances, fraction_lower, fraction_upper
+    del inv_distance_sqr, start_points
+
     phase_field_bytes = n_voxels * np.dtype(np.int8).itemsize
     fixed_arrays = (
         origin,
         voxel_shape_array,
         candidate_offsets,
         candidate_indices,
-        start_points,
-        distances,
-        inv_distance_sqr,
+        path_z_values,
+        inv_distances,
         e0,
         e1,
         L0_sqr,
         L1_sqr,
-        AABB,
+        z_bounds,
         centroids,
         lower_z,
         upper_z,
@@ -373,6 +345,10 @@ def compute_melt_mask_grid(
     table_diagnostics = {
         "spectral_table_points": int(spectral_plan.total_points),
         "spectral_table_bytes": int(spectral_plan.table_bytes),
+        "full_spectral_table_points": int(spectral_plan.full_total_points),
+        "full_spectral_table_bytes": int(
+            spectral_plan.full_total_points * 3 * np.dtype(np.float32).itemsize
+        ),
         "spectral_error_bound": spectral_plan.table_error_bound,
         "memory_budget_bytes": int(memory_plan.budget_bytes),
         "memory_budget_source": memory_plan.budget_source,
@@ -385,12 +361,16 @@ def compute_melt_mask_grid(
         diagnostics.update(table_diagnostics)
 
     if report:
+        clipping_text = ""
+        if spectral_plan.total_points < spectral_plan.full_total_points:
+            clipping_text = (
+                f", clipped from {spectral_plan.full_total_points} samples"
+            )
         print(
             " -> Spectral table plan: "
             f"{spectral_plan.total_points} samples, "
             f"{spectral_plan.table_bytes / MEMORY_UNIT_BYTES:.2f} MB "
-            "full table, "
-            "error bound="
+            f"resident table{clipping_text}, error bound="
             f"{spectral_plan.table_error_bound * 1.0e6:.3f} µm."
         )
         print(
@@ -435,19 +415,20 @@ def compute_melt_mask_grid(
             tile_size,
             batch_candidate_offsets,
             batch_candidate_indices,
-            start_points[start:stop],
+            path_z_values[start:stop],
             e0[start:stop],
             e1[start:stop],
+            inv_distances[start:stop],
             L0_sqr[start:stop],
             L1_sqr[start:stop],
-            AABB[start:stop],
+            z_bounds[start:stop],
             lower_z[start:stop],
             upper_z[start:stop],
             spectral_table_offsets,
             spectral_table,
+            spectral_plan.sample_starts[start:stop],
+            spectral_plan.point_counts[start:stop],
             centroids[start:stop],
-            distances[start:stop],
-            inv_distance_sqr[start:stop],
             height_shape_factor,
             depth_shape_factor,
         )
@@ -463,19 +444,20 @@ def compute_melt_mask_kernel(
     tile_size: int,
     candidate_offsets: np.ndarray,
     candidate_indices: np.ndarray,
-    start_points: np.ndarray,
+    path_z_values: np.ndarray,
     e0: np.ndarray,
     e1: np.ndarray,
+    inv_distances: np.ndarray,
     L0_sqr: np.ndarray,
     L1_sqr: np.ndarray,
-    AABB: np.ndarray,
+    z_bounds: np.ndarray,
     lower_z_bounds: np.ndarray,
     upper_z_bounds: np.ndarray,
     spectral_table_offsets: np.ndarray,
     spectral_table: np.ndarray,
+    spectral_sample_starts: np.ndarray,
+    spectral_full_point_counts: np.ndarray,
     centroids: np.ndarray,
-    distances: np.ndarray,
-    inv_distance_sqr: np.ndarray,
     height_shape_factor: np.float64,
     depth_shape_factor: np.float64,
 ) -> np.ndarray:
@@ -499,14 +481,6 @@ def compute_melt_mask_kernel(
 
         for candidate_position in range(candidate_start, candidate_end):
             vector_index = candidate_indices[candidate_position]
-            if (
-                vx < AABB[vector_index, 0]
-                or vx > AABB[vector_index, 1]
-                or vy < AABB[vector_index, 2]
-                or vy > AABB[vector_index, 3]
-            ):
-                continue
-
             vec_cx = vx - centroids[vector_index, 0]
             vec_cy = vy - centroids[vector_index, 1]
             dot_e0_xy = (
@@ -521,36 +495,19 @@ def compute_melt_mask_kernel(
                 continue
 
             time_fraction = 0.0
-            if inv_distance_sqr[vector_index] > 0.0:
-                vec_sx = vx - start_points[vector_index, 0]
-                vec_sy = vy - start_points[vector_index, 1]
-                dot_dist = (
-                    vec_sx * distances[vector_index, 0]
-                    + vec_sy * distances[vector_index, 1]
-                )
-                time_fraction = dot_dist * inv_distance_sqr[vector_index]
+            if inv_distances[vector_index] > 0.0:
+                time_fraction = dot_e1_xy * inv_distances[vector_index] + 0.5
             time_fraction = max(0.0, min(1.0, time_fraction))
             width, depth, height = evaluate_spectral_table(
                 time_fraction,
                 vector_index,
                 spectral_table_offsets,
                 spectral_table,
+                spectral_sample_starts,
+                spectral_full_point_counts,
             )
 
-            path_x = (
-                start_points[vector_index, 0]
-                + time_fraction * distances[vector_index, 0]
-            )
-            path_y = (
-                start_points[vector_index, 1]
-                + time_fraction * distances[vector_index, 1]
-            )
-            vec_path_x = vx - path_x
-            vec_path_y = vy - path_y
-            local_y = (
-                vec_path_x * e0[vector_index, 0]
-                + vec_path_y * e0[vector_index, 1]
-            )
+            local_y = dot_e0_xy
             local_y_sqr = local_y * local_y
             half_width = width / 2.0
             y_scaled = local_y / half_width
@@ -575,7 +532,7 @@ def compute_melt_mask_kernel(
             lower_z = lower_z_bounds[vector_index]
             upper_z = upper_z_bounds[vector_index]
             if interval_status == 1:
-                path_z = start_points[vector_index, 2]
+                path_z = path_z_values[vector_index]
                 dynamic_lower_z = (
                     int(
                         np.floor(
@@ -597,11 +554,14 @@ def compute_melt_mask_kernel(
                 if lower_z > upper_z:
                     continue
 
-            path_z = start_points[vector_index, 2]
+            path_z = path_z_values[vector_index]
             for voxel_z in range(lower_z, upper_z + 1):
                 flat_index = column_index * nz + voxel_z
                 vz = origin[2] + voxel_z * resolution
-                if vz < AABB[vector_index, 4] or vz > AABB[vector_index, 5]:
+                if (
+                    vz < z_bounds[vector_index, 0]
+                    or vz > z_bounds[vector_index, 1]
+                ):
                     continue
                 local_z = vz - path_z
                 (

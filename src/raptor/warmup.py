@@ -35,7 +35,8 @@ def warm_numba_cache(
         count_phase_codes,
         label_sparse_defects,
     )
-    from .spectral import build_spectral_tables
+    from .spectral import _spectral_table_status, build_spectral_tables
+    from .spatial import _build_exact_tile_index
 
     timings: Dict[str, float] = {}
 
@@ -49,6 +50,8 @@ def warm_numba_cache(
     table = build_spectral_tables(
         durations,
         table_offsets,
+        np.zeros(1, dtype=np.int64),
+        np.array([2], dtype=np.int64),
         phases,
         phases,
         phases,
@@ -59,15 +62,13 @@ def warm_numba_cache(
         amplitudes,
         frequencies,
     )
+    _spectral_table_status(table)
     timings["spectral_table"] = time.perf_counter() - start
 
     resolution = 5.0e-6
     origin = np.zeros(3, dtype=np.float64)
     voxel_shape = np.array([2, 2, 2], dtype=np.int64)
     melt_mask = np.zeros(8, dtype=np.int8)
-    candidate_offsets = np.array([0, 1], dtype=np.int64)
-    candidate_indices = np.array([0], dtype=np.int32)
-    start_points = np.array([[0.0, 0.0, 0.0]], dtype=np.float64)
     e0 = np.array([[0.0, 1.0, 0.0]], dtype=np.float64)
     e1 = np.array([[1.0, 0.0, 0.0]], dtype=np.float64)
     half_width = float(amplitudes[0]) / 2.0
@@ -89,8 +90,20 @@ def warm_numba_cache(
     lower_z = np.array([0], dtype=np.int64)
     upper_z = np.array([1], dtype=np.int64)
     centroids = np.array([[resolution / 2.0, 0.0, 0.0]], dtype=np.float64)
-    distances = np.array([[resolution, 0.0, 0.0]], dtype=np.float64)
-    inv_distance_sqr = np.array([1.0 / resolution**2], dtype=np.float64)
+    start = time.perf_counter()
+    candidate_offsets, candidate_indices = _build_exact_tile_index(
+        origin,
+        voxel_shape,
+        resolution,
+        2,
+        np.ascontiguousarray(AABB[:, :4]),
+        centroids[:, :2],
+        e0[:, :2],
+        e1[:, :2],
+        np.array([half_width], dtype=np.float64),
+        np.array([resolution / 2.0], dtype=np.float64),
+    )
+    timings["spatial_index"] = time.perf_counter() - start
 
     start = time.perf_counter()
     compute_melt_mask_kernel(
@@ -101,19 +114,20 @@ def warm_numba_cache(
         2,
         candidate_offsets,
         candidate_indices,
-        start_points,
+        np.zeros(1, dtype=np.float64),
         e0,
         e1,
+        np.array([1.0 / resolution], dtype=np.float64),
         L0_sqr,
         L1_sqr,
-        AABB,
+        np.ascontiguousarray(AABB[:, 4:6]),
         lower_z,
         upper_z,
         table_offsets,
         table,
+        np.zeros(1, dtype=np.int64),
+        np.array([2], dtype=np.int64),
         centroids,
-        distances,
-        inv_distance_sqr,
         1.0,
         1.0,
     )

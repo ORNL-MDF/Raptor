@@ -16,7 +16,6 @@ import pytest
 import raptor.core as core
 import raptor.resources as resources
 from raptor.core import (
-    build_spatial_index,
     classify_horizontal_melt_and_boundary,
     conservative_vertical_interval,
     compute_melt_mask_grid,
@@ -29,6 +28,7 @@ from raptor.spectral import (
     spectral_approximation_error_bound,
 )
 from raptor.structures import Grid, MeltPool, PathVector
+from raptor.spatial import build_spatial_index
 
 
 RESOLUTION = 5.0e-6
@@ -273,6 +273,8 @@ class TestFastSpectralMath:
         table = build_spectral_tables(
             np.array([duration]),
             offsets,
+            np.zeros(1, dtype=np.int64),
+            np.array([point_count], dtype=np.int64),
             phases32,
             phases32,
             phases32,
@@ -299,12 +301,54 @@ class TestFastSpectralMath:
                 frequencies,
             )
             interpolated, _, _ = evaluate_spectral_table(
-                fraction, 0, offsets, table
+                fraction,
+                0,
+                offsets,
+                table,
+                np.zeros(1, dtype=np.int64),
+                np.array([point_count], dtype=np.int64),
             )
             maximum_table_error = max(
                 maximum_table_error, abs(exact - interpolated)
             )
         assert maximum_table_error <= RESOLUTION * 0.25
+
+        sample_start = int(np.floor(0.25 * (point_count - 1)))
+        sample_stop = int(np.floor(0.75 * (point_count - 1))) + 2
+        window_offsets = np.array([0, sample_stop - sample_start])
+        window_table = build_spectral_tables(
+            np.array([duration]),
+            window_offsets,
+            np.array([sample_start], dtype=np.int64),
+            np.array([point_count], dtype=np.int64),
+            phases32,
+            phases32,
+            phases32,
+            amplitudes32,
+            frequencies32,
+            amplitudes32,
+            frequencies32,
+            amplitudes32,
+            frequencies32,
+        )
+        for fraction in np.linspace(0.25, 0.75, 101):
+            complete_value = evaluate_spectral_table(
+                fraction,
+                0,
+                offsets,
+                table,
+                np.zeros(1, dtype=np.int64),
+                np.array([point_count], dtype=np.int64),
+            )
+            window_value = evaluate_spectral_table(
+                fraction,
+                0,
+                window_offsets,
+                window_table,
+                np.array([sample_start], dtype=np.int64),
+                np.array([point_count], dtype=np.int64),
+            )
+            np.testing.assert_array_equal(window_value, complete_value)
 
 
 def prepare_vector(vector, melt_pool):
@@ -546,6 +590,114 @@ class TestComputeMeltMask:
             else:
                 np.testing.assert_array_equal(actual, reference)
 
+    def test_exact_spatial_index_is_complete_ordered_and_equivalent(
+        self,
+        constant_melt_pool,
+    ):
+        grid = Grid(
+            RESOLUTION,
+            bound_box=np.array(
+                [[0.0, 0.0, -10.0e-6], [1.0e-3, 1.0e-3, 10.0e-6]]
+            ),
+        )
+        vectors = [
+            PathVector(
+                np.array([-100.0e-6, 0.0, 0.0]),
+                np.array([1.1e-3, 1.0e-3, 0.0]),
+                0.0,
+                1.0e-3,
+            ),
+            PathVector(
+                np.array([-100.0e-6, 1.0e-3, 0.0]),
+                np.array([1.1e-3, 0.0, 0.0]),
+                0.0,
+                1.0e-3,
+            ),
+            PathVector(
+                np.array([-100.0e-6, 0.5e-3, 0.0]),
+                np.array([1.1e-3, 0.5e-3, 0.0]),
+                0.0,
+                1.0e-3,
+            ),
+            PathVector(
+                np.array([0.5e-3, -100.0e-6, 0.0]),
+                np.array([0.5e-3, 1.1e-3, 0.0]),
+                0.0,
+                1.0e-3,
+            ),
+        ]
+        for vector in vectors:
+            vector.set_coordinate_frame()
+            prepare_vector(vector, constant_melt_pool)
+
+        active, shape, tile_size, offsets, indices = build_spatial_index(
+            grid.origin,
+            grid.shape,
+            grid.resolution,
+            vectors,
+            tile_size=10,
+        )
+        for tile_index in range(offsets.size - 1):
+            tile_indices = indices[
+                offsets[tile_index] : offsets[tile_index + 1]
+            ]
+            assert np.all(np.diff(tile_indices) > 0)
+
+        tile_count_y = (shape[1] + tile_size - 1) // tile_size
+        for voxel_x in range(shape[0]):
+            x = grid.origin[0] + voxel_x * grid.resolution
+            for voxel_y in range(shape[1]):
+                y = grid.origin[1] + voxel_y * grid.resolution
+                tile_index = (
+                    voxel_x // tile_size
+                ) * tile_count_y + voxel_y // tile_size
+                tile_indices = indices[
+                    offsets[tile_index] : offsets[tile_index + 1]
+                ]
+                for vector_index, vector in enumerate(active):
+                    delta_x = x - vector.centroid[0]
+                    delta_y = y - vector.centroid[1]
+                    transverse = delta_x * vector.e0[0] + delta_y * vector.e0[1]
+                    longitudinal = (
+                        delta_x * vector.e1[0] + delta_y * vector.e1[1]
+                    )
+                    if (
+                        transverse * transverse <= vector.L0_sqr
+                        and longitudinal * longitudinal <= vector.L1_sqr
+                    ):
+                        assert vector_index in tile_indices
+
+        exact = compute_melt_mask_grid(
+            grid.origin,
+            grid.shape,
+            grid.resolution,
+            constant_melt_pool,
+            active,
+            tile_size=tile_size,
+            candidate_offsets=offsets,
+            candidate_indices=indices,
+        )
+        tile_count = offsets.size - 1
+        exhaustive_offsets = np.arange(tile_count + 1, dtype=np.int64) * len(
+            active
+        )
+        exhaustive_indices = np.tile(
+            np.arange(len(active), dtype=np.int32),
+            tile_count,
+        )
+        exhaustive = compute_melt_mask_grid(
+            grid.origin,
+            grid.shape,
+            grid.resolution,
+            constant_melt_pool,
+            active,
+            tile_size=tile_size,
+            candidate_offsets=exhaustive_offsets,
+            candidate_indices=exhaustive_indices,
+        )
+        np.testing.assert_array_equal(exact, exhaustive)
+        assert indices.size < exhaustive_indices.size
+
     def test_spectral_error_control_changes_table_density(
         self,
         path_vector,
@@ -592,7 +744,7 @@ class TestComputeMeltMask:
             spectral_error_fraction=0.5,
             diagnostics=diagnostics,
         )
-        loose_points = diagnostics["spectral_table_points"]
+        loose_points = diagnostics["full_spectral_table_points"]
 
         compute_melt_mask_grid(
             grid.origin,
@@ -606,7 +758,7 @@ class TestComputeMeltMask:
             spectral_error_fraction=0.125,
             diagnostics=diagnostics,
         )
-        assert diagnostics["spectral_table_points"] > loose_points
+        assert diagnostics["full_spectral_table_points"] > loose_points
 
     def test_spatial_index_retains_vector_whose_melt_envelope_reaches_grid(
         self, constant_melt_pool

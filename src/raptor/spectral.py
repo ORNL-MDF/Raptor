@@ -10,7 +10,7 @@
 # =============================================================================
 """Accuracy-controlled spectral evaluation and packed history tables."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import List, Tuple
 
 import numpy as np
@@ -42,10 +42,17 @@ def validate_spectral_error_fraction(spectral_error_fraction: float) -> None:
 
 @dataclass(frozen=True)
 class SpectralHistoryPlan:
-    """Accuracy-derived arrays shared by resident and streamed tables."""
+    """Accuracy-derived arrays shared by resident and streamed tables.
+
+    ``point_counts`` defines each complete accuracy-controlled sample grid.
+    ``sample_starts`` and ``stored_point_counts`` select a contiguous window
+    without renumbering that grid.
+    """
 
     durations: np.ndarray
     point_counts: np.ndarray
+    sample_starts: np.ndarray
+    stored_point_counts: np.ndarray
     width_phases: np.ndarray
     depth_phases: np.ndarray
     height_phases: np.ndarray
@@ -59,6 +66,10 @@ class SpectralHistoryPlan:
 
     @property
     def total_points(self) -> int:
+        return sum(int(count) for count in self.stored_point_counts)
+
+    @property
+    def full_total_points(self) -> int:
         return sum(int(count) for count in self.point_counts)
 
     @property
@@ -70,6 +81,8 @@ class SpectralHistoryPlan:
         arrays = (
             self.durations,
             self.point_counts,
+            self.sample_starts,
+            self.stored_point_counts,
             self.width_phases,
             self.depth_phases,
             self.height_phases,
@@ -170,6 +183,8 @@ def evaluate_spectra_fast(
 def build_spectral_tables(
     durations: np.ndarray,
     table_offsets: np.ndarray,
+    sample_starts: np.ndarray,
+    full_point_counts: np.ndarray,
     width_phases: np.ndarray,
     depth_phases: np.ndarray,
     height_phases: np.ndarray,
@@ -184,11 +199,13 @@ def build_spectral_tables(
     table = np.empty((table_offsets[-1], 3), dtype=np.float32)
     for vector_index in prange(durations.size):
         table_start = table_offsets[vector_index]
-        point_count = table_offsets[vector_index + 1] - table_start
-        inverse_intervals = 1.0 / (point_count - 1)
-        for point_index in range(point_count):
-            time = durations[vector_index] * point_index * inverse_intervals
-            table[table_start + point_index] = evaluate_spectra_fast(
+        stored_point_count = table_offsets[vector_index + 1] - table_start
+        sample_start = sample_starts[vector_index]
+        inverse_intervals = 1.0 / (full_point_counts[vector_index] - 1)
+        for local_index in range(stored_point_count):
+            sample_index = sample_start + local_index
+            time = durations[vector_index] * sample_index * inverse_intervals
+            table[table_start + local_index] = evaluate_spectra_fast(
                 time,
                 vector_index,
                 width_phases,
@@ -210,28 +227,116 @@ def evaluate_spectral_table(
     vector_index: int,
     table_offsets: np.ndarray,
     table: np.ndarray,
+    sample_starts: np.ndarray,
+    full_point_counts: np.ndarray,
 ):
     """Linearly interpolate one vector's packed dimension history."""
     table_start = table_offsets[vector_index]
-    point_count = table_offsets[vector_index + 1] - table_start
+    point_count = full_point_counts[vector_index]
     position = time_fraction * (point_count - 1)
     lower = int(position)
     upper = min(lower + 1, point_count - 1)
+    local_lower = lower - sample_starts[vector_index]
+    local_upper = upper - sample_starts[vector_index]
     fraction = np.float32(position - lower)
     inverse_fraction = np.float32(1.0) - fraction
     width = (
-        table[table_start + lower, 0] * inverse_fraction
-        + table[table_start + upper, 0] * fraction
+        table[table_start + local_lower, 0] * inverse_fraction
+        + table[table_start + local_upper, 0] * fraction
     )
     depth = (
-        table[table_start + lower, 1] * inverse_fraction
-        + table[table_start + upper, 1] * fraction
+        table[table_start + local_lower, 1] * inverse_fraction
+        + table[table_start + local_upper, 1] * fraction
     )
     height = (
-        table[table_start + lower, 2] * inverse_fraction
-        + table[table_start + upper, 2] * fraction
+        table[table_start + local_lower, 2] * inverse_fraction
+        + table[table_start + local_upper, 2] * fraction
     )
     return width, depth, height
+
+
+@njit(cache=True, parallel=True)
+def _spectral_table_status(table: np.ndarray) -> Tuple[int, int, int, int]:
+    """Check all packed histories without allocating temporary arrays."""
+    nonfinite_count = 0
+    invalid_width_count = 0
+    invalid_depth_count = 0
+    invalid_height_count = 0
+    for index in prange(table.shape[0]):
+        width = table[index, 0]
+        depth = table[index, 1]
+        height = table[index, 2]
+        if not np.isfinite(width):
+            nonfinite_count += 1
+        if not np.isfinite(depth):
+            nonfinite_count += 1
+        if not np.isfinite(height):
+            nonfinite_count += 1
+        if width <= 0.0:
+            invalid_width_count += 1
+        if depth <= 0.0:
+            invalid_depth_count += 1
+        if height <= 0.0:
+            invalid_height_count += 1
+    return (
+        nonfinite_count,
+        invalid_width_count,
+        invalid_depth_count,
+        invalid_height_count,
+    )
+
+
+def window_spectral_history_plan(
+    plan: SpectralHistoryPlan,
+    lower_fractions: np.ndarray,
+    upper_fractions: np.ndarray,
+) -> SpectralHistoryPlan:
+    """Retain only full-grid samples reachable inside the RVE.
+
+    The retained samples keep their original indices and values. Interpolation
+    is therefore bitwise identical to the complete table over the supplied
+    conservative fraction interval.
+    """
+    lower_fractions = np.asarray(lower_fractions, dtype=np.float64)
+    upper_fractions = np.asarray(upper_fractions, dtype=np.float64)
+    expected_shape = plan.point_counts.shape
+    if (
+        lower_fractions.shape != expected_shape
+        or upper_fractions.shape != expected_shape
+    ):
+        raise ValueError("Spectral window bounds must match the vector count.")
+    if (
+        not np.isfinite(lower_fractions).all()
+        or not np.isfinite(upper_fractions).all()
+        or np.any(lower_fractions > upper_fractions)
+    ):
+        raise ValueError("Spectral window bounds must be finite and ordered.")
+
+    intervals = plan.point_counts - 1
+    lower_positions = np.nextafter(
+        np.clip(lower_fractions, 0.0, 1.0) * intervals,
+        -np.inf,
+    )
+    upper_positions = np.nextafter(
+        np.clip(upper_fractions, 0.0, 1.0) * intervals,
+        np.inf,
+    )
+    sample_starts = np.maximum(
+        np.floor(lower_positions).astype(np.int64),
+        0,
+    )
+    sample_stops = np.minimum(
+        np.floor(upper_positions).astype(np.int64) + 2,
+        plan.point_counts,
+    )
+    stored_point_counts = sample_stops - sample_starts
+    if np.any(stored_point_counts < 2):
+        raise ValueError("Every spectral window must retain two samples.")
+    return replace(
+        plan,
+        sample_starts=np.ascontiguousarray(sample_starts),
+        stored_point_counts=np.ascontiguousarray(stored_point_counts),
+    )
 
 
 def prepare_spectral_history_plan(
@@ -377,6 +482,8 @@ def prepare_spectral_history_plan(
     return SpectralHistoryPlan(
         durations=np.ascontiguousarray(durations),
         point_counts=np.ascontiguousarray(point_counts),
+        sample_starts=np.zeros(len(path_vectors), dtype=np.int64),
+        stored_point_counts=np.ascontiguousarray(point_counts.copy()),
         width_phases=np.ascontiguousarray(width_phases64, dtype=np.float32),
         depth_phases=np.ascontiguousarray(depth_phases64, dtype=np.float32),
         height_phases=np.ascontiguousarray(height_phases64, dtype=np.float32),
@@ -414,12 +521,14 @@ def build_spectral_history_batch(
     stop: int,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Build and validate one contiguous range from the global plan."""
-    point_counts = plan.point_counts[start:stop]
+    stored_counts = plan.stored_point_counts[start:stop]
     offsets = np.zeros(stop - start + 1, dtype=np.int64)
-    offsets[1:] = np.cumsum(point_counts)
+    offsets[1:] = np.cumsum(stored_counts)
     table = build_spectral_tables(
         plan.durations[start:stop],
         offsets,
+        plan.sample_starts[start:stop],
+        plan.point_counts[start:stop],
         plan.width_phases[start:stop],
         plan.depth_phases[start:stop],
         plan.height_phases[start:stop],
@@ -430,12 +539,13 @@ def build_spectral_history_batch(
         plan.height_amplitudes,
         plan.height_frequencies,
     )
-    if not np.isfinite(table).all():
+    table_status = _spectral_table_status(table)
+    if table_status[0] > 0:
         raise ValueError(
             "The evaluated melt-pool dimension histories contain "
             "non-finite values."
         )
-    invalid_dimensions = np.min(table, axis=0) <= 0.0
+    invalid_dimensions = np.asarray(table_status[1:]) > 0
     if np.any(invalid_dimensions):
         names = np.array(("width", "depth", "height"))
         raise ValueError(

@@ -12,15 +12,11 @@ import time
 import warnings
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
 import numpy as np
 
-from .utilities import ScanPathBuilder
-from .structures import MeltPool, PathVector, Grid
+from .core import compute_melt_mask_grid
 from .io import read_scan_path
-from .core import (
-    build_spatial_index,
-    compute_melt_mask_grid,
-)
 from .morphology import (
     collect_zero_indices,
     count_phase_codes,
@@ -31,6 +27,9 @@ from .spectral import (
     DEFAULT_SPECTRAL_ERROR_FRACTION,
     validate_spectral_error_fraction,
 )
+from .spatial import build_spatial_index
+from .structures import Grid, MeltPool, PathVector
+from .utilities import ScanPathBuilder
 
 
 def create_grid(
@@ -297,6 +296,43 @@ def create_melt_pool(
     return melt_pool
 
 
+def _assign_melt_pool_properties(
+    path_vectors: List[PathVector],
+    melt_pool: MeltPool,
+    random_seed: Optional[int],
+) -> None:
+    """Attach melt envelopes and reproducible phases to every path vector."""
+    phase_rng = np.random.RandomState(random_seed)
+    if not melt_pool.enable_random_phases:
+        for vector in path_vectors:
+            vector.set_melt_pool_properties(melt_pool, phase_rng)
+        return
+    if not path_vectors:
+        return
+
+    max_modes = max(
+        melt_pool.width_oscillations.shape[0],
+        melt_pool.depth_oscillations.shape[0],
+        melt_pool.height_oscillations.shape[0],
+    )
+    common_phase_rows = np.empty(
+        (len(path_vectors), max_modes),
+        dtype=np.float64,
+    )
+    common_phase_rows[:, 0] = 0.0
+    common_phase_rows[:, 1:] = phase_rng.uniform(
+        0.0,
+        2.0 * np.pi,
+        (len(path_vectors), max_modes - 1),
+    )
+    for vector, common_phases in zip(path_vectors, common_phase_rows):
+        vector.set_melt_pool_properties(
+            melt_pool,
+            phase_rng,
+            common_phases=common_phases,
+        )
+
+
 def compute_porosity(
     grid: Grid,
     path_vectors: List[PathVector],
@@ -333,9 +369,7 @@ def compute_porosity(
 
     print(f"Preparing {len(path_vectors)} path vectors for simulation...")
     t0_setup = time.time()
-    phase_rng = np.random.RandomState(random_seed)
-    for vector in path_vectors:
-        vector.set_melt_pool_properties(melt_pool, phase_rng)
+    _assign_melt_pool_properties(path_vectors, melt_pool, random_seed)
     print(f" -> Vector preparation complete ({time.time() - t0_setup:.8f}s).")
 
     print("Running melt-mask calculation...")
@@ -401,9 +435,7 @@ def write_vtk(
     porosity: np.ndarray,
     vtk_output_path: str,
 ) -> None:
-    """
-    Generates porosity VTK.
-    """
+    """Write the phase field as a ParaView-compatible VTK image."""
     import vtk
     from vtk.util import numpy_support
 
@@ -484,7 +516,7 @@ def compute_morphology(
         "label",
     }
     n_defects = int(count_phase_codes(porosity.reshape(-1))[0])
-    print(f"Identifying connected defects...")
+    print("Identifying connected defects...")
     print(
         f" -> Found {n_defects} defect voxels. "
         f"Computing morphology features..."
@@ -559,16 +591,15 @@ def write_morphology(properties: dict, morphology_output_path: str) -> None:
     morphology_df = pd.DataFrame(properties, index=None)
     if len(morphology_df) == 0:
         print(
-            f"Either no defects were found or all defects were single-voxel. "
-            f"No morphology features to write."
+            "Either no defects were found or all defects were single-voxel. "
+            "No morphology features to write."
         )
-        return None
-    else:
-        morphology_df.to_csv(morphology_output_path, index=False)
-        print(
-            f"Morphology features of {len(morphology_df)} "
-            f"defects written to: {morphology_output_path}"
-        )
+        return
+    morphology_df.to_csv(morphology_output_path, index=False)
+    print(
+        f"Morphology features of {len(morphology_df)} "
+        f"defects written to: {morphology_output_path}"
+    )
 
 
 def visualize(vtk_output_path: str) -> None:
