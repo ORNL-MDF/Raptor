@@ -41,7 +41,8 @@ This project is licensed under the BSD 3-Clause [License](LICENSE).
 
 ## Installation
 
-Raptor requires requires Python 3 (tested with Python 3.8+). The following Python packages are necessary:
+Raptor requires Python 3.10 or newer. The following Python packages are
+necessary:
 ```bash
     numpy, numba, pyyaml, vtk, scikit-image, pandas, pyvista
 ```
@@ -80,7 +81,10 @@ The project is organized into several modules:
 
 *   `cli.py`: Handles command-line argument parsing and manages the main simulation workflow.
 *   `api.py`: Provides high-level functions for creating the grid, melt pool, running the simulation, and writing output files.
-*   `core.py`: Contains the core Numba-accelerated functions for calculating the melt mask.
+*   `core.py`: Contains spatial indexing, melt geometry, and the Numba-accelerated voxel kernel.
+*   `spectral.py`: Plans and evaluates accuracy-controlled melt-pool histories.
+*   `resources.py`: Resolves memory budgets and spectral-table batching.
+*   `morphology.py`: Counts phases and labels sparse defects.
 *   `structures.py`: Defines the main data structures for the simulation (`Grid`, `MeltPool`, `PathVector`).
 *   `io.py`: Contains functions for reading and parsing input files (scan paths, melt pool data).
 *   `utilities.py`: Includes helper classes, such as the `ScanPathBuilder` for generating scan strategies.

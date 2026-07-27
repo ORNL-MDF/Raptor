@@ -18,12 +18,18 @@ from .utilities import ScanPathBuilder
 from .structures import MeltPool, PathVector, Grid
 from .io import read_scan_path
 from .core import (
-    DEFAULT_SPECTRAL_ERROR_FRACTION,
     build_spatial_index,
-    collect_zero_indices,
     compute_melt_mask_grid,
+)
+from .morphology import (
+    collect_zero_indices,
     count_phase_codes,
     label_sparse_defects,
+)
+from .resources import validate_memory_limit
+from .spectral import (
+    DEFAULT_SPECTRAL_ERROR_FRACTION,
+    validate_spectral_error_fraction,
 )
 
 
@@ -315,21 +321,8 @@ def compute_porosity(
         not np.isfinite(tile_width) or tile_width <= 0.0
     ):
         raise ValueError("tile_width must be finite and positive or None.")
-    if (
-        not np.isfinite(spectral_error_fraction)
-        or spectral_error_fraction <= 0.0
-        or spectral_error_fraction > 1.0
-    ):
-        raise ValueError(
-            "spectral_error_fraction must be finite and in the interval "
-            "(0, 1]."
-        )
-    if memory_limit_mb is not None and (
-        isinstance(memory_limit_mb, (bool, np.bool_))
-        or not isinstance(memory_limit_mb, (int, np.integer))
-        or memory_limit_mb < 1
-    ):
-        raise ValueError("memory_limit_mb must be a positive integer or None.")
+    validate_spectral_error_fraction(spectral_error_fraction)
+    validate_memory_limit(memory_limit_mb)
 
     requested_tile_size = None
     if tile_width is not None:

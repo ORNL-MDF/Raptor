@@ -14,15 +14,19 @@ import numpy as np
 import pytest
 
 import raptor.core as core
+import raptor.resources as resources
 from raptor.core import (
-    _spectral_approximation_error_bound,
-    build_spectral_tables,
     build_spatial_index,
     classify_horizontal_melt_and_boundary,
     conservative_vertical_interval,
     compute_melt_mask_grid,
+)
+from raptor.spectral import (
+    build_spectral_tables,
     evaluate_spectra_fast,
     evaluate_spectral_table,
+    prepare_spectral_history_plan,
+    spectral_approximation_error_bound,
 )
 from raptor.structures import Grid, MeltPool, PathVector
 
@@ -215,7 +219,7 @@ class TestFastSpectralMath:
         frequencies = np.array([0.0, 3100.0, 6200.0, 9300.0])
         phases = np.array([[0.0, 0.7, 2.1, 5.4]], dtype=np.float64)
         duration = 1.0e-3
-        bound = _spectral_approximation_error_bound(
+        bound = spectral_approximation_error_bound(
             amplitudes, frequencies, duration
         )
         maximum_error = 0.0
@@ -249,7 +253,7 @@ class TestFastSpectralMath:
             maximum_error = max(maximum_error, abs(exact - approximate))
         assert maximum_error <= bound
         assert bound <= RESOLUTION * 0.25
-        unsafe_bound = _spectral_approximation_error_bound(
+        unsafe_bound = spectral_approximation_error_bound(
             np.array([1.0e-3]),
             np.array([1.0e12]),
             1.0,
@@ -316,20 +320,24 @@ class TestComputeMeltMask:
         monkeypatch,
     ):
         mebibyte = 1024**2
-        monkeypatch.setattr(core, "_read_cgroup_remaining_bytes", lambda: None)
         monkeypatch.setattr(
-            core,
-            "_available_memory_bytes",
+            resources,
+            "read_cgroup_remaining_bytes",
+            lambda: None,
+        )
+        monkeypatch.setattr(
+            resources,
+            "available_memory_bytes",
             lambda: 100 * mebibyte,
         )
         monkeypatch.setenv("RAPTOR_MEMORY_LIMIT_MB", "40")
-        assert core._resolve_memory_budget(20) == (20 * mebibyte, "api")
-        assert core._resolve_memory_budget(None) == (
+        assert resources.resolve_memory_budget(20) == (20 * mebibyte, "api")
+        assert resources.resolve_memory_budget(None) == (
             40 * mebibyte,
             "environment",
         )
         monkeypatch.delenv("RAPTOR_MEMORY_LIMIT_MB")
-        assert core._resolve_memory_budget(None) == (
+        assert resources.resolve_memory_budget(None) == (
             80 * mebibyte,
             "automatic",
         )
@@ -360,7 +368,7 @@ class TestComputeMeltMask:
             grid.resolution,
             vectors,
         )
-        spectral_plan = core._prepare_spectral_history_plan(
+        spectral_plan = prepare_spectral_history_plan(
             grid.resolution,
             constant_melt_pool,
             active,
@@ -377,7 +385,7 @@ class TestComputeMeltMask:
         streaming_minimum = (
             fixed_bytes + spectral_offsets_bytes + largest_vector_bytes
         )
-        execution_plan = core._plan_memory_execution(
+        execution_plan = resources.plan_memory_execution(
             streaming_minimum,
             "test",
             fixed_bytes,
@@ -387,7 +395,7 @@ class TestComputeMeltMask:
         assert execution_plan.mode == "streamed"
         assert execution_plan.batches == [(0, 1), (1, 2)]
         with pytest.raises(MemoryError, match="memory_limit_mb"):
-            core._plan_memory_execution(
+            resources.plan_memory_execution(
                 streaming_minimum - 1,
                 "test",
                 fixed_bytes,
@@ -406,7 +414,7 @@ class TestComputeMeltMask:
             candidate_indices=indices,
         )
 
-        original_planner = core._plan_memory_execution
+        original_planner = core.plan_memory_execution
 
         def force_two_batches(*args):
             plan = original_planner(*args)
@@ -416,7 +424,7 @@ class TestComputeMeltMask:
 
         monkeypatch.setattr(
             core,
-            "_plan_memory_execution",
+            "plan_memory_execution",
             force_two_batches,
         )
         diagnostics = {}

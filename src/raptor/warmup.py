@@ -29,13 +29,13 @@ def warm_numba_cache(
     """
     import numpy as np
 
-    from .core import (
-        build_spectral_tables,
+    from .core import compute_melt_mask_kernel
+    from .morphology import (
         collect_zero_indices,
-        compute_melt_mask_kernel,
         count_phase_codes,
         label_sparse_defects,
     )
+    from .spectral import build_spectral_tables
 
     timings: Dict[str, float] = {}
 
