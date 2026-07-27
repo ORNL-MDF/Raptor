@@ -54,11 +54,29 @@ class Problem:
     active_vectors: list
 
 
+@dataclass
+class Geometry:
+    """RVE geometry selected for a benchmark profile."""
+
+    minimum: np.ndarray
+    maximum: np.ndarray
+    resolution: float
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description=(
             "Benchmark Raptor using the run_synthetic_rve.py configuration."
         )
+    )
+    parser.add_argument(
+        "--profile",
+        choices=("example", "reference"),
+        default="example",
+        help=(
+            "Use the quick-run example geometry or the documented "
+            "billion-voxel reference geometry."
+        ),
     )
     parser.add_argument(
         "--study",
@@ -89,6 +107,14 @@ def parse_args():
         nargs="+",
         default=[0.25],
         help="Voxel-relative spectral error budgets.",
+    )
+    parser.add_argument(
+        "--memory-limit-mb",
+        type=int,
+        help=(
+            "Optional per-process memory budget. Omit for automatic sizing; "
+            "small budgets exercise ordered spectral-table streaming."
+        ),
     )
     parser.add_argument(
         "--repeats",
@@ -146,14 +172,34 @@ def validate_args(args):
         )
     if args.accuracy_samples < 1:
         raise ValueError("--accuracy-samples must be positive.")
+    if args.memory_limit_mb is not None and args.memory_limit_mb < 1:
+        raise ValueError("--memory-limit-mb must be positive.")
 
 
-def prepare_problem(melt_pool, xy_scale=1.0):
+def select_geometry(profile):
+    """Resolve the quick-run or documented reference geometry."""
+    if profile == "reference":
+        return Geometry(
+            np.zeros(3, dtype=np.float64),
+            np.full(3, 1.0e-3, dtype=np.float64),
+            1.0e-6,
+        )
+    return Geometry(
+        np.array(RVE_MIN_POINT, dtype=np.float64),
+        np.array(RVE_MAX_POINT, dtype=np.float64),
+        VOXEL_RESOLUTION,
+    )
+
+
+def prepare_problem(melt_pool, geometry, xy_scale=1.0):
     """Prepare a geometrically scaled synthetic problem."""
-    bound_box = np.array([RVE_MIN_POINT, RVE_MAX_POINT], dtype=np.float64)
+    bound_box = np.array(
+        [geometry.minimum, geometry.maximum],
+        dtype=np.float64,
+    )
     xy_span = bound_box[1, :2] - bound_box[0, :2]
     bound_box[1, :2] = bound_box[0, :2] + xy_scale * xy_span
-    grid = create_grid(VOXEL_RESOLUTION, bound_box=bound_box)
+    grid = create_grid(geometry.resolution, bound_box=bound_box)
     vectors = create_path_vectors(
         bound_box,
         LASER_POWER,
@@ -217,6 +263,7 @@ def run_performance_case(
     settling_runs,
     expected_checksums,
     xy_scale,
+    memory_limit_mb,
 ):
     """Run one thread/tile/error configuration."""
     active, tile_size, offsets, indices, index_metrics = build_index(
@@ -244,6 +291,7 @@ def run_performance_case(
             candidate_offsets=offsets,
             candidate_indices=indices,
             spectral_error_fraction=error_fraction,
+            memory_limit_mb=memory_limit_mb,
             diagnostics=diagnostics,
             report=run_index == 0,
         )
@@ -289,12 +337,18 @@ def run_performance_case(
     return rows
 
 
-def run_performance_study(args, melt_pool):
+def run_performance_study(args, melt_pool, geometry):
     rows = []
     expected_checksums = {}
     maximum_threads = max(args.threads)
     if args.study == "strong":
-        problems = [(1.0, args.threads, prepare_problem(melt_pool))]
+        problems = [
+            (
+                1.0,
+                args.threads,
+                prepare_problem(melt_pool, geometry),
+            )
+        ]
     else:
         problems = []
         for thread_count in args.threads:
@@ -303,7 +357,7 @@ def run_performance_study(args, melt_pool):
                 (
                     xy_scale,
                     [thread_count],
-                    prepare_problem(melt_pool, xy_scale),
+                    prepare_problem(melt_pool, geometry, xy_scale),
                 )
             )
 
@@ -327,6 +381,7 @@ def run_performance_study(args, melt_pool):
                             args.settling_runs,
                             expected_checksums,
                             xy_scale,
+                            args.memory_limit_mb,
                         )
                     )
         del problem
@@ -465,6 +520,7 @@ def phase_accuracy_fields(problem, args, fractions):
             candidate_offsets=offsets,
             candidate_indices=indices,
             spectral_error_fraction=fraction,
+            memory_limit_mb=args.memory_limit_mb,
         )
         if reference is None:
             reference = mask
@@ -478,8 +534,8 @@ def phase_accuracy_fields(problem, args, fractions):
     return comparisons
 
 
-def run_accuracy_study(args, melt_pool):
-    problem = prepare_problem(melt_pool)
+def run_accuracy_study(args, melt_pool, geometry):
+    problem = prepare_problem(melt_pool, geometry)
     durations, dimension_data = adjusted_spectral_data(problem)
     rng = np.random.default_rng(RANDOM_SEED)
     vector_indices = rng.integers(
@@ -591,8 +647,9 @@ def write_rows(rows, output_path):
     if output_path is None:
         return
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = list(dict.fromkeys(key for row in rows for key in row))
     with output_path.open("w", newline="") as output_file:
-        writer = csv.DictWriter(output_file, fieldnames=list(rows[0]))
+        writer = csv.DictWriter(output_file, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
     print(f"Measurements written to: {output_path}")
@@ -602,11 +659,12 @@ def main():
     args = parse_args()
     validate_args(args)
     warm_numba_cache(include_morphology=False)
-    melt_pool = build_melt_pool()
+    geometry = select_geometry(args.profile)
+    melt_pool = build_melt_pool(geometry.resolution)
     if args.study == "accuracy":
-        rows = run_accuracy_study(args, melt_pool)
+        rows = run_accuracy_study(args, melt_pool, geometry)
     else:
-        rows = run_performance_study(args, melt_pool)
+        rows = run_performance_study(args, melt_pool, geometry)
     write_rows(rows, args.output)
 
 

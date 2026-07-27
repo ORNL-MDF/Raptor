@@ -33,6 +33,7 @@ parameters:
   layer_height: 1.0e-5
   voxel_resolution: 1.0e-5
   enable_random_segment_phase: false
+  memory_limit_mb: 512
 melt_pool_data:
   width: {type: time_series, file_name: dimension.txt, nmodes: 1, scale: 1.0}
   depth:
@@ -54,10 +55,16 @@ output: {}
 """.lstrip()
     )
     monkeypatch.chdir(tmp_path)
+    observed_options = {}
+
+    def compute_porosity(grid, vectors, melt_pool, **options):
+        observed_options.update(options)
+        return np.ones(grid.shape, dtype=np.int8)
+
     monkeypatch.setattr(
         cli,
         "compute_porosity",
-        lambda grid, vectors, melt_pool: np.ones(grid.shape, dtype=np.int8),
+        compute_porosity,
     )
     monkeypatch.setattr(
         sys,
@@ -66,6 +73,7 @@ output: {}
     )
 
     assert cli.main() == 0
+    assert observed_options["memory_limit_mb"] == 512
 
 
 def test_console_entry_point_propagates_failure_status(monkeypatch):

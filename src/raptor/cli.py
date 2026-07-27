@@ -70,7 +70,7 @@ def main() -> int:
                 "random_seed",
                 "tile_width",
                 "spectral_error_fraction",
-                "max_spectral_table_bytes",
+                "memory_limit_mb",
             )
             if key in scan_pattern_parameters
         }
@@ -227,8 +227,8 @@ def main() -> int:
         print(f"Error: {e}")
         return 1
 
-    except ValueError as ve:
-        print(f"Error: {ve}")
+    except (MemoryError, ValueError) as error:
+        print(f"Error: {error}")
         return 1
 
     except Exception as e:

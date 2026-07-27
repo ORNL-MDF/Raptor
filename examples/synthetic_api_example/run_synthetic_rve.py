@@ -51,19 +51,19 @@ HEIGHT_SHAPE_FACTOR = 1.0
 DEPTH_SHAPE_FACTOR = 1.0
 
 RVE_MIN_POINT = np.array([0.0, 0.0, 0.0])
-RVE_MAX_POINT = np.array([1.0e-3, 1.0e-3, 1.0e-3])
-VOXEL_RESOLUTION = 1.0e-6
-TILE_WIDTH = 80.0e-6
+RVE_MAX_POINT = np.array([5.0e-4, 5.0e-4, 5.0e-4])
+VOXEL_RESOLUTION = 5.0e-6
+# TILE_WIDTH = 80.0e-6
 SPECTRAL_ERROR_FRACTION = 0.25
-MAX_SPECTRAL_TABLE_BYTES = 256 * 1024**2
 
 VTK_OUTPUT = "rve.vti"
 MORPHOLOGY_OUTPUT = "rve_morphology.csv"
 WIDTH_DATA_PLOT = "melt_pool_width_timeseries.png"
+WRITE_SIGNAL_PLOT = False
 ENABLE_VISUALIZATION = False
 
 
-def build_melt_pool():
+def build_melt_pool(voxel_resolution=VOXEL_RESOLUTION):
     # Create melt pools from convolution filter
 
     # Instantiate object
@@ -71,7 +71,7 @@ def build_melt_pool():
         MELT_POOL_WIDTH,
         MELT_POOL_WIDTH_STD_DEV,
         SCAN_SPEED,
-        VOXEL_RESOLUTION,
+        voxel_resolution,
         random_seed=42,
     )
 
@@ -84,7 +84,7 @@ def build_melt_pool():
         1.0, mp_filter.n_points, mp_filter.t
     )
     width_spectral = compute_spectral_components(
-        width_data, tolerance=VOXEL_RESOLUTION
+        width_data, tolerance=voxel_resolution
     )
     reconstructed_width = reconstruct_spectral_signal(
         width_data[:, 0], width_spectral
@@ -99,14 +99,15 @@ def build_melt_pool():
         f"n_modes={width_spectral.shape[0]}, "
         f"reconstruction_rmse={reconstruction_rmse:.6e} m"
     )
-    plot_melt_pool_signal(
-        width_data,
-        width_spectral,
-        MELT_POOL_WIDTH,
-        MELT_POOL_WIDTH_STD_DEV,
-        WIDTH_DATA_PLOT,
-        value_label="Melt-pool width (µm)",
-    )
+    if WRITE_SIGNAL_PLOT:
+        plot_melt_pool_signal(
+            width_data,
+            width_spectral,
+            MELT_POOL_WIDTH,
+            MELT_POOL_WIDTH_STD_DEV,
+            WIDTH_DATA_PLOT,
+            value_label="Melt-pool width (µm)",
+        )
 
     # scale melt pool data by constant factor
     depth_scale = MELT_POOL_DEPTH / MELT_POOL_WIDTH
@@ -130,7 +131,9 @@ def build_melt_pool():
     }
 
     return create_melt_pool(
-        melt_pool_dict, enable_random_phases=True, tolerance=VOXEL_RESOLUTION
+        melt_pool_dict,
+        enable_random_phases=True,
+        tolerance=voxel_resolution,
     )
 
 
@@ -161,9 +164,7 @@ def main():
         melt_pool,
         jit_warmup=True,
         random_seed=RANDOM_SEED,
-        tile_width=TILE_WIDTH,
         spectral_error_fraction=SPECTRAL_ERROR_FRACTION,
-        max_spectral_table_bytes=MAX_SPECTRAL_TABLE_BYTES,
     )
     phase_histogram = compute_phase_histogram(porosity)
     phase_checksum = hashlib.sha256(memoryview(porosity)).hexdigest()

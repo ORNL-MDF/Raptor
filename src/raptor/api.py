@@ -10,7 +10,6 @@
 # =============================================================================
 import time
 import warnings
-from numbers import Integral
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 import numpy as np
@@ -19,7 +18,6 @@ from .utilities import ScanPathBuilder
 from .structures import MeltPool, PathVector, Grid
 from .io import read_scan_path
 from .core import (
-    DEFAULT_MAX_SPECTRAL_TABLE_BYTES,
     DEFAULT_SPECTRAL_ERROR_FRACTION,
     build_spatial_index,
     collect_zero_indices,
@@ -302,13 +300,17 @@ def compute_porosity(
     *,
     tile_width: Optional[float] = None,
     spectral_error_fraction: float = DEFAULT_SPECTRAL_ERROR_FRACTION,
-    max_spectral_table_bytes: Optional[int] = DEFAULT_MAX_SPECTRAL_TABLE_BYTES,
+    memory_limit_mb: Optional[int] = None,
 ) -> np.ndarray:
     """Compute the porosity phase field.
 
     ``tile_width`` is a performance-only spatial-index control in metres.
     ``None`` selects the automatic default. ``spectral_error_fraction`` is
     the maximum spectral and interpolation error as a fraction of one voxel.
+    ``memory_limit_mb`` is the per-process core-computation memory budget in
+    units of 1024**2 bytes. ``None`` uses ``RAPTOR_MEMORY_LIMIT_MB`` when set,
+    otherwise 80 percent of currently available memory. A smaller budget
+    streams ordered spectral-table batches without reducing accuracy.
     """
     if tile_width is not None and (
         not np.isfinite(tile_width) or tile_width <= 0.0
@@ -323,14 +325,12 @@ def compute_porosity(
             "spectral_error_fraction must be finite and in the interval "
             "(0, 1]."
         )
-    if max_spectral_table_bytes is not None and (
-        isinstance(max_spectral_table_bytes, (bool, np.bool_))
-        or not isinstance(max_spectral_table_bytes, Integral)
-        or max_spectral_table_bytes < 1
+    if memory_limit_mb is not None and (
+        isinstance(memory_limit_mb, (bool, np.bool_))
+        or not isinstance(memory_limit_mb, (int, np.integer))
+        or memory_limit_mb < 1
     ):
-        raise ValueError(
-            "max_spectral_table_bytes must be a positive integer or None."
-        )
+        raise ValueError("memory_limit_mb must be a positive integer or None.")
 
     requested_tile_size = None
     if tile_width is not None:
@@ -391,7 +391,7 @@ def compute_porosity(
         candidate_offsets=candidate_offsets,
         candidate_indices=candidate_indices,
         spectral_error_fraction=spectral_error_fraction,
-        max_spectral_table_bytes=max_spectral_table_bytes,
+        memory_limit_mb=memory_limit_mb,
         report=True,
     )
     t_elapsed = time.time() - t0_run

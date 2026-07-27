@@ -8,10 +8,15 @@
 # For details, see the top-level LICENSE file at:
 # https://github.com/ORNL-MDF/Raptor/LICENSE
 # =============================================================================
+import os
+from dataclasses import dataclass
+from numbers import Integral
+from pathlib import Path
+from typing import List, Optional, Tuple
+
 import numpy as np
 from numba import get_num_threads, njit, prange
-from numbers import Integral
-from typing import List, Optional, Tuple
+
 from .structures import MeltPool, PathVector
 
 
@@ -20,14 +25,16 @@ _FLOAT32_EPSILON = np.finfo(np.float32).eps
 # polynomial. Range-reduction and accumulation allowances are added below.
 _COSINE_POLYNOMIAL_ERROR = 3.0e-7
 DEFAULT_SPECTRAL_ERROR_FRACTION = 0.25
-DEFAULT_MAX_SPECTRAL_TABLE_BYTES = 256 * 1024**2
 DEFAULT_TARGET_TILE_WIDTH = 80.0e-6
 _MINIMUM_AUTOMATIC_TILE_SIZE = 16
+_MEBIBYTE = 1024**2
+_AUTO_MEMORY_FRACTION = 0.80
+_MEMORY_LIMIT_ENVIRONMENT = "RAPTOR_MEMORY_LIMIT_MB"
 
 
 def _validate_spectral_controls(
     spectral_error_fraction: float,
-    max_spectral_table_bytes: Optional[int],
+    memory_limit_mb: Optional[int],
 ) -> None:
     if (
         not np.isfinite(spectral_error_fraction)
@@ -38,14 +45,148 @@ def _validate_spectral_controls(
             "spectral_error_fraction must be finite and in the interval "
             "(0, 1]."
         )
-    if max_spectral_table_bytes is not None and (
-        isinstance(max_spectral_table_bytes, (bool, np.bool_))
-        or not isinstance(max_spectral_table_bytes, Integral)
-        or max_spectral_table_bytes < 1
+    if memory_limit_mb is not None and (
+        isinstance(memory_limit_mb, (bool, np.bool_))
+        or not isinstance(memory_limit_mb, Integral)
+        or memory_limit_mb < 1
     ):
+        raise ValueError("memory_limit_mb must be a positive integer or None.")
+
+
+def _read_cgroup_remaining_bytes() -> Optional[int]:
+    """Return the remaining Linux control-group memory, when constrained."""
+    candidates = (
+        (
+            Path("/sys/fs/cgroup/memory.max"),
+            Path("/sys/fs/cgroup/memory.current"),
+        ),
+        (
+            Path("/sys/fs/cgroup/memory/memory.limit_in_bytes"),
+            Path("/sys/fs/cgroup/memory/memory.usage_in_bytes"),
+        ),
+    )
+    remaining = []
+    for limit_path, usage_path in candidates:
+        try:
+            limit_text = limit_path.read_text().strip()
+            if limit_text == "max":
+                continue
+            limit_bytes = int(limit_text)
+            usage_bytes = int(usage_path.read_text().strip())
+        except (OSError, ValueError):
+            continue
+        if limit_bytes >= 1 << 60:
+            continue
+        remaining.append(max(0, limit_bytes - usage_bytes))
+    return min(remaining) if remaining else None
+
+
+def _available_memory_bytes() -> int:
+    """Return memory currently available to this process."""
+    import psutil
+
+    available_bytes = int(psutil.virtual_memory().available)
+    cgroup_remaining = _read_cgroup_remaining_bytes()
+    if cgroup_remaining is not None:
+        available_bytes = min(available_bytes, cgroup_remaining)
+    return available_bytes
+
+
+def _parse_environment_memory_limit() -> Optional[int]:
+    value = os.getenv(_MEMORY_LIMIT_ENVIRONMENT)
+    if value is None:
+        return None
+    try:
+        limit_mb = int(value)
+    except ValueError as error:
         raise ValueError(
-            "max_spectral_table_bytes must be a positive integer or None."
+            f"{_MEMORY_LIMIT_ENVIRONMENT} must be a positive integer."
+        ) from error
+    if limit_mb < 1:
+        raise ValueError(
+            f"{_MEMORY_LIMIT_ENVIRONMENT} must be a positive integer."
         )
+    return limit_mb
+
+
+def _resolve_memory_budget(memory_limit_mb: Optional[int]) -> Tuple[int, str]:
+    """Resolve API, environment, or automatic memory into bytes."""
+    _validate_spectral_controls(
+        DEFAULT_SPECTRAL_ERROR_FRACTION,
+        memory_limit_mb,
+    )
+    source = "api"
+    resolved_mb = memory_limit_mb
+    if resolved_mb is None:
+        resolved_mb = _parse_environment_memory_limit()
+        source = "environment"
+    if resolved_mb is not None:
+        budget_bytes = int(resolved_mb) * _MEBIBYTE
+        cgroup_remaining = _read_cgroup_remaining_bytes()
+        if cgroup_remaining is not None:
+            budget_bytes = min(budget_bytes, cgroup_remaining)
+            if budget_bytes < int(resolved_mb) * _MEBIBYTE:
+                source += "+cgroup"
+        return budget_bytes, source
+
+    available_bytes = _available_memory_bytes()
+    return int(available_bytes * _AUTO_MEMORY_FRACTION), "automatic"
+
+
+@dataclass
+class SpectralHistoryPlan:
+    """Accuracy-derived arrays shared by resident and streamed tables."""
+
+    durations: np.ndarray
+    point_counts: np.ndarray
+    width_phases: np.ndarray
+    depth_phases: np.ndarray
+    height_phases: np.ndarray
+    width_amplitudes: np.ndarray
+    width_frequencies: np.ndarray
+    depth_amplitudes: np.ndarray
+    depth_frequencies: np.ndarray
+    height_amplitudes: np.ndarray
+    height_frequencies: np.ndarray
+    table_error_bound: float
+
+    @property
+    def total_points(self) -> int:
+        return sum(int(count) for count in self.point_counts)
+
+    @property
+    def table_bytes(self) -> int:
+        return self.total_points * 3 * np.dtype(np.float32).itemsize
+
+    @property
+    def fixed_bytes(self) -> int:
+        arrays = (
+            self.durations,
+            self.point_counts,
+            self.width_phases,
+            self.depth_phases,
+            self.height_phases,
+            self.width_amplitudes,
+            self.width_frequencies,
+            self.depth_amplitudes,
+            self.depth_frequencies,
+            self.height_amplitudes,
+            self.height_frequencies,
+        )
+        return sum(array.nbytes for array in arrays)
+
+
+@dataclass
+class MemoryExecutionPlan:
+    """Resolved core-array budget and contiguous spectral vector batches."""
+
+    budget_bytes: int
+    budget_source: str
+    fixed_bytes: int
+    full_table_bytes: int
+    peak_bytes: int
+    mode: str
+    batches: List[Tuple[int, int]]
 
 
 @njit(cache=True, inline="always", fastmath=True)
@@ -152,18 +293,17 @@ def conservative_vertical_interval(
     )
 
 
-def build_spectral_history_table(
+def _prepare_spectral_history_plan(
     resolution: float,
     melt_pool: MeltPool,
     path_vectors: List[PathVector],
     *,
     spectral_error_fraction: float = DEFAULT_SPECTRAL_ERROR_FRACTION,
-    max_spectral_table_bytes: Optional[int] = DEFAULT_MAX_SPECTRAL_TABLE_BYTES,
-):
-    """Build independent packed width, depth, and height histories."""
+) -> SpectralHistoryPlan:
+    """Plan globally identical resident or streamed spectral histories."""
     _validate_spectral_controls(
         spectral_error_fraction,
-        max_spectral_table_bytes,
+        None,
     )
     width_amplitudes64 = np.ascontiguousarray(
         melt_pool.width_oscillations[:, 0]
@@ -268,44 +408,6 @@ def build_spectral_history_table(
     total_points = sum(int(count) for count in point_counts)
     if total_points > np.iinfo(np.int64).max:
         raise MemoryError("The optimized spectral table is too large to index.")
-    table_bytes = total_points * 3 * np.dtype(np.float32).itemsize
-    if (
-        max_spectral_table_bytes is not None
-        and table_bytes > max_spectral_table_bytes
-    ):
-        raise MemoryError(
-            "The optimized spectral table would require "
-            f"{table_bytes / 1024**2:.2f} MiB; the limit is "
-            f"{max_spectral_table_bytes / 1024**2:.2f} MiB."
-        )
-
-    spectral_table_offsets = np.zeros(len(path_vectors) + 1, dtype=np.int64)
-    spectral_table_offsets[1:] = np.cumsum(point_counts)
-    spectral_table = build_spectral_tables(
-        durations,
-        spectral_table_offsets,
-        width_phases64.astype(np.float32),
-        depth_phases64.astype(np.float32),
-        height_phases64.astype(np.float32),
-        width_amplitudes64.astype(np.float32),
-        width_frequencies64.astype(np.float32),
-        depth_amplitudes64.astype(np.float32),
-        depth_frequencies64.astype(np.float32),
-        height_amplitudes64.astype(np.float32),
-        height_frequencies64.astype(np.float32),
-    )
-    if not np.isfinite(spectral_table).all():
-        raise ValueError(
-            "The evaluated melt-pool dimension histories contain "
-            "non-finite values."
-        )
-    invalid_dimensions = np.min(spectral_table, axis=0) <= 0.0
-    if np.any(invalid_dimensions):
-        names = np.array(("width", "depth", "height"))
-        raise ValueError(
-            "The evaluated melt-pool histories must remain positive; "
-            "invalid dimensions: " + ", ".join(names[invalid_dimensions]) + "."
-        )
 
     effective_time_step = np.max(
         np.divide(
@@ -323,12 +425,230 @@ def build_spectral_history_table(
         / 8.0
         for amplitudes, frequencies, approximation_error in dimension_data
     )
+    return SpectralHistoryPlan(
+        durations=np.ascontiguousarray(durations),
+        point_counts=np.ascontiguousarray(point_counts),
+        width_phases=np.ascontiguousarray(width_phases64, dtype=np.float32),
+        depth_phases=np.ascontiguousarray(depth_phases64, dtype=np.float32),
+        height_phases=np.ascontiguousarray(height_phases64, dtype=np.float32),
+        width_amplitudes=np.ascontiguousarray(
+            width_amplitudes64, dtype=np.float32
+        ),
+        width_frequencies=np.ascontiguousarray(
+            width_frequencies64, dtype=np.float32
+        ),
+        depth_amplitudes=np.ascontiguousarray(
+            depth_amplitudes64, dtype=np.float32
+        ),
+        depth_frequencies=np.ascontiguousarray(
+            depth_frequencies64, dtype=np.float32
+        ),
+        height_amplitudes=np.ascontiguousarray(
+            height_amplitudes64, dtype=np.float32
+        ),
+        height_frequencies=np.ascontiguousarray(
+            height_frequencies64, dtype=np.float32
+        ),
+        table_error_bound=float(table_error_bound),
+    )
+
+
+def _build_spectral_history_batch(
+    plan: SpectralHistoryPlan,
+    start: int,
+    stop: int,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Build and validate one contiguous vector range from a global plan."""
+    point_counts = plan.point_counts[start:stop]
+    offsets = np.zeros(stop - start + 1, dtype=np.int64)
+    offsets[1:] = np.cumsum(point_counts)
+    table = build_spectral_tables(
+        plan.durations[start:stop],
+        offsets,
+        plan.width_phases[start:stop],
+        plan.depth_phases[start:stop],
+        plan.height_phases[start:stop],
+        plan.width_amplitudes,
+        plan.width_frequencies,
+        plan.depth_amplitudes,
+        plan.depth_frequencies,
+        plan.height_amplitudes,
+        plan.height_frequencies,
+    )
+    if not np.isfinite(table).all():
+        raise ValueError(
+            "The evaluated melt-pool dimension histories contain "
+            "non-finite values."
+        )
+    invalid_dimensions = np.min(table, axis=0) <= 0.0
+    if np.any(invalid_dimensions):
+        names = np.array(("width", "depth", "height"))
+        raise ValueError(
+            "The evaluated melt-pool histories must remain positive; "
+            "invalid dimensions: " + ", ".join(names[invalid_dimensions]) + "."
+        )
+    return offsets, table
+
+
+def build_spectral_history_table(
+    resolution: float,
+    melt_pool: MeltPool,
+    path_vectors: List[PathVector],
+    *,
+    spectral_error_fraction: float = DEFAULT_SPECTRAL_ERROR_FRACTION,
+):
+    """Build a complete table for accuracy analysis and diagnostics."""
+    plan = _prepare_spectral_history_plan(
+        resolution,
+        melt_pool,
+        path_vectors,
+        spectral_error_fraction=spectral_error_fraction,
+    )
+    spectral_table_offsets, spectral_table = _build_spectral_history_batch(
+        plan,
+        0,
+        len(path_vectors),
+    )
     diagnostics = {
         "spectral_table_points": int(spectral_table.shape[0]),
-        "spectral_table_bytes": int(table_bytes),
-        "spectral_error_bound": float(table_error_bound),
+        "spectral_table_bytes": int(plan.table_bytes),
+        "spectral_error_bound": plan.table_error_bound,
     }
     return spectral_table_offsets, spectral_table, diagnostics
+
+
+def _insufficient_memory_error(
+    budget_bytes: int,
+    minimum_bytes: int,
+    budget_source: str,
+) -> MemoryError:
+    minimum_mb = (minimum_bytes + _MEBIBYTE - 1) // _MEBIBYTE
+    return MemoryError(
+        "Raptor cannot fit the phase field and required core workspace.\n\n"
+        f"Resolved memory budget: {budget_bytes / _MEBIBYTE:.2f} MB "
+        f"({budget_source})\n"
+        f"Minimum required memory: {minimum_bytes / _MEBIBYTE:.2f} MB\n\n"
+        "Increase the per-process memory budget to at least:\n"
+        f"  Python API: memory_limit_mb={minimum_mb}\n"
+        f"  YAML: memory_limit_mb: {minimum_mb}\n"
+        f"  Environment: {_MEMORY_LIMIT_ENVIRONMENT}={minimum_mb}\n\n"
+        "Raptor did not reduce spectral accuracy."
+    )
+
+
+def _plan_contiguous_batches(
+    point_counts: np.ndarray,
+    maximum_table_bytes: int,
+) -> List[Tuple[int, int]]:
+    """Partition ordered vectors without changing per-vector table density."""
+    bytes_per_point = 3 * np.dtype(np.float32).itemsize
+    batches = []
+    start = 0
+    batch_bytes = 0
+    for vector_index, point_count in enumerate(point_counts):
+        vector_bytes = int(point_count) * bytes_per_point
+        if vector_bytes > maximum_table_bytes:
+            return []
+        if (
+            vector_index > start
+            and batch_bytes + vector_bytes > maximum_table_bytes
+        ):
+            batches.append((start, vector_index))
+            start = vector_index
+            batch_bytes = 0
+        batch_bytes += vector_bytes
+    if start < point_counts.size:
+        batches.append((start, point_counts.size))
+    return batches
+
+
+def _plan_memory_execution(
+    budget_bytes: int,
+    budget_source: str,
+    fixed_bytes: int,
+    spectral_plan: SpectralHistoryPlan,
+    streaming_workspace_bytes: int,
+) -> MemoryExecutionPlan:
+    """Choose the resident table or ordered streaming under one budget."""
+    offsets_bytes = (spectral_plan.point_counts.size + 1) * np.dtype(
+        np.int64
+    ).itemsize
+    resident_peak = fixed_bytes + spectral_plan.table_bytes + offsets_bytes
+    if resident_peak <= budget_bytes:
+        return MemoryExecutionPlan(
+            budget_bytes,
+            budget_source,
+            fixed_bytes,
+            spectral_plan.table_bytes,
+            resident_peak,
+            "resident",
+            [(0, spectral_plan.point_counts.size)],
+        )
+
+    streaming_fixed = fixed_bytes + streaming_workspace_bytes
+    maximum_table_bytes = budget_bytes - streaming_fixed - offsets_bytes
+    batches = _plan_contiguous_batches(
+        spectral_plan.point_counts,
+        maximum_table_bytes,
+    )
+    if not batches:
+        largest_vector_bytes = (
+            int(np.max(spectral_plan.point_counts, initial=0))
+            * 3
+            * np.dtype(np.float32).itemsize
+        )
+        minimum_bytes = streaming_fixed + offsets_bytes + largest_vector_bytes
+        raise _insufficient_memory_error(
+            budget_bytes,
+            minimum_bytes,
+            budget_source,
+        )
+
+    largest_batch_bytes = max(
+        sum(int(count) for count in spectral_plan.point_counts[start:stop])
+        * 3
+        * np.dtype(np.float32).itemsize
+        for start, stop in batches
+    )
+    return MemoryExecutionPlan(
+        budget_bytes,
+        budget_source,
+        fixed_bytes,
+        spectral_plan.table_bytes,
+        streaming_fixed + offsets_bytes + largest_batch_bytes,
+        "streamed",
+        batches,
+    )
+
+
+def _filter_candidate_index_range(
+    candidate_offsets: np.ndarray,
+    candidate_indices: np.ndarray,
+    start: int,
+    stop: int,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Retain one ordered global-vector range and remap it to local indices."""
+    counts = np.empty(candidate_offsets.size - 1, dtype=np.int64)
+    for tile_index in range(counts.size):
+        tile_start = candidate_offsets[tile_index]
+        tile_stop = candidate_offsets[tile_index + 1]
+        tile_indices = candidate_indices[tile_start:tile_stop]
+        counts[tile_index] = np.count_nonzero(
+            (tile_indices >= start) & (tile_indices < stop)
+        )
+
+    offsets = np.empty(candidate_offsets.size, dtype=np.int64)
+    offsets[0] = 0
+    offsets[1:] = np.cumsum(counts)
+    indices = np.empty(offsets[-1], dtype=np.int32)
+    for tile_index in range(counts.size):
+        tile_start = candidate_offsets[tile_index]
+        tile_stop = candidate_offsets[tile_index + 1]
+        tile_indices = candidate_indices[tile_start:tile_stop]
+        selected = tile_indices[(tile_indices >= start) & (tile_indices < stop)]
+        output_start = offsets[tile_index]
+        indices[output_start : output_start + selected.size] = selected - start
+    return offsets, indices
 
 
 def compute_melt_mask_grid(
@@ -342,15 +662,16 @@ def compute_melt_mask_grid(
     candidate_offsets: np.ndarray,
     candidate_indices: np.ndarray,
     spectral_error_fraction: float = DEFAULT_SPECTRAL_ERROR_FRACTION,
-    max_spectral_table_bytes: Optional[int] = DEFAULT_MAX_SPECTRAL_TABLE_BYTES,
+    memory_limit_mb: Optional[int] = None,
     diagnostics: Optional[dict] = None,
     report: bool = False,
 ) -> np.ndarray:
     """Compute a regular RVE with the optimized horizontal table kernel."""
     _validate_spectral_controls(
         spectral_error_fraction,
-        max_spectral_table_bytes,
+        memory_limit_mb,
     )
+    budget_bytes, budget_source = _resolve_memory_budget(memory_limit_mb)
 
     origin = np.asarray(origin, dtype=np.float64)
     voxel_shape_array = np.asarray(voxel_shape, dtype=np.int64)
@@ -359,18 +680,40 @@ def compute_melt_mask_grid(
         * int(voxel_shape_array[1])
         * int(voxel_shape_array[2])
     )
-    melt_mask = np.zeros(n_voxels, dtype=np.int8)
     if not path_vectors:
+        phase_field_bytes = n_voxels * np.dtype(np.int8).itemsize
+        if phase_field_bytes > budget_bytes:
+            raise _insufficient_memory_error(
+                budget_bytes,
+                phase_field_bytes,
+                budget_source,
+            )
+        memory_diagnostics = {
+            "memory_budget_bytes": int(budget_bytes),
+            "memory_budget_source": budget_source,
+            "estimated_fixed_memory_bytes": int(phase_field_bytes),
+            "estimated_peak_memory_bytes": int(phase_field_bytes),
+            "execution_mode": "resident",
+            "spectral_table_batches": 0,
+        }
+        melt_mask = np.zeros(n_voxels, dtype=np.int8)
         if diagnostics is not None:
             diagnostics.update(
                 {
                     "spectral_table_points": 0,
                     "spectral_table_bytes": 0,
                     "spectral_error_bound": 0.0,
+                    **memory_diagnostics,
                 }
             )
         if report:
             print(" -> Spectral table: no active path vectors.")
+            print(
+                " -> Memory plan: budget="
+                f"{budget_bytes / _MEBIBYTE:.2f} MB "
+                f"({budget_source}), estimated peak="
+                f"{phase_field_bytes / _MEBIBYTE:.2f} MB, mode=resident."
+            )
             print(
                 " -> Kernel: horizontal implicit/table; "
                 f"Numba threads={get_num_threads()}."
@@ -402,6 +745,7 @@ def compute_melt_mask_grid(
             "The optimized Raptor kernel requires horizontal path vectors "
             "whose local z axes match the grid z axis."
         )
+    del e2
 
     lower_z = (
         np.floor((AABB[:, 4] - origin[2]) / resolution).astype(np.int64) - 1
@@ -412,57 +756,125 @@ def compute_melt_mask_grid(
     lower_z = np.maximum(lower_z, 0)
     upper_z = np.minimum(upper_z, voxel_shape_array[2] - 1)
 
-    (
-        spectral_table_offsets,
-        spectral_table,
-        table_diagnostics,
-    ) = build_spectral_history_table(
+    spectral_plan = _prepare_spectral_history_plan(
         resolution,
         melt_pool,
         path_vectors,
         spectral_error_fraction=spectral_error_fraction,
-        max_spectral_table_bytes=max_spectral_table_bytes,
     )
+    phase_field_bytes = n_voxels * np.dtype(np.int8).itemsize
+    fixed_arrays = (
+        origin,
+        voxel_shape_array,
+        candidate_offsets,
+        candidate_indices,
+        start_points,
+        distances,
+        inv_distance_sqr,
+        e0,
+        e1,
+        L0_sqr,
+        L1_sqr,
+        AABB,
+        centroids,
+        lower_z,
+        upper_z,
+    )
+    fixed_bytes = (
+        phase_field_bytes
+        + spectral_plan.fixed_bytes
+        + sum(array.nbytes for array in fixed_arrays)
+    )
+    streaming_workspace_bytes = (
+        2 * candidate_offsets.nbytes + candidate_indices.nbytes
+    )
+    memory_plan = _plan_memory_execution(
+        budget_bytes,
+        budget_source,
+        fixed_bytes,
+        spectral_plan,
+        streaming_workspace_bytes,
+    )
+    table_diagnostics = {
+        "spectral_table_points": int(spectral_plan.total_points),
+        "spectral_table_bytes": int(spectral_plan.table_bytes),
+        "spectral_error_bound": spectral_plan.table_error_bound,
+        "memory_budget_bytes": int(memory_plan.budget_bytes),
+        "memory_budget_source": memory_plan.budget_source,
+        "estimated_fixed_memory_bytes": int(memory_plan.fixed_bytes),
+        "estimated_peak_memory_bytes": int(memory_plan.peak_bytes),
+        "execution_mode": memory_plan.mode,
+        "spectral_table_batches": len(memory_plan.batches),
+    }
     if diagnostics is not None:
         diagnostics.update(table_diagnostics)
 
     if report:
         print(
-            " -> Spectral table: "
-            f"{spectral_table.shape[0]} samples, "
-            f"{table_diagnostics['spectral_table_bytes'] / 1024**2:.2f} MiB, "
+            " -> Spectral table plan: "
+            f"{spectral_plan.total_points} samples, "
+            f"{spectral_plan.table_bytes / _MEBIBYTE:.2f} MB full table, "
             "error bound="
-            f"{table_diagnostics['spectral_error_bound'] * 1.0e6:.3f} µm."
+            f"{spectral_plan.table_error_bound * 1.0e6:.3f} µm."
+        )
+        print(
+            " -> Memory plan: budget="
+            f"{memory_plan.budget_bytes / _MEBIBYTE:.2f} MB "
+            f"({memory_plan.budget_source}), fixed="
+            f"{memory_plan.fixed_bytes / _MEBIBYTE:.2f} MB, estimated peak="
+            f"{memory_plan.peak_bytes / _MEBIBYTE:.2f} MB, "
+            f"mode={memory_plan.mode}, batches={len(memory_plan.batches)}."
         )
         print(
             " -> Kernel: horizontal implicit/table; "
             f"Numba threads={get_num_threads()}."
         )
 
-    return compute_melt_mask_kernel(
-        resolution,
-        melt_mask,
-        origin,
-        voxel_shape_array,
-        tile_size,
-        candidate_offsets,
-        candidate_indices,
-        start_points,
-        e0,
-        e1,
-        L0_sqr,
-        L1_sqr,
-        AABB,
-        lower_z,
-        upper_z,
-        spectral_table_offsets,
-        spectral_table,
-        centroids,
-        distances,
-        inv_distance_sqr,
-        height_shape_factor,
-        depth_shape_factor,
-    )
+    melt_mask = np.zeros(n_voxels, dtype=np.int8)
+    for start, stop in memory_plan.batches:
+        spectral_table_offsets, spectral_table = _build_spectral_history_batch(
+            spectral_plan,
+            start,
+            stop,
+        )
+        if memory_plan.mode == "resident":
+            batch_candidate_offsets = candidate_offsets
+            batch_candidate_indices = candidate_indices
+        else:
+            (
+                batch_candidate_offsets,
+                batch_candidate_indices,
+            ) = _filter_candidate_index_range(
+                candidate_offsets,
+                candidate_indices,
+                start,
+                stop,
+            )
+        compute_melt_mask_kernel(
+            resolution,
+            melt_mask,
+            origin,
+            voxel_shape_array,
+            tile_size,
+            batch_candidate_offsets,
+            batch_candidate_indices,
+            start_points[start:stop],
+            e0[start:stop],
+            e1[start:stop],
+            L0_sqr[start:stop],
+            L1_sqr[start:stop],
+            AABB[start:stop],
+            lower_z[start:stop],
+            upper_z[start:stop],
+            spectral_table_offsets,
+            spectral_table,
+            centroids[start:stop],
+            distances[start:stop],
+            inv_distance_sqr[start:stop],
+            height_shape_factor,
+            depth_shape_factor,
+        )
+    return melt_mask
 
 
 def _spectral_approximation_error_bound(

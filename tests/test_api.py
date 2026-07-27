@@ -645,8 +645,8 @@ class TestComputePorosity:
             ({"spectral_error_fraction": 0.0}, "spectral_error_fraction"),
             ({"spectral_error_fraction": 1.01}, "spectral_error_fraction"),
             (
-                {"max_spectral_table_bytes": 0},
-                "max_spectral_table_bytes",
+                {"memory_limit_mb": 0},
+                "memory_limit_mb",
             ),
         ],
     )

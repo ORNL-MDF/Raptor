@@ -13,6 +13,7 @@
 import numpy as np
 import pytest
 
+import raptor.core as core
 from raptor.core import (
     _spectral_approximation_error_bound,
     build_spectral_tables,
@@ -308,6 +309,132 @@ def prepare_vector(vector, melt_pool):
 
 
 class TestComputeMeltMask:
+    def test_memory_budget_priority_and_ordered_streaming(
+        self,
+        constant_melt_pool,
+        path_vector,
+        monkeypatch,
+    ):
+        mebibyte = 1024**2
+        monkeypatch.setattr(core, "_read_cgroup_remaining_bytes", lambda: None)
+        monkeypatch.setattr(
+            core,
+            "_available_memory_bytes",
+            lambda: 100 * mebibyte,
+        )
+        monkeypatch.setenv("RAPTOR_MEMORY_LIMIT_MB", "40")
+        assert core._resolve_memory_budget(20) == (20 * mebibyte, "api")
+        assert core._resolve_memory_budget(None) == (
+            40 * mebibyte,
+            "environment",
+        )
+        monkeypatch.delenv("RAPTOR_MEMORY_LIMIT_MB")
+        assert core._resolve_memory_budget(None) == (
+            80 * mebibyte,
+            "automatic",
+        )
+
+        second_vector = PathVector(
+            np.array([0.0, 50.0e-6, 0.0]),
+            np.array([1.0e-3, 50.0e-6, 0.0]),
+            0.0,
+            1.0e-3,
+        )
+        second_vector.set_coordinate_frame()
+        vectors = [
+            prepare_vector(path_vector, constant_melt_pool),
+            prepare_vector(second_vector, constant_melt_pool),
+        ]
+        grid = Grid(
+            RESOLUTION,
+            bound_box=np.array(
+                [
+                    [0.0, -100.0e-6, -20.0e-6],
+                    [50.0e-6, 150.0e-6, 20.0e-6],
+                ]
+            ),
+        )
+        active, _, tile_size, offsets, indices = build_spatial_index(
+            grid.origin,
+            grid.shape,
+            grid.resolution,
+            vectors,
+        )
+        spectral_plan = core._prepare_spectral_history_plan(
+            grid.resolution,
+            constant_melt_pool,
+            active,
+        )
+        fixed_bytes = 100
+        spectral_offsets_bytes = (
+            spectral_plan.point_counts.size + 1
+        ) * np.dtype(np.int64).itemsize
+        largest_vector_bytes = (
+            int(np.max(spectral_plan.point_counts))
+            * 3
+            * np.dtype(np.float32).itemsize
+        )
+        streaming_minimum = (
+            fixed_bytes + spectral_offsets_bytes + largest_vector_bytes
+        )
+        execution_plan = core._plan_memory_execution(
+            streaming_minimum,
+            "test",
+            fixed_bytes,
+            spectral_plan,
+            0,
+        )
+        assert execution_plan.mode == "streamed"
+        assert execution_plan.batches == [(0, 1), (1, 2)]
+        with pytest.raises(MemoryError, match="memory_limit_mb"):
+            core._plan_memory_execution(
+                streaming_minimum - 1,
+                "test",
+                fixed_bytes,
+                spectral_plan,
+                0,
+            )
+
+        resident = compute_melt_mask_grid(
+            grid.origin,
+            grid.shape,
+            grid.resolution,
+            constant_melt_pool,
+            active,
+            tile_size=tile_size,
+            candidate_offsets=offsets,
+            candidate_indices=indices,
+        )
+
+        original_planner = core._plan_memory_execution
+
+        def force_two_batches(*args):
+            plan = original_planner(*args)
+            plan.mode = "streamed"
+            plan.batches = [(0, 1), (1, 2)]
+            return plan
+
+        monkeypatch.setattr(
+            core,
+            "_plan_memory_execution",
+            force_two_batches,
+        )
+        diagnostics = {}
+        streamed = compute_melt_mask_grid(
+            grid.origin,
+            grid.shape,
+            grid.resolution,
+            constant_melt_pool,
+            active,
+            tile_size=tile_size,
+            candidate_offsets=offsets,
+            candidate_indices=indices,
+            diagnostics=diagnostics,
+        )
+        np.testing.assert_array_equal(streamed, resident)
+        assert diagnostics["execution_mode"] == "streamed"
+        assert diagnostics["spectral_table_batches"] == 2
+
     def test_optimized_grid_kernel_and_orientation_contract(
         self, constant_melt_pool, path_vector
     ):
@@ -411,7 +538,7 @@ class TestComputeMeltMask:
             else:
                 np.testing.assert_array_equal(actual, reference)
 
-    def test_spectral_controls_change_density_and_enforce_memory_limit(
+    def test_spectral_error_control_changes_table_density(
         self,
         path_vector,
     ):
@@ -458,7 +585,6 @@ class TestComputeMeltMask:
             diagnostics=diagnostics,
         )
         loose_points = diagnostics["spectral_table_points"]
-        loose_bytes = diagnostics["spectral_table_bytes"]
 
         compute_melt_mask_grid(
             grid.origin,
@@ -473,20 +599,6 @@ class TestComputeMeltMask:
             diagnostics=diagnostics,
         )
         assert diagnostics["spectral_table_points"] > loose_points
-
-        with pytest.raises(MemoryError, match="spectral table"):
-            compute_melt_mask_grid(
-                grid.origin,
-                grid.shape,
-                grid.resolution,
-                melt_pool,
-                active,
-                tile_size=tile_size,
-                candidate_offsets=offsets,
-                candidate_indices=indices,
-                spectral_error_fraction=0.5,
-                max_spectral_table_bytes=loose_bytes - 1,
-            )
 
     def test_spatial_index_retains_vector_whose_melt_envelope_reaches_grid(
         self, constant_melt_pool
