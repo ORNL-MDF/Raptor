@@ -54,27 +54,25 @@ Raptor requires requires Python 3 (tested with Python 3.8+). The following Pytho
 *   **pandas**: For writing morphology information to .csv
 *   **pyvista**: For visualization of `.vti` results.
 
-Install Raptor and its dependencies from the cloned repository:
+From the cloned Raptor directory, create an isolated environment, install the
+package, configure a persistent cache inside the repository, and warm the
+production Numba signatures:
 
 ```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
 python -m pip install .
-```
 
-Raptor compiles its performance-critical Numba kernels on first use. To place
-the compiled kernels in a persistent cache and warm the production signatures
-before running a simulation:
-
-```bash
-export NUMBA_CACHE_DIR=/path/to/persistent/raptor-numba-cache
+export NUMBA_CACHE_DIR="$(pwd)/.numba-cache"
 raptor-warm-cache --cache-dir "$NUMBA_CACHE_DIR"
 ```
 
-Use the same `NUMBA_CACHE_DIR` when running Raptor. Cache warming is optional;
-without it, the first simulation compiles and caches the kernels automatically.
-Use a separate cache directory for each Python/Numba version and CPU
-architecture.
-
-It's highly recommended to use a virtual environment (e.g., `venv` or `conda`) to manage these dependencies.
+Keep the virtual environment active and `NUMBA_CACHE_DIR` set when running
+Raptor. In a new shell, run `source .venv/bin/activate` and repeat the
+`export` command. Cache warming is optional; without it, the first simulation
+compiles and caches the kernels automatically. Use a separate cache directory
+for each Python/Numba version and CPU architecture.
 
 ## Usage
 
