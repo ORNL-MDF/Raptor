@@ -62,20 +62,22 @@ logger = logging.getLogger(__name__)
 LASER_POWER_WATTS = 200.0
 LASER_VELOCITY_M_S = 1.0
 
-BOUNDS = ((80e-6, 150e-6),)
-UNIT_BOUNDS = ((0.0, 1.0),)
+HATCH_BOUNDS = (80e-6, 140e-6)
+LAYER_HEIGHT_BOUNDS = (30e-6, 80e-6)  # microns
+BOUNDS = (HATCH_BOUNDS, LAYER_HEIGHT_BOUNDS)
+UNIT_BOUNDS = ((0.0, 1.0),) * 2
 NUM_DIMS = len(BOUNDS)
 
 INITIAL_DATA_SIZE = 1
-MAX_ITERATIONS = 15
+MAX_ITERATIONS = 200
 
-SEED = 42
-
-VOXEL_RESOLUTION_M = 5.0e-6  # reference 5.0e-6
+VOXEL_RESOLUTION_M = 2.5e-6  # reference 5.0e-6
 RVE_LENGTH_M = 1e-3
-QUERY_VOLUME_MM3 = 1.0  # decrease query_volume_mm3 from 10 to speed up
+QUERY_VOLUME_MM3 = 10.0  # decrease query_volume_mm3 from 10 to speed up
 
 MIN_LEN_DEFECTS = 50
+
+SEED = 42
 
 
 class AnalysisMode(StrEnum):
@@ -91,9 +93,16 @@ BACKEND = "sable"  # "sable" or "sklearn"
 
 MESHGRID_SIZE = 150
 
-INITIAL_POINTS_TO_PREDICT = np.linspace(
-    BOUNDS[0][0], BOUNDS[0][1], MESHGRID_SIZE
-).reshape(-1, 1)
+N_GRIDS = (70, 60)
+
+
+def meshgrid_2d():
+    grids_1d = [np.linspace(*bound, ngrid) for bound, ngrid in zip(BOUNDS, N_GRIDS)]
+    x1, x2 = np.meshgrid(*grids_1d)
+    return np.stack((x1.reshape(-1), x2.reshape(-1)), axis=1)
+
+
+INITIAL_POINTS_TO_PREDICT = meshgrid_2d()
 
 MELT_POOL_SURROGATE_PATH = os.path.abspath(
     os.path.join(
@@ -244,6 +253,7 @@ def process_raptor_data(raptor_data):
     voxel_resolution_m = raptor_data["inputs"]["voxel_resolution_m"]
     combined_defects = raptor_data["outputs"]["equivalent_diameter_area"]
     hatch_spacing = raptor_data["inputs"]["hatch_spacing_m"]
+    layer_thickness = raptor_data["inputs"]["layer_thickness_m"]
 
     min_len_defects = MIN_LEN_DEFECTS
     if len(combined_defects) < min_len_defects:
@@ -304,7 +314,7 @@ def process_raptor_data(raptor_data):
     err_cvar = err_cvar.item() / 1e6
 
     logger.info("plotting pore distribution")
-    output_filename = f"pore_{hatch_spacing*1e6:.1f}.png"
+    output_filename = f"pore_{hatch_spacing*1e6:.1f}_{layer_thickness*1e6:.1f}.png"
     plot_defect_distribution(
         output_filename,
         sort_defect,
@@ -318,7 +328,8 @@ def process_raptor_data(raptor_data):
     sem_lognormal = log_sem.item() * mean_lognormal
     logger.info(
         f"Found {len(combined_defects)} defects: "
-        f"Hatch: {hatch_spacing*1e6:.1f}um | Mean and Max Pore: {mean_pore*1e6:.2f}, {max_pore*1e6:.2f}um\n | "
+        f"Hatch: {hatch_spacing*1e6:.1f}um, LT: {layer_thickness*1e6:.1f}um\n | "
+        f"Mean and Max Pore: {mean_pore*1e6:.2f}, {max_pore*1e6:.2f}um\n | "
         f"Estimated mean_lognormal: {mean_lognormal*1e6:.6f}, sem_lognormal: {sem_lognormal*1e6:.6f}\n | "
         f"Estimated CVAR({cvar_level:.0%}): {mean_cvar*1e6:.6f}, err_CVAR {err_cvar*1e6:.6f}\n | "
         f"Learning {ANALYZE}."
@@ -334,6 +345,12 @@ def process_raptor_data(raptor_data):
         # return the maximum pore size, use the standard deviation as approximate error estimate
         y, yerr = float(max_pore), float(std_pore)
 
+    # if the maximum pore diameter approaches the RVE_LENGTH, the statistics become meaningless
+    # return a large value with moderate certainty
+    if max_pore > RVE_LENGTH_M / 5:
+        y = RVE_LENGTH_M / 5
+        yerr = RVE_LENGTH_M / 200
+
     return y, yerr
 
 
@@ -343,14 +360,16 @@ def process_raptor_data(raptor_data):
 
 
 def get_data_point(x_suggested, mp_interpolator):
-    x_ = [np.clip(x_suggested[0], BOUNDS[0][0], BOUNDS[0][1])]
+    bounds = np.asarray(BOUNDS)
+    x = np.clip(x_suggested, bounds[:, 0], bounds[:, 1]).tolist()
     raptor_data = run_raptor(
-        x_[0],
+        x[0],
         mp_interpolator,
+        layer_thickness_m=x[1],
         voxel_resolution_m=VOXEL_RESOLUTION_M,
     )
-    y_, yerr_ = process_raptor_data(raptor_data)
-    return x_, y_, yerr_, raptor_data
+    y, yerr = process_raptor_data(raptor_data)
+    return x, y, yerr, raptor_data
 
 
 # -----------------------------------------------------------------------------
@@ -365,33 +384,25 @@ class ActiveLearningOrchestrator:
         self.mp_interpolator = MeltPoolInterpolator(MELT_POOL_SURROGATE_PATH)
 
         logger.info(f"Performing cold start with {INITIAL_DATA_SIZE} points...")
+        bounds = np.array(BOUNDS)
         lhs = qmc.LatinHypercube(d=NUM_DIMS, seed=SEED)
         lhs_samples = qmc.scale(
-            lhs.random(n=INITIAL_DATA_SIZE), [BOUNDS[0][0]], [BOUNDS[0][1]]
+            lhs.random(n=INITIAL_DATA_SIZE), bounds[:, 0], bounds[:, 1]
         )
-        bounds_points = np.array([[BOUNDS[0][0]], [BOUNDS[0][1]]])
 
-        self.dataset_x = np.vstack([lhs_samples, bounds_points]).tolist()
-        self.dataset_raptor = [
-            run_raptor(
-                x[0],
-                self.mp_interpolator,
-                voxel_resolution_m=VOXEL_RESOLUTION_M,
-            )
-            for x in self.dataset_x
+        self.dataset_x = lhs_samples.tolist()
+        initial_dataset = [
+            get_data_point(x, self.mp_interpolator) for x in self.dataset_x
         ]
-        # pre-process the raw data to extract y value and yerr
-        dataset_statistics = [
-            process_raptor_data(raptor_data) for raptor_data in self.dataset_raptor
+        self.dataset_x, self.dataset_y, self.dataset_yerr, self.dataset_raptor = [
+            list(tup) for tup in zip(*initial_dataset)
         ]
-        self.dataset_y, self.dataset_yerr = [
-            list(tuple) for tuple in zip(*dataset_statistics)
-        ]
+        print(self.dataset_x, self.dataset_y, self.dataset_yerr)
 
         scaler = "output_focus_log"
         if scaler == "lop1p":
             # scaling factor for output data transformation, pre-scaling, and post-scaling after log transform
-            # crucially, scling the outputs also scales the error bar, which influences the acquisition strategy
+            # crucially, scaling the outputs also scales the error bar, which influences the acquisition strategy
             pre_to_post_scale_ratio = 0.05
             y_prescale = pre_to_post_scale_ratio * np.max(self.dataset_y)
             y_postscale = np.log1p(1 / pre_to_post_scale_ratio)
@@ -400,11 +411,11 @@ class ActiveLearningOrchestrator:
             )
         elif scaler.startswith("output_focus"):
             D_CRIT_LIST = [10e-6, 20e-6, 40e-6]
-            # [y_low, y_high] roghly outlines the "interesting" output region
+            # [y_low, y_high] roughly outlines the "interesting" output region
             y_low = min(D_CRIT_LIST)
             y_high = max(D_CRIT_LIST)
             # focus is a scaling parameter that allows to zoom in (focus > 1) or zoom out (focus < 1) for the target region
-            focus = 2.0
+            focus = 3.0
             self.scaler = SCALER_REGISTRY[scaler](
                 y_low=y_low, y_high=y_high, focus=focus
             )
@@ -445,23 +456,23 @@ class ActiveLearningOrchestrator:
                 self.kernel_args = {
                     # x range of the data
                     # the bounds are always [0, 1], since dial currently normalizes the input
-                    "x_range": self.bounds_unit[0],
+                    "x_range": self.bounds_unit,
                     # sigma range of valid lengthscales
-                    "sigma_range": [1e-3, 0.5],
+                    "sigma_range": [2e-2, 0.5],
                     # smoothness hyperparameter gamma
                     # (0. means the minimum degree of smoothness, i.e. continuous;
                     #  1. is once differentiable, etc. )
-                    "gamma": 0.5,
+                    "gamma": 0.3,
                 }
                 self.backend_args = {
                     # memory size for number of features:
                     # needs to be large enough, but becomes slower with more features
-                    "n_features": 10000,
+                    "n_features": 5000,
                     # prior standard deviation
                     "prior_std": prior_std,
                     # algorithm hyperparameters
                     # p is degree of adaptivity (p=2 is a GP, p=1 is fully sparse)
-                    "p": 1.25,
+                    "p": 1.0,
                     # number of optimization steps (needs to be large enough, but slows performance)
                     "n_iter_irls": 100,
                 }
@@ -477,7 +488,7 @@ class ActiveLearningOrchestrator:
                 backend=self.backend,
                 kernel_args=self.kernel_args,
                 backend_args=self.backend_args,
-                seed=SEED,
+                seed=-1,
                 preprocess_standardize=False,
             )
 
@@ -560,20 +571,21 @@ class ActiveLearningOrchestrator:
             self.variance_grid = np.asarray(yerr_grid) ** 2
 
             np.savez(
-                "defect_model_surrogate.npz",
+                "defect_model_surrogate_2.npz",
                 mean_grid=self.mean_grid,
                 variance_grid=self.variance_grid,
                 dataset_x=self.dataset_x,
                 dataset_y=self.dataset_y,
                 dataset_yerr=self.dataset_yerr,
                 bounds=BOUNDS,
+                n_grids=N_GRIDS,
                 laser_power=LASER_POWER_WATTS,
                 laser_velocity=LASER_VELOCITY_M_S,
             )
 
             if self.iteration_count >= MAX_ITERATIONS:
                 logger.info(
-                    "Active Learning Complete. Surrogate saved to 'defect_model_surrogate.npz'."
+                    "Active Learning Complete. Surrogate saved to 'defect_model_surrogate_2.npz'."
                 )
                 raise Exception("DONE")
             return self.assemble_message("get_next_point")
