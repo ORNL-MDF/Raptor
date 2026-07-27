@@ -91,17 +91,15 @@ def _candidate_tile_y_range(
 ) -> Tuple[int, int]:
     """Conservatively bound intersecting tile rows for one tile column."""
     tolerance = _GEOMETRY_EPSILON
-    path_half_x = (
-        transverse_half_length * abs(e0_x)
-        + longitudinal_half_length * abs(e1_x)
-    )
+    path_half_x = transverse_half_length * abs(
+        e0_x
+    ) + longitudinal_half_length * abs(e1_x)
     if abs(delta_x) > path_half_x + maximum_tile_half_x + tolerance:
         return 1, 0
 
-    path_half_y = (
-        transverse_half_length * abs(e0_y)
-        + longitudinal_half_length * abs(e1_y)
-    )
+    path_half_y = transverse_half_length * abs(
+        e0_y
+    ) + longitudinal_half_length * abs(e1_y)
     lower_y = centroid_y - path_half_y - maximum_tile_half_y - tolerance
     upper_y = centroid_y + path_half_y + maximum_tile_half_y + tolerance
 
