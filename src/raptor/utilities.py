@@ -9,7 +9,7 @@
 # https://github.com/ORNL-MDF/Raptor/LICENSE
 # =============================================================================
 from pathlib import Path
-from typing import List, Optional, Tuple, Union
+from typing import Optional, Union
 
 import numpy as np
 from .structures import PathVector
@@ -306,10 +306,10 @@ class MeltPoolFilter:
         self.physical_effects = {}
 
     def add_effect(self, effect_name: str, effect_params: list):
-        """
-        Adds a physical effect {effect_name} with parameters
-        length_scale_m,frequency_hz,sigma_weight = effect_params
-        to the MeltPoolFiltration.physical_effects dictionary.
+        """Add a physical effect to ``MeltPoolFilter.physical_effects``.
+
+        ``effect_params`` contains the length scale, frequency, and standard
+        deviation weight.
         """
         if (
             not isinstance(effect_params, (list, tuple))
@@ -539,10 +539,7 @@ class MeltPoolFilter:
         return np.column_stack([t, final_series])
 
     def evaluate_variance_ci(self, data):
-        """
-        Evaluates the confidence interval for the variance of the data.
-        Returns (lower_bound, upper_bound) for the variance.
-        """
+        """Return variance confidence-interval diagnostics for ``data``."""
         n = len(data)
         sample_variance = np.var(data, ddof=1)
 

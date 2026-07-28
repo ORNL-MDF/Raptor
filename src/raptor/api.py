@@ -476,9 +476,7 @@ def write_vtk(
 def compute_morphology(
     porosity: np.ndarray, voxel_resolution: float, morphology_fields: List[str]
 ) -> Dict[str, np.ndarray]:
-    """
-    Extracts pores, computes morphology features.
-    """
+    """Extract pores and compute morphology features."""
     porosity = np.asarray(porosity)
     if porosity.ndim != 3:
         raise ValueError("porosity must be a three-dimensional array.")
@@ -561,9 +559,7 @@ def compute_morphology(
 
 
 def write_morphology(properties: dict, morphology_output_path: str) -> None:
-    """
-    Writes morphology output as a .csv.
-    """
+    """Write morphology output as a CSV file."""
     import pandas as pd
 
     morphology_df = pd.DataFrame(properties, index=None)

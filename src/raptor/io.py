@@ -10,14 +10,14 @@
 # =============================================================================
 import os
 import numpy as np
-from typing import List, Tuple
+from typing import List
 
 from .structures import PathVector
 
 
 def read_data(fname: str) -> np.ndarray:
     """
-    Reads melt pool timeseries as as T x 2 array of time, measurement data.
+    Reads melt pool time-series data as a T x 2 array of time and measurement.
     File formats should be .txt or .csv.
     """
     if not os.path.exists(fname):

@@ -20,13 +20,13 @@ This project is licensed under the BSD 3-Clause [License](LICENSE).
 **Raptor predicts porosity by following a multi-step process:**
 
 *  **Domain Voxelization**: A 3D bounding box, or Representative Volume Element (RVE), is defined and discretized into a uniform grid of voxels.
-*  **Scan Path Ingestion**: Scan path data is used to calculating the timing and trajectory for each laser vector.
+*  **Scan Path Ingestion**: Scan path data is used to calculate the timing and trajectory for each laser vector.
 *  **Dynamic Melt Pool Definition**: For each melt pool dimension (width, depth, height), the input time-series data is converted into a Fourier series (a sum of cosine functions). This creates a dynamic, time-dependent model of the melt pool's cross-sectional shape, which is modeled using modified Lamé curves. To capture stochastic process variations, a random phase shift can be applied to the Fourier series for each scan vector.
-*  **Melt Mask Calculation**: The core of the simulation iterates through each voxel in the domain. For each scan vector that passes near the voxel, it calculates the instantaneous melt pool shape and determines the voxel state. The voxel is either unmelted (0), on the interior of the melt pool (1), on the boundary of the melt pool (2), or at an intersection of melt pool boundaries (3). The voxel state updates dynamically as the scan vectors that interact with it successively melt / interact with it on the melt pool boundary. The outcome of this process is a simulated volume of overlapping melt pools, flagging melted voxels, boundary voxels, intersection voxels, and voxels that make up the defect structure. The core geometry computations are executed with a high-performance parallel kernel, Just-In-Time (JIT) compiled with Numba. This enables the rapid analysis of large, industrially-relevant domains.
+*  **Melt Mask Calculation**: The core of the simulation iterates through each voxel in the domain. For each scan vector that passes near the voxel, it calculates the instantaneous melt pool shape and determines the voxel state. The voxel is either unmelted (0), in the interior of the melt pool (1), on the boundary of the melt pool (2), or at an intersection of melt pool boundaries (3). The voxel state updates dynamically as successive scan vectors melt it or interact with it along a melt pool boundary. The outcome of this process is a simulated volume of overlapping melt pools, flagging melted voxels, boundary voxels, intersection voxels, and voxels that make up the defect structure. The core geometry computations are executed with a high-performance parallel kernel, just-in-time (JIT) compiled with Numba. This enables the rapid analysis of large, industrially relevant domains.
 *  **Porosity Prediction**: Any voxel that is not melted by the end of the simulation is flagged as porosity.
 *  **Boundary Tracking**: Voxels that are close to local melt pool boundaries are flagged as boundaries.
 *  **Intersection Tracking**: Voxels that are incident with two or more boundaries are flagged as intersection points.
-*  **Analysis and Output**: The final 3D volume is saved in the binary VTK ImageData (`.vti`) format. The morphological characteristics (e.g., volume, surface area, equivalent diameter) of contiguous pore structures can be quantified using the `scikit-image` library, and saved to a `.csv` file.
+*  **Analysis and Output**: The final 3D volume is saved in the binary VTK ImageData (`.vti`) format. The morphological characteristics (e.g., volume, surface area, equivalent diameter) of contiguous pore structures can be quantified using the `scikit-image` library and saved to a `.csv` file.
 
 <figure style="text-align:center;">
   <img
@@ -35,7 +35,8 @@ This project is licensed under the BSD 3-Clause [License](LICENSE).
     style="width:60%; height:auto;"
   >
   <figcaption>
-    Visualization of the melt pool overlaps with defects, interior, boundaries and intersections tracked.
+    Visualization of overlapping melt pools with tracked defects, interiors,
+    boundaries, and intersections.
   </figcaption>
 </figure>
 
@@ -44,15 +45,19 @@ This project is licensed under the BSD 3-Clause [License](LICENSE).
 Raptor requires Python 3.10 or newer. The following Python packages are
 necessary:
 ```bash
-    numpy, numba, pyyaml, vtk, scikit-image, pandas, pyvista
+    numpy, numba, psutil, scipy, matplotlib, PyYAML, vtk,
+    scikit-image, pandas, pyvista
 ```
 
 *   **NumPy**: For numerical operations and array manipulation.
 *   **Numba**: For JIT compilation and performance acceleration.
-*   **PyYAML**: For reading and parsing YAML configuration files
-*   **VTK**: For writing the output porosity map in `.vti` format
+*   **psutil**: For detecting available process and system memory.
+*   **SciPy**: For signal filtering and statistical calculations.
+*   **Matplotlib**: For optional melt pool signal plots.
+*   **PyYAML**: For reading and parsing YAML configuration files.
+*   **VTK**: For writing the output porosity map in `.vti` format.
 *   **scikit-image**: For calculating pore morphologies.
-*   **pandas**: For writing morphology information to .csv
+*   **pandas**: For writing morphology information to `.csv`.
 *   **pyvista**: For visualization of `.vti` results.
 
 From the cloned Raptor directory, create an isolated environment, install the
@@ -98,7 +103,7 @@ The CLI usage requires scan path files corresponding to build information. These
 
 **How to Run (CLI):**
 
-1.  **Prepare Inputs**: Create scan path files, melt pool data files, and a `input.yaml` file (detailed below).
+1.  **Prepare Inputs**: Create scan path files, melt pool data files, and an `input.yaml` file (detailed below).
 2.  **Execute Script**: Run the following command from your terminal, providing the path to your configuration file:
     ```bash
     raptor path/to/your/input.yaml
@@ -106,7 +111,7 @@ The CLI usage requires scan path files corresponding to build information. These
 3.  **Check Outputs**:
     *   Progress will be printed to the console.
     *   The 3D porosity map is saved to the `.vti` file specified in the config.
-    *   The pore morphology data is saved to the `.csv` file (if configured -- the example does not save the morphology information.).
+    *   The pore morphology data is saved to the `.csv` file if configured. The example does not save morphology information.
 
 #### CLI Input: The `input.yaml` File
 
@@ -140,7 +145,7 @@ melt_pool_data:
     file_name: "melt_pool_data/depth_timeseries.txt"
     nmodes: 10
     scale: 1.0
-    shape: 2.0          # Shape factor 'n' for the Lame curve (n=2 is elliptical)
+    shape: 2.0          # Shape factor 'n' for the Lamé curve (n=2 is elliptical)
   height:
     type: "time_series"
     file_name: "melt_pool_data/height_timeseries.txt"
@@ -173,6 +178,7 @@ arguments described below. If `memory_limit_mb` is `null`, Raptor checks the
 currently available memory.
 
 #### Configuration Details:
+
 * **Scan Path Files**: Each file in `scan_paths` should be a space-delimited text file. **The first line is treated as a header and is skipped.**
    **Format per line:**
    `mode x y z power parameter`
@@ -197,7 +203,9 @@ currently available memory.
 
 ### 2. Python Library (API)
 
-The API allows for programmatic parameter studies, custom workflows, and integration with other tools. The core functionality of Raptor can be called by scripting with the API library. An example is provided in `examples/api_example/rve.py`, which is an RVE simulation of defects in 500µm edge length cube.
+The API supports programmatic parameter studies, custom workflows, and
+integration with other tools. The example in `examples/api_example/rve.py`
+simulates defects in a cube with a 500 µm edge length.
 
 The following is a breakdown of the main steps for running a simulation programmatically.
 
@@ -247,7 +255,10 @@ path_vectors = scan_path_builder.process_vectors()
 ```
 
 #### Step 3:  Define the Melt Pool
-Load the melt pool dimension data (in this case, from a text file) and use the create_melt_pool function to construct the MeltPool object. The API allows you to set scaling factors and shape parameters for each dimension.
+Load the melt pool dimension data (in this case, from a text file) and use
+`create_melt_pool` to construct the `MeltPool` object. The API allows you to
+set a scaling factor for each dimension and shape factors for the vertical
+dimensions. The transverse width exponent is fixed at two.
 
 ```python
 from pathlib import Path
@@ -267,8 +278,9 @@ width_scale = 1.0
 depth_scale = 0.8
 height_scale = 0.4
 
-# assign shape to melt pool and cap (1 = parabola, 2 = ellipse)
-width_shape = 2  # placeholder
+# The transverse exponent is fixed at two. Select the vertical exponents
+# (1 = parabola, 2 = ellipse).
+width_shape = 2
 height_shape = 1
 depth_shape = 1
 
@@ -314,7 +326,11 @@ smaller memory budget, it streams ordered vector batches without changing the
 spectral sampling or requested accuracy.
 
 #### Step 5:  Write Results to a VTK File
-Use the write_vtk helper function to save the resulting porosity NumPy array to a `.vti` file for visualization in tools like ParaView. Note that this `.vti` will contain 0 for the voxels that are melted, and 1 for unmelted voxels. Paraview's contour feature can be used to isolate the defects within the RVE.
+Use the `write_vtk` helper function to save the resulting porosity NumPy array
+to a `.vti` file for visualization in tools like ParaView. The `Phase` array
+uses `0` for unmelted pore voxels, `1` for melted interior voxels, `2` for melt
+pool boundary voxels, and `3` for boundary intersections. ParaView can isolate
+the defects within the RVE by thresholding the `Phase` array around `0`.
 
 ```python
 from raptor.api import write_vtk
@@ -324,7 +340,10 @@ write_vtk(grid.origin, grid.resolution, porosity, "rve.vti")
 ```
 
 #### Step 6:  Compute and Write Morphology Descriptors
-Optionally use the `compute_morphology` and `write_morphology` functions to compute global descriptors such as volume, equivalent diameter, etc. For a full list of possible descriptors, see https://scikit-image.org/docs/stable/api/skimage.measure.html#skimage.measure.regionprops.
+Optionally use `compute_morphology` and `write_morphology` to compute
+per-defect descriptors such as volume and equivalent diameter. For a full list
+of possible descriptors, see the
+[`scikit-image` region properties documentation](https://scikit-image.org/docs/stable/api/skimage.measure.html#skimage.measure.regionprops).
 
 ```python
 from raptor.api import compute_morphology, write_morphology
@@ -333,18 +352,25 @@ from raptor.api import compute_morphology, write_morphology
 morphology = compute_morphology(porosity, voxel_resolution, ['area', 'equivalent_diameter_area'])
 write_morphology(morphology, "rve_morphology.csv")
 ```
+
 #### Step 7:  Visualize the Output
-Optionally use the `visualize` function to open an interactive window via `pyvista`. To perform more advanced visualizations, the output `.vti` file needs to be contoured to isolate the unmelted voxels (value 1) from the melted voxels (value 0). This contouring is automatically performed in `visualize`. The default scaling converts meters to microns for cleaner labeling in the interactive plot, but the scaling argument can be user-assigned.
+
+Optionally use `visualize` to open an interactive PyVista window in the native
+metre coordinate system. The function displays the complete phase field and,
+when phase `0` is present, automatically isolates the unmelted pore voxels in a
+second view.
 
 ```python
 from raptor.api import visualize
 
-#7. Visualize using PyVista
+# 7. Visualize using PyVista
 visualize("./rve.vti")
 ```
+
 To visualize the example output, uncomment the `visualize("./rve.vti")` line.
 
 
 ## References
+
 The melt pool measurements in the examples are scans performed in Ti6Al4V from the following study:
 * Miner, Justin; Narra, Sneha Prabha (2024). Dataset of Melt Pool Variability Measurements for Powder Bed Fusion - Laser Beam of Ti-6Al-4V. Carnegie Mellon University. Dataset. https://doi.org/10.1184/R1/25696293.v1

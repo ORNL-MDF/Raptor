@@ -111,7 +111,7 @@ def main() -> int:
         if rve:
             bounding_box = np.array([rve["min_point"], rve["max_point"]])
         else:
-            print("Warning: 'rve' was not found, defaulting to none")
+            print("Warning: 'rve' was not found; using scan-path bounds")
             bounding_box = None
 
         # read output dictionary

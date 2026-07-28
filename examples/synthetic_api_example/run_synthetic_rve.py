@@ -62,7 +62,7 @@ ENABLE_VISUALIZATION = False
 
 
 def build_melt_pool(voxel_resolution=VOXEL_RESOLUTION):
-    # Create melt pools from convolution filter
+    # Create melt-pool dimensions from a convolution filter
 
     # Instantiate object
     mp_filter = MeltPoolFilter(
@@ -76,7 +76,7 @@ def build_melt_pool(voxel_resolution=VOXEL_RESOLUTION):
     # Define physical scales
     mp_filter.add_effect("melt_pool", [MELT_POOL_LENGTH, None, 1])
 
-    # Generate stochastic melt pool
+    # Generate a stochastic melt-pool width history
     mp_filter.initialize()
     width_data = mp_filter.generate_fluctuations(
         1.0, mp_filter.n_points, mp_filter.t
@@ -107,11 +107,12 @@ def build_melt_pool(voxel_resolution=VOXEL_RESOLUTION):
             value_label="Melt-pool width (µm)",
         )
 
-    # scale melt pool data by constant factor
+    # Scale the width history to obtain depth and height histories.
     depth_scale = MELT_POOL_DEPTH / MELT_POOL_WIDTH
     height_scale = MELT_POOL_HEIGHT / MELT_POOL_WIDTH
 
-    # assign shape to melt pool and cap (1 = parabola, 2 = ellipse)
+    # The transverse exponent is fixed at two. Select the vertical exponents
+    # (1 = parabola, 2 = ellipse).
     melt_pool_dict = {
         "width": (width_data, N_MODES, 1.0, 2.0),
         "depth": (
@@ -152,7 +153,7 @@ def main():
         extra_layers=10,
     )
 
-    # 3. Create melt pools from convolution filter
+    # 3. Create melt-pool dimensions from a convolution filter
     melt_pool = build_melt_pool()
 
     # 4. Compute porosity using the superellipse melt-pool mask.

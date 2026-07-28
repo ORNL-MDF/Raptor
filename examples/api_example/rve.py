@@ -54,7 +54,7 @@ scan_path_builder = ScanPathBuilder(
 scan_path_builder.generate_layers()
 path_vectors = scan_path_builder.process_vectors()
 
-# 3. Create melt pools given a width sequence
+# 3. Create melt-pool dimensions from a width sequence
 SCRIPT_DIR = Path(__file__).resolve().parent
 melt_pool_data_path = (
     SCRIPT_DIR / ".." / "data" / "meltPoolData" / "ULI_v1700_theta0_widths.txt"
@@ -67,7 +67,8 @@ width_scale = 1.0
 depth_scale = 0.8
 height_scale = 0.4
 
-# assign shape to melt pool and cap (1 = parabola, 2 = ellipse)
+# The transverse exponent is fixed at two. Select the vertical exponents
+# (1 = parabola, 2 = ellipse).
 width_shape = 2  # The transverse exponent is fixed at two.
 height_shape = 1
 depth_shape = 1
