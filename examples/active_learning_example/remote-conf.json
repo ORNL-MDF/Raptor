@@ -1,0 +1,21 @@
+{
+    "intersect": {
+      "brokers": [
+        {
+          "username": "postman",
+          "password": "JgxlX5Vstarb4KrN",
+          "host": "10.64.193.144",
+          "port": 30010,
+          "protocol": "amqp0.9.1"
+        }
+      ]
+    },
+    "intersect-hierarchy": {
+      "organization": "ornl",
+      "facility": "intersect",
+      "system": "dial-system",
+      "subsystem": "dial-subsystem",
+      "service": "dial-service-acl",
+      "//COMMENT": "use the dial-service-acl service deployment for the most up-to date server version"
+    }
+  }

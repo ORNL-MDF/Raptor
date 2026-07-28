@@ -31,7 +31,10 @@ dependencies = [
     "vtk",
     "scikit-image",
     "pandas",
-    "pyvista"
+    "pyvista",
+    "intersect-sdk",
+    "dial @ git+https://github.com/INTERSECT-DIAL/dial@sable",
+    "sable @ git+https://code.ornl.gov/sable/sable@develop",
 ]
 
 [project.optional-dependencies]

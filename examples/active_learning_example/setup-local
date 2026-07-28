@@ -1,0 +1,53 @@
+#!/bin/sh
+set -eu
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+cd "$script_dir/local_config"
+
+sudo docker login
+sudo docker-compose down
+sudo docker-compose -f docker-compose.yml up -d
+
+broker_id=$(sudo docker-compose -f docker-compose.yml ps -q broker)
+if [ -z "$broker_id" ]; then
+    echo "RabbitMQ container was not created." >&2
+    exit 1
+fi
+
+waited_seconds=0
+max_wait_seconds=120
+broker_health=starting
+
+while [ "$waited_seconds" -lt "$max_wait_seconds" ]; do
+    broker_status=$(
+        sudo docker inspect --format '{{.State.Status}}' "$broker_id"
+    )
+    broker_health=$(
+        sudo docker inspect \
+            --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
+            "$broker_id"
+    )
+
+    if [ "$broker_health" = "healthy" ]; then
+        break
+    fi
+
+    if [ "$broker_status" != "running" ]; then
+        echo "RabbitMQ stopped during startup (status: $broker_status)." >&2
+        sudo docker-compose -f docker-compose.yml logs --tail=100 broker >&2
+        exit 1
+    fi
+
+    echo "Waiting for RabbitMQ to become healthy..."
+    sleep 2
+    waited_seconds=$((waited_seconds + 2))
+done
+
+if [ "$broker_health" != "healthy" ]; then
+    echo "RabbitMQ did not become healthy within ${max_wait_seconds}s." >&2
+    sudo docker-compose -f docker-compose.yml logs --tail=100 broker >&2
+    exit 1
+fi
+
+echo "RabbitMQ is healthy; starting the DIAL service."
+exec python launch_service.py --config local-conf.json
