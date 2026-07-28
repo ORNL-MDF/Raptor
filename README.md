@@ -128,7 +128,7 @@ parameters:
   spectral_error_fraction: 0.25
   memory_limit_mb: null
 
-# Melt pool dimension data. Can be 'time_series' or 'spectral_components'.
+# Melt pool dimension data. Must be 'time_series' (time, value) data.
 melt_pool_data:
   width:
     type: "time_series"
@@ -193,8 +193,7 @@ currently available memory.
    * The RVE min and max points *filter the scan paths for those that are near* the box defined by `min_point` and `max_point`; a large number of scan path files (such as from a part-scale build) can be downselected using this parameter setting.
 
 * **Melt Pool Data Files**: These files provide the data for the `melt_pool_data` section of the config.
-   *   If `type: "time_series"`, the file should be a two-column text or CSV file: `[time, value]`.
-   *   If `type: "spectral_components"`, the file should be a three-column text or CSV file: `[amplitude, frequency, phase]`.
+   *   With `type: "time_series"`, the file should be a two-column text or CSV file: `[time, value]`.
 
 ### 2. Python Library (API)
 
