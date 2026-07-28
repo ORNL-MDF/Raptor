@@ -13,7 +13,7 @@ mpl.use("agg")
 
 import numpy as np
 from intersect_sdk import (
-    INTERSECT_JSON_VALUE,
+    INTERSECT_RESPONSE_VALUE,
     HierarchyConfig,
     IntersectClient,
     IntersectClientCallback,
@@ -272,7 +272,7 @@ class ActiveLearningOrchestrator:
         _source: str,
         operation: str,
         has_error: bool,
-        payload: INTERSECT_JSON_VALUE,
+        payload: INTERSECT_RESPONSE_VALUE,
     ) -> IntersectClientCallback:
 
         if has_error:
@@ -290,9 +290,14 @@ class ActiveLearningOrchestrator:
             pass
 
         if operation == "dial.get_surrogate_values":
-            data = payload["data"]
-            mean_grid = np.array(data[0]).reshape((MESHGRID_SIZE,) * NUM_DIMS)
-            variance = np.array(data[1]).reshape((MESHGRID_SIZE,) * NUM_DIMS)
+            try:
+                means = payload["values"]
+                stddevs = payload["stddevs"]
+            except Exception as error:
+                print(f"Could not read surrogate values from payload: {error}")
+            mean_grid = np.array(means).reshape((MESHGRID_SIZE,) * NUM_DIMS)
+            stddevs = np.array(stddevs).reshape((MESHGRID_SIZE,) * NUM_DIMS)
+            variance = stddevs**2
 
             current_feature = self.features[self.feature_idx]
             self.surrogate_results[current_feature] = (mean_grid, variance)
@@ -322,6 +327,9 @@ class ActiveLearningOrchestrator:
 
         if operation == "dial.get_next_point":
             pass
+
+        err_msg = f"Unsupported operation received: {operation}"
+        raise Exception(err_msg)  # noqa: TRY002
 
 
 # -----------------------------------------------------------------------------
