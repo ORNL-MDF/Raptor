@@ -221,13 +221,14 @@ def create_melt_pool(
         data = np.asarray(data, dtype=np.float64)
         if data.ndim != 2:
             raise ValueError(
-                f"Unsupported data shape for {key}: {data.shape}. "
-                "Must be [time, value]."
+                f"{key} data must have shape (n, 2) representing "
+                f"(time, value); got {data.shape}."
             )
         if not np.isfinite(data).all():
             raise ValueError(f"{key} data must contain only finite values.")
 
-        # Option A: Input data is a raw time-series [time, value]
+        # Only (n, 2) time-series input is supported; spectral components
+        # are always computed internally from the supplied time series.
         if data.shape[1] == 2:
             component_tolerance = tolerance
             if tolerance is not None and scale != 0.0:
@@ -239,32 +240,10 @@ def create_melt_pool(
             )
             spectral_array[:, 0] *= scale
 
-        # # Option B: Input data is a spectral array [amplitude, frequency, phase]
-        # elif data.shape[1] == 3:
-        #     if data[0, 1] != 0.0:
-        #         raise ValueError(
-        #             f"{key} spectral data must begin with a zero-frequency "
-        #             "DC component."
-        #         )
-        #     spectral_array = data.copy()
-        #     negative_amplitudes = spectral_array[:, 0] < 0.0
-        #     spectral_array[negative_amplitudes, 0] *= -1.0
-        #     spectral_array[negative_amplitudes, 2] += np.pi
-        #     spectral_array[:, 2] = np.remainder(
-        #         spectral_array[:, 2], 2.0 * np.pi
-        #     )
-        #     dc_dimension = spectral_array[0, 0] * np.cos(spectral_array[0, 2])
-        #     if dc_dimension <= 0.0:
-        #         raise ValueError(
-        #             f"{key} spectral data must have a positive DC dimension."
-        #         )
-        #     spectral_array[0] = (dc_dimension, 0.0, 0.0)
-        #     spectral_array[:, 0] *= scale
-
         else:
             raise ValueError(
-                f"Unsupported data shape for {key}: {data.shape}. "
-                f"Must be [time, value]."
+                f"{key} data must have shape (n, 2) representing "
+                f"(time, value); got {data.shape}."
             )
 
         processed_components[key] = np.asarray(spectral_array, dtype=np.float64)

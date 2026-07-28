@@ -75,7 +75,7 @@ def main() -> int:
             if key in scan_pattern_parameters
         }
 
-        # read melt pool dictionary (time series or spectral components)
+        # read melt pool dictionary (time series only)
         melt_pool_dict = config.get("melt_pool_data", {})
         if not isinstance(melt_pool_dict, dict):
             raise ValueError("'melt_pool_data' must be a mapping.")
@@ -83,9 +83,10 @@ def main() -> int:
         try:
             for key, dimension_config in melt_pool_dict.items():
                 datatype = dimension_config["type"]
-                if datatype not in {"time_series", "spectral_components"}:
+                if datatype not in {"time_series"}:
                     raise ValueError(
-                        f"Unsupported {key} melt-pool data type: {datatype}"
+                        f"Unsupported {key} melt-pool data type: {datatype}. "
+                        "Only 'time_series' is supported."
                     )
                 filepath = Path(dimension_config["file_name"])
                 if not filepath.is_absolute():

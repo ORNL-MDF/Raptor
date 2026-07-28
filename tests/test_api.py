@@ -95,20 +95,6 @@ def sample_time_series_data():
 
 
 @pytest.fixture
-def sample_spectral_components():
-    """Fixture providing sample spectral components."""
-    # Format: [amplitude, frequency, phase]
-    return np.array(
-        [
-            [0.0001, 0.0, 0.0],  # mode 0 (mean)
-            [0.00002, 5.0, 0.0],  # mode 1
-            [0.00001, 10.0, np.pi / 2],  # mode 2
-        ],
-        dtype=np.float64,
-    )
-
-
-@pytest.fixture
 def sample_melt_pool_dict(sample_time_series_data):
     """Fixture providing a sample melt pool dictionary."""
     return {
@@ -459,51 +445,38 @@ class TestComputeSpectralComponents:
 class TestCreateMeltPool:
     """Test cases for the create_melt_pool function."""
 
-    def test_create_melt_pool_scales_spectral_amplitudes(
-        self, sample_spectral_components
+    def test_create_melt_pool_scales_all_spectral_modes(
+        self, sample_time_series_data
     ):
         scale_factor = 2.0
+        expected = compute_spectral_components(sample_time_series_data, 3)
         melt_pool = create_melt_pool(
             {
-                "width": (sample_spectral_components, 3, scale_factor, 2.0),
-                "depth": (sample_spectral_components, 3, 1.0, 2.0),
-                "height": (sample_spectral_components, 3, 1.0, 2.0),
+                "width": (sample_time_series_data, 3, scale_factor, 2.0),
+                "depth": (sample_time_series_data, 3, 1.0, 2.0),
+                "height": (sample_time_series_data, 3, 1.0, 2.0),
             },
             enable_random_phases=False,
         )
 
         np.testing.assert_allclose(
             melt_pool.width_oscillations[:, 0],
-            scale_factor * sample_spectral_components[:, 0],
+            scale_factor * expected[:, 0],
         )
 
-    def test_signed_spectral_coefficients_use_a_conservative_envelope(self):
-        width = np.array([[148.0e-6, 0.0, 0.0], [-100.0e-6, 100.0, 0.0]])
-        constant = np.array([[50.0e-6, 0.0, 0.0]])
-        melt_pool = create_melt_pool(
-            {
-                "width": (width, 2, 1.0, 2.0),
-                "depth": (constant, 1, 1.0, 2.0),
-                "height": (constant, 1, 1.0, 2.0),
-            },
-            enable_random_phases=False,
-        )
+    def test_create_melt_pool_rejects_spectral_array_input(
+        self, sample_time_series_data
+    ):
+        """Raw (n, 3) spectral arrays are no longer an accepted input."""
+        spectral_array = np.ones((3, 3))
+        melt_pool_data = {
+            "width": (spectral_array, 3, 1.0, 2.0),
+            "depth": (sample_time_series_data, 3, 1.0, 2.0),
+            "height": (sample_time_series_data, 3, 1.0, 2.0),
+        }
 
-        assert melt_pool.width_max == pytest.approx(248.0e-6)
-        np.testing.assert_allclose(
-            melt_pool.width_oscillations[:, 0],
-            [148.0e-6, 100.0e-6],
-        )
-        np.testing.assert_allclose(
-            melt_pool.width_oscillations[:, 2],
-            [0.0, np.pi],
-        )
-        vector = PathVector(
-            np.zeros(3), np.array([1.0e-3, 0.0, 0.0]), 0.0, 1.0e-3
-        )
-        vector.set_coordinate_frame()
-        vector.set_melt_pool_properties(melt_pool)
-        assert vector.AABB[3] == pytest.approx(124.0e-6)
+        with pytest.raises(ValueError, match="shape \\(n, 2\\)"):
+            create_melt_pool(melt_pool_data, enable_random_phases=False)
 
     @pytest.mark.parametrize(
         ("field", "value", "message"),
@@ -514,20 +487,19 @@ class TestCreateMeltPool:
         ],
     )
     def test_create_melt_pool_rejects_invalid_physical_inputs(
-        self, sample_spectral_components, field, value, message
+        self, sample_time_series_data, field, value, message
     ):
-        components = sample_spectral_components.copy()
+        data = sample_time_series_data.copy()
         scale = 1.0
         shape = 2.0
         if field == "data":
-            components[1, 1] = value
+            data[1, 1] = value
         elif field == "scale":
             scale = value
         else:
             shape = value
         melt_pool_data = {
-            key: (components, 3, scale, shape)
-            for key in ("width", "depth", "height")
+            key: (data, 3, scale, shape) for key in ("width", "depth", "height")
         }
 
         with pytest.raises(ValueError, match=message):
@@ -536,17 +508,15 @@ class TestCreateMeltPool:
                 enable_random_phases=False,
             )
 
-    def test_create_melt_pool_preserves_independent_mode_counts(self):
+    def test_create_melt_pool_preserves_independent_mode_counts(
+        self, sample_time_series_data
+    ):
         """Each dimension retains only its independently selected modes."""
-        one_mode = np.array([[1.0e-4, 0.0, 0.0]])
-        three_modes = np.array(
-            [[1.0e-4, 0.0, 0.0], [1.0e-6, 1.0, 0.0], [1.0e-6, 2.0, 0.0]]
-        )
         melt_pool = create_melt_pool(
             {
-                "width": (one_mode, 1, 1.0, 2.0),
-                "depth": (three_modes, 3, 1.0, 2.0),
-                "height": (one_mode, 1, 1.0, 2.0),
+                "width": (sample_time_series_data, 1, 1.0, 2.0),
+                "depth": (sample_time_series_data, 3, 1.0, 2.0),
+                "height": (sample_time_series_data, 1, 1.0, 2.0),
             },
             enable_random_phases=False,
         )
@@ -610,7 +580,7 @@ class TestCreateMeltPool:
         data = {
             key: (invalid, 2, 1.0, 2.0) for key in ("width", "depth", "height")
         }
-        with pytest.raises(ValueError, match="Unsupported data shape"):
+        with pytest.raises(ValueError, match="shape \\(n, 2\\)"):
             create_melt_pool(data, enable_random_phases=False)
 
 
@@ -691,13 +661,17 @@ class TestComputePorosity:
             [[100.0e-6, 0.0, 0.0], [200.0e-6, 1.0, 0.0]]
         )
         constant = np.array([[20.0e-6, 0.0, 0.0]])
-        melt_pool = create_melt_pool(
-            {
-                "width": (oscillating_width, 2, 1.0, 2.0),
-                "depth": (constant, 1, 1.0, 2.0),
-                "height": (constant, 1, 1.0, 2.0),
-            },
-            enable_random_phases=False,
+        melt_pool = MeltPool(
+            oscillating_width,
+            constant,
+            constant,
+            300.0e-6,
+            20.0e-6,
+            20.0e-6,
+            2.0,
+            2.0,
+            2.0,
+            False,
         )
 
         with pytest.raises(ValueError, match="must remain positive"):

@@ -17,11 +17,8 @@ from .structures import PathVector
 
 def read_data(fname: str) -> np.ndarray:
     """
-    Reads data from a .txt or .csv file.
-    Two types of input data structures are supported:
-        1. Melt pool timeseries -- T x 2 array of time, measurement
-        2. Spectral component array -- N x 3 array of amplitudes,
-           frequencies, and phases indexed by mode number.
+    Reads melt pool timeseries as as T x 2 array of time, measurement data.
+    File formats should be .txt or .csv.
     """
     if not os.path.exists(fname):
         raise FileNotFoundError(
