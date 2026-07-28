@@ -60,8 +60,8 @@ logger = logging.getLogger(__name__)
 # -----------------------------------------------------------------------------
 # USER PARAMETERS
 # -----------------------------------------------------------------------------
-LASER_POWER_WATTS = 200.0
-LASER_VELOCITY_M_S = 1.0
+LASER_POWER_WATTS = 195
+LASER_VELOCITY_M_S = 1.083
 
 HATCH_BOUNDS = (80e-6, 140e-6)
 LAYER_HEIGHT_BOUNDS = (30e-6, 80e-6)  # microns
