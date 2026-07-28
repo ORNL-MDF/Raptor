@@ -19,7 +19,13 @@ repos:
     rev: v2.2.6
     hooks:
       - id: codespell
-        args: ["-L", "mater,nd,coefficent,ot"]
+        args:
+          [
+            "--builtin",
+            "clear,rare,en-GB_to_en-US",
+            "-L",
+            "mater,nd,coefficent,ot",
+          ]
 
   - repo: local
     hooks:

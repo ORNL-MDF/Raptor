@@ -323,7 +323,8 @@ def compute_porosity(
 ) -> np.ndarray:
     """Compute the porosity phase field.
 
-    ``tile_width`` is a performance-only spatial-index control in metres.
+    ``tile_width`` is a performance-only spatial-index control measured in
+    meters.
     ``None`` selects the automatic default. ``spectral_error_fraction`` is
     the maximum spectral and interpolation error as a fraction of one voxel.
     ``memory_limit_mb`` is the per-process core-computation memory budget in
@@ -578,7 +579,8 @@ def write_morphology(properties: dict, morphology_output_path: str) -> None:
 
 def visualize(vtk_output_path: str) -> None:
     """
-    Visualize the porosity field in its native metre coordinate system.
+    Visualize the porosity field in its native coordinate system, measured in
+    meters.
     """
     import pyvista as pv
     from matplotlib.colors import ListedColormap

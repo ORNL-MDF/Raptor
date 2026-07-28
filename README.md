@@ -356,9 +356,9 @@ write_morphology(morphology, "rve_morphology.csv")
 #### Step 7:  Visualize the Output
 
 Optionally use `visualize` to open an interactive PyVista window in the native
-metre coordinate system. The function displays the complete phase field and,
-when phase `0` is present, automatically isolates the unmelted pore voxels in a
-second view.
+coordinate system, measured in meters. The function displays the complete
+phase field and, when phase `0` is present, automatically isolates the unmelted
+pore voxels in a second view.
 
 ```python
 from raptor.api import visualize
