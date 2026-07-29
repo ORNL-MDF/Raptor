@@ -29,7 +29,8 @@ def main(filepath):
     fig, ax = plt.subplots(figsize=(6.5, 4.5))
 
     Xg_mm_1d = [
-        np.linspace(*bound, n_grid) * 1e3 for bound, n_grid in zip(bounds, n_grids)
+        np.linspace(*bound, n_grid) * 1e3
+        for bound, n_grid in zip(bounds, n_grids)
     ]
     Xg_mm, Yg_mm = np.meshgrid(*Xg_mm_1d)
 

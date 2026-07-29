@@ -10,20 +10,26 @@
 # =============================================================================
 import time
 import warnings
+from pathlib import Path
 from typing import Any, Dict, List, Optional
-import numpy as np
-import pandas as pd
-import vtk
-from vtk.util import numpy_support
-import pyvista as pv
-from skimage import measure
-from skimage.morphology import remove_small_objects
-from matplotlib.colors import ListedColormap
 
-from .utilities import ScanPathBuilder
-from .structures import MeltPool, PathVector, Grid
+import numpy as np
+
+from .core import compute_melt_mask_grid
 from .io import read_scan_path
-from .core import compute_melt_mask
+from .morphology import (
+    collect_zero_indices,
+    count_phase_codes,
+    label_sparse_defects,
+)
+from .resources import validate_memory_limit
+from .spectral import (
+    DEFAULT_SPECTRAL_ERROR_FRACTION,
+    validate_spectral_error_fraction,
+)
+from .spatial import build_spatial_index
+from .structures import Grid, MeltPool, PathVector
+from .utilities import ScanPathBuilder
 
 
 def create_grid(
@@ -68,7 +74,9 @@ def create_path_vectors(
 
 def compute_required_modes(data: np.ndarray, reconstruction_rmse: float) -> int:
     """Return the minimum number of real Fourier modes for an RMSE target."""
-    return compute_spectral_components(data, tolerance=reconstruction_rmse).shape[0]
+    return compute_spectral_components(
+        data, tolerance=reconstruction_rmse
+    ).shape[0]
 
 
 def compute_spectral_components(
@@ -102,7 +110,9 @@ def compute_spectral_components(
     time_steps = np.diff(time_values)
     dt = time_steps[0]
     if dt <= 0.0 or not np.allclose(time_steps, dt, rtol=1.0e-7, atol=0.0):
-        raise ValueError("Time samples must be strictly increasing and uniform.")
+        raise ValueError(
+            "Time samples must be strictly increasing and uniform."
+        )
 
     n_samples = signal.size
     fft_values = np.fft.rfft(signal)
@@ -123,7 +133,8 @@ def compute_spectral_components(
         if not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("tolerance must be a finite, non-negative value.")
         candidate_energy = (
-            energy_weights[candidate_bins] * np.abs(fft_values[candidate_bins]) ** 2
+            energy_weights[candidate_bins]
+            * np.abs(fft_values[candidate_bins]) ** 2
         )
         energy_indices = np.argsort(candidate_energy)[::-1]
         energy_order = candidate_bins[energy_indices]
@@ -154,7 +165,9 @@ def compute_spectral_components(
     # Return modes in frequency order after any energy-ranked selection and cap.
     selected_bins = np.sort(selected_bins)
 
-    amplitudes = energy_weights[selected_bins] * np.abs(fft_values[selected_bins])
+    amplitudes = energy_weights[selected_bins] * np.abs(
+        fft_values[selected_bins]
+    )
     amplitudes /= n_samples
     phases = np.angle(fft_values[selected_bins])
     # FFT phases are relative to sample zero; account for an absolute time axis.
@@ -175,11 +188,47 @@ def create_melt_pool(
 ) -> MeltPool:
 
     processed_components: Dict[str, np.ndarray] = {}
+    required_dimensions = ("width", "depth", "height")
+    missing_dimensions = [
+        dimension
+        for dimension in required_dimensions
+        if dimension not in melt_pool_dict
+    ]
+    if missing_dimensions:
+        raise ValueError(
+            "melt_pool_dict is missing required dimensions: "
+            + ", ".join(missing_dimensions)
+        )
 
-    # Process every component before padding so results do not depend on
-    # dictionary insertion order.
-    for key, (data, n_modes, scale, shape_factor) in melt_pool_dict.items():
-        # Option A: Input data is a raw time-series [time, value]
+    for key in required_dimensions:
+        try:
+            data, n_modes, scale, shape_factor = melt_pool_dict[key]
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"{key} must be a (data, n_modes, scale, shape_factor) tuple."
+            ) from exc
+
+        if not np.isfinite(scale) or scale <= 0.0:
+            raise ValueError(f"{key} scale must be finite and positive.")
+        if not np.isfinite(shape_factor) or shape_factor <= 0.0:
+            raise ValueError(f"{key} shape factor must be finite and positive.")
+        if key == "width" and shape_factor != 2.0:
+            raise ValueError(
+                "The width shape factor must be 2.0; the optimized "
+                "transverse exponent is fixed."
+            )
+
+        data = np.asarray(data, dtype=np.float64)
+        if data.ndim != 2:
+            raise ValueError(
+                f"{key} data must have shape (n, 2) representing "
+                f"(time, value); got {data.shape}."
+            )
+        if not np.isfinite(data).all():
+            raise ValueError(f"{key} data must contain only finite values.")
+
+        # Only (n, 2) time-series input is supported; spectral components
+        # are always computed internally from the supplied time series.
         if data.shape[1] == 2:
             component_tolerance = tolerance
             if tolerance is not None and scale != 0.0:
@@ -191,28 +240,13 @@ def create_melt_pool(
             )
             spectral_array[:, 0] *= scale
 
-        # Option B: Input data is a spectral array [amplitude, frequency, phase]
-        elif data.shape[1] == 3:
-            spectral_array = data.copy()
-            spectral_array[:, 0] *= scale
-
         else:
             raise ValueError(
-                f"Unsupported data shape: {data.shape}.  "
-                f"Must be [time, value] or [amplitude, frequency, phase]"
+                f"{key} data must have shape (n, 2) representing "
+                f"(time, value); got {data.shape}."
             )
 
         processed_components[key] = np.asarray(spectral_array, dtype=np.float64)
-
-    max_modes = max(array.shape[0] for array in processed_components.values())
-    for key, spectral_array in processed_components.items():
-        current_modes = spectral_array.shape[0]
-        if current_modes != max_modes:
-            pad_array = np.zeros(
-                shape=(max_modes - current_modes, spectral_array.shape[1]),
-                dtype=np.float64,
-            )
-            processed_components[key] = np.vstack([spectral_array, pad_array])
 
     # 3. Create the MeltPool object
     width_oscillations = processed_components["width"]
@@ -228,9 +262,9 @@ def create_melt_pool(
         width_oscillations,
         depth_oscillations,
         height_oscillations,
-        width_oscillations[:, 0].sum(axis=0),
-        depth_oscillations[:, 0].sum(axis=0),
-        height_oscillations[:, 0].sum(axis=0),
+        np.abs(width_oscillations[:, 0]).sum(axis=0),
+        np.abs(depth_oscillations[:, 0]).sum(axis=0),
+        np.abs(height_oscillations[:, 0]).sum(axis=0),
         width_shape_factor,
         height_shape_factor,
         depth_shape_factor,
@@ -240,54 +274,138 @@ def create_melt_pool(
     return melt_pool
 
 
+def _assign_melt_pool_properties(
+    path_vectors: List[PathVector],
+    melt_pool: MeltPool,
+    random_seed: Optional[int],
+) -> None:
+    """Attach melt envelopes and reproducible phases to every path vector."""
+    phase_rng = np.random.RandomState(random_seed)
+    if not melt_pool.enable_random_phases:
+        for vector in path_vectors:
+            vector.set_melt_pool_properties(melt_pool, phase_rng)
+        return
+    if not path_vectors:
+        return
+
+    max_modes = max(
+        melt_pool.width_oscillations.shape[0],
+        melt_pool.depth_oscillations.shape[0],
+        melt_pool.height_oscillations.shape[0],
+    )
+    common_phase_rows = np.empty(
+        (len(path_vectors), max_modes),
+        dtype=np.float64,
+    )
+    common_phase_rows[:, 0] = 0.0
+    common_phase_rows[:, 1:] = phase_rng.uniform(
+        0.0,
+        2.0 * np.pi,
+        (len(path_vectors), max_modes - 1),
+    )
+    for vector, common_phases in zip(path_vectors, common_phase_rows):
+        vector.set_melt_pool_properties(
+            melt_pool,
+            phase_rng,
+            common_phases=common_phases,
+        )
+
+
 def compute_porosity(
     grid: Grid,
     path_vectors: List[PathVector],
     melt_pool: MeltPool,
-    jit_warmup: Optional[bool] = True,
-) -> None:
+    random_seed: Optional[int] = None,
+    *,
+    tile_width: Optional[float] = None,
+    spectral_error_fraction: float = DEFAULT_SPECTRAL_ERROR_FRACTION,
+    memory_limit_mb: Optional[int] = None,
+) -> np.ndarray:
+    """Compute the porosity phase field.
+
+    ``tile_width`` is a performance-only spatial-index control measured in
+    meters.
+    ``None`` selects the automatic default. ``spectral_error_fraction`` is
+    the maximum spectral and interpolation error as a fraction of one voxel.
+    ``memory_limit_mb`` is the per-process core-computation memory budget in
+    units of 1024**2 bytes. ``None`` uses ``RAPTOR_MEMORY_LIMIT_MB`` when set,
+    otherwise 80 percent of currently available memory. A smaller budget
+    streams ordered spectral-table batches without reducing accuracy.
     """
-    Main computation: computes porosity field.
-    """
+    if tile_width is not None and (
+        not np.isfinite(tile_width) or tile_width <= 0.0
+    ):
+        raise ValueError("tile_width must be finite and positive or None.")
+    validate_spectral_error_fraction(spectral_error_fraction)
+    validate_memory_limit(memory_limit_mb)
 
-    if jit_warmup:
-        print("JIT Warmup...")
-        t_start_warmup = time.time()
-
-        # Warm up the vector property assignment.
-        if path_vectors:
-            path_vectors[0].set_melt_pool_properties(melt_pool)
-
-        # Warm up the main, parallelized compute kernel.
-        if grid.n_voxels > 0 and path_vectors:
-            _ = compute_melt_mask(
-                grid.voxels[0:1], grid.resolution, melt_pool, path_vectors[0:1]
-            )
-
-        print(f" -> JIT warmup complete ({time.time() - t_start_warmup:.8f}s).")
+    requested_tile_size = None
+    if tile_width is not None:
+        requested_tile_size = max(
+            1,
+            int(round(tile_width / grid.resolution)),
+        )
 
     print(f"Preparing {len(path_vectors)} path vectors for simulation...")
     t0_setup = time.time()
-    for vector in path_vectors:
-        vector.set_melt_pool_properties(melt_pool)
+    _assign_melt_pool_properties(path_vectors, melt_pool, random_seed)
     print(f" -> Vector preparation complete ({time.time() - t0_setup:.8f}s).")
 
     print("Running melt-mask calculation...")
     t0_run = time.time()
-    melted_mask_flat = compute_melt_mask(
-        grid.voxels, grid.resolution, melt_pool, path_vectors
+    (
+        active_vectors,
+        voxel_shape,
+        tile_size,
+        candidate_offsets,
+        candidate_indices,
+    ) = build_spatial_index(
+        grid.origin,
+        grid.shape,
+        grid.resolution,
+        path_vectors,
+        tile_size=requested_tile_size,
+    )
+    candidate_counts = np.diff(candidate_offsets)
+    print(
+        " -> Spatial index: "
+        f"{len(active_vectors)}/{len(path_vectors)} vectors, "
+        f"{len(candidate_counts)} tiles, "
+        f"{candidate_counts.mean():.2f} mean candidates/tile, "
+        f"width={tile_size} voxels "
+        f"({tile_size * grid.resolution * 1.0e6:.3f} µm)."
+    )
+    melted_mask_flat = compute_melt_mask_grid(
+        grid.origin,
+        grid.shape,
+        grid.resolution,
+        melt_pool,
+        active_vectors,
+        tile_size=tile_size,
+        candidate_offsets=candidate_offsets,
+        candidate_indices=candidate_indices,
+        spectral_error_fraction=spectral_error_fraction,
+        memory_limit_mb=memory_limit_mb,
+        report=True,
     )
     t_elapsed = time.time() - t0_run
 
-    n_melted = melted_mask_flat.sum()
+    phase_counts = count_phase_codes(melted_mask_flat)
+    n_melted = int(phase_counts[1:].sum())
     print(
         f" -> Melt-mask computation complete ({t_elapsed:.8f}s). "
         f"Melted {n_melted} of {grid.n_voxels} voxels."
     )
 
-    porosity_field = (melted_mask_flat).astype(np.int8).reshape(grid.shape, order="C")
+    porosity_field = melted_mask_flat.reshape(grid.shape, order="C")
 
     return porosity_field
+
+
+def compute_phase_histogram(porosity: np.ndarray) -> Dict[int, int]:
+    """Count Raptor phase codes 0 through 3 in one parallel pass."""
+    counts = count_phase_codes(porosity.reshape(-1))
+    return {phase: int(counts[phase]) for phase in range(4)}
 
 
 def write_vtk(
@@ -296,24 +414,37 @@ def write_vtk(
     porosity: np.ndarray,
     vtk_output_path: str,
 ) -> None:
-    """
-    Generates porosity VTK.
-    """
+    """Write the phase field as a ParaView-compatible VTK image."""
+    import vtk
+    from vtk.util import numpy_support
+
+    origin = np.asarray(origin, dtype=np.float64)
+    porosity = np.asarray(porosity)
+    if origin.shape != (3,) or not np.isfinite(origin).all():
+        raise ValueError("origin must be a finite array with shape (3,).")
+    if not np.isfinite(voxel_resolution) or voxel_resolution <= 0.0:
+        raise ValueError("voxel_resolution must be finite and positive.")
+    if porosity.ndim != 3:
+        raise ValueError("porosity must be a three-dimensional array.")
 
     imageData = vtk.vtkImageData()
-
     nx, ny, nz = porosity.shape
 
-    imageData.SetDimensions(nx, ny, nz)
+    # Raptor computes with z contiguous for cache-efficient column traversal.
+    # Expose that buffer to VTK without a gigabyte-scale Fortran-order copy by
+    # mapping VTK's x/y/z index axes to Raptor's z/y/x memory axes.
+    imageData.SetDimensions(nz, ny, nx)
     imageData.SetOrigin(origin[0], origin[1], origin[2])
     imageData.SetSpacing(voxel_resolution, voxel_resolution, voxel_resolution)
+    direction = vtk.vtkMatrix3x3()
+    direction.DeepCopy((0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0))
+    imageData.SetDirectionMatrix(direction)
 
-    porosity_vtk_order = np.transpose(porosity, (2, 1, 0))
-
+    porosity_buffer = np.ascontiguousarray(porosity, dtype=np.int8).reshape(-1)
     vtk_data_array = numpy_support.numpy_to_vtk(
-        num_array=porosity_vtk_order.ravel(order="C"),
-        deep=True,
-        array_type=vtk.VTK_INT,
+        num_array=porosity_buffer,
+        deep=False,
+        array_type=vtk.VTK_SIGNED_CHAR,
     )
     vtk_data_array.SetName("Phase")
     imageData.GetPointData().SetScalars(vtk_data_array)
@@ -321,28 +452,103 @@ def write_vtk(
     writer = vtk.vtkXMLImageDataWriter()
     writer.SetFileName(vtk_output_path)
     writer.SetInputData(imageData)
+    writer.SetCompressorTypeToLZ4()
+    # Inline base64 remains readable by older ParaView/VTK releases for very
+    # large arrays. VTK 9.1 cannot reliably parse billion-element appended
+    # payloads written by newer VTK versions, even when the payload is encoded.
+    writer.SetBlockSize(1 << 20)
     writer.SetDataModeToBinary()
 
-    writer.Write()
-    del porosity
-    del porosity_vtk_order
+    write_status = writer.Write()
+    error_code = writer.GetErrorCode()
+    if (
+        write_status != 1
+        or error_code != vtk.vtkErrorCode.NoError
+        or not Path(vtk_output_path).is_file()
+    ):
+        error_name = vtk.vtkErrorCode.GetStringFromErrorCode(error_code)
+        raise OSError(
+            f"Unable to write VTK file: {vtk_output_path} ({error_name})"
+        )
 
     print(f"VTK phase map written to: {vtk_output_path}")
 
 
 def compute_morphology(
     porosity: np.ndarray, voxel_resolution: float, morphology_fields: List[str]
-) -> np.ndarray:
-    """
-    Extracts pores, computes morphology features.
-    """
-    defect_structure = porosity == 0
-    print(f"Identifying connected defects...")
+) -> Dict[str, np.ndarray]:
+    """Extract pores and compute morphology features."""
+    porosity = np.asarray(porosity)
+    if porosity.ndim != 3:
+        raise ValueError("porosity must be a three-dimensional array.")
+    if not np.isfinite(voxel_resolution) or voxel_resolution <= 0.0:
+        raise ValueError("voxel_resolution must be finite and positive.")
+    if not morphology_fields:
+        raise ValueError("morphology_fields must contain at least one field.")
+
+    supported_sparse_fields = {
+        "area",
+        "centroid",
+        "equivalent_diameter_area",
+        "label",
+    }
+    n_defects = int(count_phase_codes(porosity.reshape(-1))[0])
+    print("Identifying connected defects...")
     print(
-        f" -> Found {defect_structure.sum()} defect voxels. "
+        f" -> Found {n_defects} defect voxels. "
         f"Computing morphology features..."
     )
     min_size = 2
+    sparse_limit = min(int(porosity.size * 0.01), 10_000_000)
+    if n_defects <= sparse_limit and set(morphology_fields).issubset(
+        supported_sparse_fields
+    ):
+        flat_indices = collect_zero_indices(
+            porosity.reshape(-1), int(n_defects)
+        )
+        point_labels, n_components = label_sparse_defects(
+            flat_indices, porosity.shape, min_size
+        )
+        valid = point_labels >= 0
+        labels = point_labels[valid]
+        component_counts = np.bincount(labels, minlength=n_components).astype(
+            np.float64
+        )
+        component_volume = component_counts * voxel_resolution**3
+        properties = {}
+        for field in morphology_fields:
+            if field == "label":
+                properties["label"] = np.arange(
+                    1, n_components + 1, dtype=np.int64
+                )
+            elif field == "area":
+                properties["area"] = component_volume
+            elif field == "equivalent_diameter_area":
+                properties["equivalent_diameter_area"] = (
+                    6.0 * component_volume / np.pi
+                ) ** (1.0 / 3.0)
+            elif field == "centroid":
+                valid_indices = flat_indices[valid]
+                yz_size = porosity.shape[1] * porosity.shape[2]
+                x = valid_indices // yz_size
+                remainder = valid_indices - x * yz_size
+                y = remainder // porosity.shape[2]
+                z = remainder - y * porosity.shape[2]
+                for axis, coordinates in enumerate((x, y, z)):
+                    coordinate_sum = np.bincount(
+                        labels,
+                        weights=coordinates,
+                        minlength=n_components,
+                    )
+                    properties[f"centroid-{axis}"] = (
+                        coordinate_sum / component_counts * voxel_resolution
+                    )
+        return properties
+
+    from skimage import measure
+    from skimage.morphology import remove_small_objects
+
+    defect_structure = porosity == 0
     filtered_defects = remove_small_objects(
         defect_structure, min_size=min_size, connectivity=3
     )
@@ -354,30 +560,31 @@ def compute_morphology(
 
 
 def write_morphology(properties: dict, morphology_output_path: str) -> None:
-    """
-    Writes morphology output as a .csv.
-    """
+    """Write morphology output as a CSV file."""
+    import pandas as pd
 
     morphology_df = pd.DataFrame(properties, index=None)
     if len(morphology_df) == 0:
         print(
-            f"Either no defects were found or all defects were single-voxel. "
-            f"No morphology features to write."
+            "Either no defects were found or all defects were single-voxel. "
+            "No morphology features to write."
         )
-        return None
-    else:
-        morphology_df.to_csv(morphology_output_path, index=False)
-        print(
-            f"Morphology features of {len(morphology_df)} "
-            f"defects written to: {morphology_output_path}"
-        )
+        return
+    morphology_df.to_csv(morphology_output_path, index=False)
+    print(
+        f"Morphology features of {len(morphology_df)} "
+        f"defects written to: {morphology_output_path}"
+    )
 
+    pl = pv.Plotter(shape=(1, 2), window_size=(1600, 800))
 
 def visualize(vtk_output_path: str) -> None:
     """
-    Visualizes porosity field using PyVista.
-    Defaults to scaling from meters to microns for better labeling.
+    Visualize the porosity field in its native coordinate system, measured in
+    meters.
     """
+    import pyvista as pv
+    from matplotlib.colors import ListedColormap
 
     rve = pv.read(vtk_output_path)
     outline = rve.outline()
@@ -453,9 +660,9 @@ def visualize(vtk_output_path: str) -> None:
         }
 
         pl.show_grid(
-            xtitle="X (µm)",
-            ytitle="Y (µm)",
-            ztitle="Z (µm)",
+            xtitle="X (m)",
+            ytitle="Y (m)",
+            ztitle="Z (m)",
             grid=False,
             location="outer",
             **label_args,
@@ -490,9 +697,9 @@ def visualize(vtk_output_path: str) -> None:
     }
 
     pl.show_grid(
-        xtitle="X (µm)",
-        ytitle="Y (µm)",
-        ztitle="Z (µm)",
+        xtitle="X (m)",
+        ytitle="Y (m)",
+        ztitle="Z (m)",
         grid=False,
         location="outer",
         **label_args,

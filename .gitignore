@@ -2,6 +2,11 @@
 __pycache__
 *.egg-info
 build
+dist
+.numba-cache
+.venv
+.pytest_cache
+.coverage
 
 # other typical case file names
 *.vti

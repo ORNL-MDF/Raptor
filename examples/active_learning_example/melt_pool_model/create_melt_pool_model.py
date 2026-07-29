@@ -47,7 +47,9 @@ INITIAL_MESHGRIDS = np.meshgrid(
     ],
     indexing="ij",
 )
-INITIAL_POINTS_TO_PREDICT = np.hstack([mg.reshape(-1, 1) for mg in INITIAL_MESHGRIDS])
+INITIAL_POINTS_TO_PREDICT = np.hstack(
+    [mg.reshape(-1, 1) for mg in INITIAL_MESHGRIDS]
+)
 
 
 # -----------------------------------------------------------------------------
@@ -67,7 +69,9 @@ def x_from_unit(U):
     return U * (hi - lo) + lo
 
 
-def melt_pool_dataset(convert_to_m_per_s: float = 1e-3, convert_to_m: float = 1e-6):
+def melt_pool_dataset(
+    convert_to_m_per_s: float = 1e-3, convert_to_m: float = 1e-6
+):
     json_files = [
         "parameters_A.json",
         "parameters_B.json",
@@ -108,7 +112,9 @@ def melt_pool_dataset(convert_to_m_per_s: float = 1e-3, convert_to_m: float = 1e
 
     depth = pd.concat([df["right_depth"], df["left_depth"]], ignore_index=True)
     width = pd.concat([df["right_width"], df["left_width"]], ignore_index=True)
-    height = pd.concat([df["right_height"], df["left_height"]], ignore_index=True)
+    height = pd.concat(
+        [df["right_height"], df["left_height"]], ignore_index=True
+    )
 
     depth = depth * convert_to_m
     width = width * convert_to_m
@@ -170,7 +176,11 @@ def graph(mean_grid, variance, dataset_x, feature_name):
 
     X_train = np.array(dataset_x)
     plt.scatter(
-        X_train[:, 0], X_train[:, 1], facecolor="none", color="black", marker="o"
+        X_train[:, 0],
+        X_train[:, 1],
+        facecolor="none",
+        color="black",
+        marker="o",
     )
 
     plt.savefig(f"function_value_{feature_name}.png")
@@ -232,7 +242,8 @@ class ActiveLearningOrchestrator:
                     "constant_value": prior_variance,
                     "constant_value_bounds": "fixed",
                     "noise_level": yerr**2,
-                    "noise_level_bounds": "fixed",  # noise level is noise variance
+                    # The noise level is the noise variance.
+                    "noise_level_bounds": "fixed",
                 },
                 backend_args=None,
                 seed=-1,
@@ -251,7 +262,9 @@ class ActiveLearningOrchestrator:
                 bounds=self.bounds_unit,
             )
         elif operation == "get_surrogate_values":
-            points_to_predict_unit = x_to_unit(INITIAL_POINTS_TO_PREDICT).tolist()
+            points_to_predict_unit = x_to_unit(
+                INITIAL_POINTS_TO_PREDICT
+            ).tolist()
             payload = DialInputPredictions(
                 workflow_id=self.workflow_id,
                 points_to_predict=points_to_predict_unit,
