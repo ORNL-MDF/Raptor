@@ -111,6 +111,21 @@ def estimate_cvar(defects_list, level=0.05):
     return cvar
 
 
+def bootstrap_cvar(defects_list, cvar_level=0.2, max_bootstrap=1000):
+
+    cvar_array = np.zeros((max_bootstrap, 1))
+    for n_bs in range(max_bootstrap):
+        bootstrap_sample = np.random.choice(
+            defects_list, size=len(defects_list), replace=True
+        )
+        cvar = estimate_cvar(bootstrap_sample, cvar_level)
+        cvar_array[n_bs] = cvar
+
+    mean_cvar = np.mean(cvar_array)
+    std_cvar = np.std(cvar_array, ddof=1)
+    return mean_cvar, std_cvar
+
+
 def generate_lognormal_defects(lognorm_params, n_defects):
     (log_mean, log_sem), (log_std, log_sev) = lognorm_params
     while True:
