@@ -326,8 +326,8 @@ def process_raptor_data(raptor_data):
         lognormal_params, cvar_level=cvar_level
     )
     logger.info(
-        "estimated CVAR based on lognormal distr:",
-        f"{mean_cvar=:.3f}, {err_cvar=:0.3f}",
+        "estimated CVAR based on lognormal distr: "
+        f"{mean_cvar=:.3f}, {err_cvar=:0.3f}"
     )
 
     mean_cvar_bs, err_cvar_bs = bootstrap_cvar(
