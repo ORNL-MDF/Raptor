@@ -52,7 +52,7 @@ def main(filepath):
         Yg_mm,
         mean_um,
         [5] + [crit * 1e6 for crit in D_CRIT_LIST] + [80, 120, 170],
-        linewidth=2,
+        linewidths=2,
     )
 
     ax.scatter(

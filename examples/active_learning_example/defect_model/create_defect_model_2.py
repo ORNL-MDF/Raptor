@@ -4,6 +4,7 @@ import logging
 import os
 import sys
 import random
+import time
 from pathlib import Path
 from typing import Any
 from enum import Enum
@@ -66,8 +67,8 @@ LASER_VELOCITY_M_S = 1.083
 HATCH_BOUNDS = (60e-6, 140e-6)
 LAYER_HEIGHT_BOUNDS = (20e-6, 90e-6)  # microns
 BOUNDS = (HATCH_BOUNDS, LAYER_HEIGHT_BOUNDS)
-UNIT_BOUNDS = ((0.0, 1.0),) * 2
 NUM_DIMS = len(BOUNDS)
+UNIT_BOUNDS = ((0.0, 1.0),) * NUM_DIMS
 
 INITIAL_DATA_SIZE = 4
 MAX_ITERATIONS = 200
@@ -423,6 +424,10 @@ class ActiveLearningOrchestrator:
 
         self.mp_interpolator = MeltPoolInterpolator(MELT_POOL_SURROGATE_PATH)
 
+        self.time_log = [
+            (time.perf_counter(), "Initialization and initial dataset.")
+        ]
+
         logger.info(f"Performing cold start with {INITIAL_DATA_SIZE} points...")
         bounds = np.array(BOUNDS)
         lhs = qmc.LatinHypercube(d=NUM_DIMS, seed=SEED)
@@ -593,9 +598,15 @@ class ActiveLearningOrchestrator:
 
         if operation == "dial.initialize_workflow":
             self.workflow_id = payload
+            self.time_log.append(
+                (time.perf_counter(), "Asking DIAL for surrogate eval.")
+            )
             return self.assemble_message("get_surrogate_values")
 
         if operation == "dial.update_workflow_with_data":
+            self.time_log.append(
+                (time.perf_counter(), "Asking DIAL for surrogate eval.")
+            )
             return self.assemble_message("get_surrogate_values")
 
         if operation == "dial.get_surrogate_values":
@@ -627,12 +638,24 @@ class ActiveLearningOrchestrator:
                 laser_velocity=LASER_VELOCITY_M_S,
             )
 
+            # Log timings:
+            newevent = (time.perf_counter(), "Asking DIAL for next point x.")
+            for (t0, e0), (t1, e1_) in zip(
+                self.time_log,
+                self.time_log[1:] + [newevent],
+            ):
+                timespan = t1 - t0
+                logger.info(f"Timelog: took {timespan:6.2f}s for '{e0}'")
+
+            self.time_log = [newevent]
+
             if self.iteration_count >= MAX_ITERATIONS:
                 logger.info(
                     "Active Learning Complete. Surrogate saved to "
                     "'defect_model_surrogate_2.npz'."
                 )
                 raise Exception("DONE")
+
             return self.assemble_message("get_next_point")
 
         if operation == "dial.get_next_point":
@@ -648,6 +671,9 @@ class ActiveLearningOrchestrator:
                 f"Iteration {self.iteration_count}: "
                 f"DIAL suggests HS={x_suggested[0]*1e6:.2f}um, "
                 f"LH={x_suggested[1]*1e6:.2f}."
+            )
+            self.time_log.append(
+                (time.perf_counter(), "Running Raptor to evaluate output data.")
             )
 
             new_x, new_y, new_yerr, new_raptor_data = get_data_point(
@@ -667,6 +693,9 @@ class ActiveLearningOrchestrator:
 
             self.iteration_count += 1
 
+            self.time_log.append(
+                (time.perf_counter(), "Sending new (x,y) data to DIAL.")
+            )
             return self.assemble_message(
                 "update_workflow_with_data",
                 next_x=next_x,
