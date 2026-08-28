@@ -73,9 +73,9 @@ UNIT_BOUNDS = ((0.0, 1.0),) * NUM_DIMS
 INITIAL_DATA_SIZE = 4
 MAX_ITERATIONS = 200
 
-VOXEL_RESOLUTION_M = 2.5e-6  # reference 5.0e-6
-RVE_LENGTH_M = 1e-3
-QUERY_VOLUME_MM3 = 10.0  # decrease query_volume_mm3 from 10 to speed up
+VOXEL_RESOLUTION_M = 5.0e-6  # reference 5.0e-6
+RVE_LENGTH_M = 3e-3
+QUERY_VOLUME_MM3 = 27.0  # decrease query_volume_mm3 from 10 to speed up
 
 MIN_LEN_DEFECTS = 50
 
@@ -307,7 +307,6 @@ def process_raptor_data(raptor_data):
         logger.info("running MCMC")
         lognormal_params_MCMC = estimate_lognormal_MCMC(sort_defect)
 
-        # TODO: Account for the different SEV scaling when converting to meters.
         (log_mean_pore, log_sem_pore), (log_std_pore, log_sev_pore) = (
             lognormal_params_MCMC
         )
@@ -457,7 +456,8 @@ class ActiveLearningOrchestrator:
                 y_prescale=y_prescale, y_postscale=y_postscale
             )
         elif scaler.startswith("output_focus"):
-            D_CRIT_LIST = [10e-6, 20e-6, 40e-6]
+            #D_CRIT_LIST = [10e-6, 20e-6, 40e-6]
+            D_CRIT_LIST = [20e-6, 30e-6, 40e-6]
             # [y_low, y_high] roughly outlines the "interesting" output region
             y_low = min(D_CRIT_LIST)
             y_high = max(D_CRIT_LIST)
