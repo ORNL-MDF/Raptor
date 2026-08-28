@@ -71,7 +71,7 @@ NUM_DIMS = len(BOUNDS)
 UNIT_BOUNDS = ((0.0, 1.0),) * NUM_DIMS
 
 INITIAL_DATA_SIZE = 4
-MAX_ITERATIONS = 200
+MAX_ITERATIONS = 400
 
 VOXEL_RESOLUTION_M = 5.0e-6  # reference 5.0e-6
 RVE_LENGTH_M = 3e-3
@@ -84,13 +84,14 @@ SEED = 42
 
 class AnalysisMode(str, Enum):
     MEAN = "mean"
+    WEIGHTED_MEAN = "weighted_mean"
     MAX = "max"
     LOG_MEAN = "log_mean"
     LOG_CVAR = "log_cvar"
     CVAR = "cvar"
 
 
-ANALYZE = AnalysisMode.CVAR
+ANALYZE = AnalysisMode.WEIGHTED_MEAN
 
 BACKEND = "sable"  # "sable" or "sklearn"
 
@@ -156,7 +157,7 @@ def run_raptor(
     layer_thickness_m: float = 40e-6,
     query_volume_mm3: float = QUERY_VOLUME_MM3,
     voxel_resolution_m: float = VOXEL_RESOLUTION_M,
-    metric_names: list[str] = ["equivalent_diameter_area"],
+    metric_names: list[str] = ["equivalent_diameter_area", "area"],
 ):
     # Query melt pool statistics for processing conditions
     mp_stats = mp_interpolator.query(LASER_VELOCITY_M_S, LASER_POWER_WATTS)
@@ -268,9 +269,11 @@ def run_raptor(
 def process_raptor_data(raptor_data):
 
     voxel_resolution_m = raptor_data["inputs"]["voxel_resolution_m"]
-    combined_defects = raptor_data["outputs"]["equivalent_diameter_area"]
     hatch_spacing = raptor_data["inputs"]["hatch_spacing_m"]
     layer_thickness = raptor_data["inputs"]["layer_thickness_m"]
+
+    combined_defects = raptor_data["outputs"]["equivalent_diameter_area"]
+    combined_area = raptor_data["outputs"]["area"]
 
     min_len_defects = MIN_LEN_DEFECTS
     if len(combined_defects) < min_len_defects:
@@ -283,8 +286,11 @@ def process_raptor_data(raptor_data):
         sigma_subgrid = voxel_resolution_m / 6
         more_defects = np.random.lognormal(
             np.log(mu_subgrid), sigma_subgrid / mu_subgrid, n_extra_defects
-        ).tolist()
-        combined_defects = combined_defects.tolist() + more_defects
+        )
+        combined_defects = combined_defects.tolist() + more_defects.tolist()
+        combined_area = (
+            combined_area.tolist() + (more_defects**3 * np.pi / 6).tolist()
+        )
 
     # direct analysis of mean, max and statistics
     max_pore = np.max(combined_defects)
@@ -292,6 +298,13 @@ def process_raptor_data(raptor_data):
     std_pore = np.std(combined_defects, ddof=1)
     # Compute the standard error of the mean (Monte Carlo error).
     sem_pore = std_pore / np.sqrt(len(combined_defects))
+
+    # weighted mean
+    w_mean_pore = np.average(combined_defects, weights=combined_area)
+    w_std_pore = np.sqrt(
+        np.average((combined_defects - w_mean_pore) ** 2, weights=combined_area)
+    )
+    w_sem_pore = w_std_pore / np.sqrt(len(combined_defects))
 
     # estimate distribution parameters for lognormal pore size distribution
     # Converting to microns for numerical stability
@@ -366,7 +379,8 @@ def process_raptor_data(raptor_data):
         f"Found {len(combined_defects)} defects: "
         f"Hatch: {hatch_spacing*1e6:.1f}um, "
         f"LT: {layer_thickness*1e6:.1f}um\n | "
-        f"Mean and Max Pore: {mean_pore*1e6:.2f}, {max_pore*1e6:.2f}um\n | "
+        f"Mean, weighted mean and max Pore: {mean_pore*1e6:.2f},"
+        f" {w_mean_pore*1e6:.2f}, {max_pore*1e6:.2f}um\n | "
         f"Estimated mean_lognormal: {mean_lognormal*1e6:.6f}, "
         f"sem_lognormal: {sem_lognormal*1e6:.6f}\n | "
         f"Learning {ANALYZE}."
@@ -380,11 +394,13 @@ def process_raptor_data(raptor_data):
         y, yerr = float(mean_cvar), float(err_cvar)
     elif ANALYZE == "cvar":
         y, yerr = float(mean_cvar_bs), float(err_cvar_bs)
+    elif ANALYZE == "weighted_mean":
+        y, yerr = float(w_mean_pore), float(w_sem_pore)
     elif ANALYZE == "max":
         # Use standard deviation as the approximate maximum-pore error.
         y, yerr = float(max_pore), float(std_pore)
 
-    if ANALYZE != "max":
+    if ANALYZE.startswith("log") or ANALYZE == "cvar":
         # Statistics lose meaning when max defect approaches the RVE length.
         # return a large enough value with high certainty
         if max_pore > RVE_LENGTH_M / 4:
@@ -456,7 +472,7 @@ class ActiveLearningOrchestrator:
                 y_prescale=y_prescale, y_postscale=y_postscale
             )
         elif scaler.startswith("output_focus"):
-            #D_CRIT_LIST = [10e-6, 20e-6, 40e-6]
+            # D_CRIT_LIST = [10e-6, 20e-6, 40e-6]
             D_CRIT_LIST = [20e-6, 30e-6, 40e-6]
             # [y_low, y_high] roughly outlines the "interesting" output region
             y_low = min(D_CRIT_LIST)
