@@ -652,6 +652,9 @@ class ActiveLearningOrchestrator:
                 n_grids=N_GRIDS,
                 laser_power=LASER_POWER_WATTS,
                 laser_velocity=LASER_VELOCITY_M_S,
+                scaler=np.array(
+                    self.scaler, dtype=object
+                ),  # save the scaler that was used
             )
 
             # Log timings:
