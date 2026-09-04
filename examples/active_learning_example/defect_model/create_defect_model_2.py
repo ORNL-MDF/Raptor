@@ -74,8 +74,8 @@ INITIAL_DATA_SIZE = 4
 MAX_ITERATIONS = 400
 
 VOXEL_RESOLUTION_M = 5.0e-6  # reference 5.0e-6
-RVE_LENGTH_M = 3e-3
-QUERY_VOLUME_MM3 = 27.0  # decrease query_volume_mm3 from 10 to speed up
+RVE_LENGTH_M = 2e-3
+QUERY_VOLUME_MM3 = 8.0  # decrease query_volume_mm3 from 10 to speed up
 
 MIN_LEN_DEFECTS = 50
 
@@ -91,7 +91,7 @@ class AnalysisMode(str, Enum):
     CVAR = "cvar"
 
 
-ANALYZE = AnalysisMode.WEIGHTED_MEAN
+ANALYZE = AnalysisMode.CVAR
 
 BACKEND = "sable"  # "sable" or "sklearn"
 
@@ -524,7 +524,7 @@ class ActiveLearningOrchestrator:
                     # DIAL currently normalizes the bounds to [0, 1].
                     "x_range": self.bounds_unit[0],
                     # sigma range of valid lengthscales
-                    "sigma_range": [2e-2, 0.5],
+                    "sigma_range": [1e-2, 0.5],
                     # smoothness hyperparameter gamma
                     # 0 is continuous, 1 is once differentiable, and so on.
                     "gamma": 0.3,
@@ -532,7 +532,7 @@ class ActiveLearningOrchestrator:
                 self.backend_args = {
                     # memory size for number of features:
                     # More features increase capacity and runtime.
-                    "n_features": 5000,
+                    "n_features": 10000,
                     # prior standard deviation
                     "prior_std": prior_std,
                     # algorithm hyperparameters
