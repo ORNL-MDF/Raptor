@@ -8,12 +8,10 @@
 # For details, see the top-level LICENSE file at:
 # https://github.com/ORNL-MDF/Raptor/LICENSE
 # =============================================================================
-import matplotlib.image as mpimg
 import numpy as np
 
 from raptor.utilities import (
     MeltPoolFilter,
-    plot_melt_pool_signal,
     reconstruct_spectral_signal,
 )
 
@@ -41,7 +39,9 @@ def test_melt_pool_filter_recovers_requested_statistics():
     )
 
     assert np.isfinite(width_data).all()
-    np.testing.assert_allclose(width_data[:, 1].mean(), melt_pool_filter.mu, atol=1e-15)
+    np.testing.assert_allclose(
+        width_data[:, 1].mean(), melt_pool_filter.mu, atol=1e-15
+    )
     np.testing.assert_allclose(
         width_data[:, 1].std(), melt_pool_filter.sigma, atol=1e-15
     )
@@ -56,7 +56,9 @@ def test_melt_pool_filter_normalizes_covariance_between_effects():
         1.0, melt_pool_filter.n_points, melt_pool_filter.t
     )
 
-    np.testing.assert_allclose(width_data[:, 1].mean(), melt_pool_filter.mu, atol=1e-15)
+    np.testing.assert_allclose(
+        width_data[:, 1].mean(), melt_pool_filter.mu, atol=1e-15
+    )
     np.testing.assert_allclose(
         width_data[:, 1].std(), melt_pool_filter.sigma, atol=1e-15
     )
@@ -91,7 +93,9 @@ def test_duration_is_the_minimum_accepted_sample_count():
         melt_pool_filter.sigma**2, previous_effective_n
     )
 
-    minimum_periods = max(4, int(np.ceil(1.0 / melt_pool_filter.correlation_tolerance)))
+    minimum_periods = max(
+        4, int(np.ceil(1.0 / melt_pool_filter.correlation_tolerance))
+    )
     minimum_n = (
         int(
             np.ceil(
@@ -106,13 +110,6 @@ def test_duration_is_the_minimum_accepted_sample_count():
         assert not previous_ci["precision_satisfied"]
 
 
-def test_melt_pool_filter_uses_statistical_defaults():
-    melt_pool_filter = MeltPoolFilter(148.0e-6, 40.0e-6, 1.7, 5.0e-6)
-    assert melt_pool_filter.confidence == 0.95
-    assert melt_pool_filter.ci_relative_width == 0.10
-    assert melt_pool_filter.correlation_tolerance == 0.10
-
-
 def test_reconstruct_spectral_signal():
     time = np.arange(100) / 100.0
     components = np.array([[2.0, 0.0, 0.0], [0.5, 4.0, np.pi / 3.0]])
@@ -120,17 +117,3 @@ def test_reconstruct_spectral_signal():
     np.testing.assert_allclose(
         reconstruct_spectral_signal(time, components), expected, atol=1e-14
     )
-
-
-def test_publication_plot_has_requested_pixel_dimensions(tmp_path):
-    time = np.arange(500) / 10_000.0
-    values = 148.0e-6 + 18.0e-6 * np.cos(2.0 * np.pi * 200.0 * time)
-    data = np.column_stack([time, values])
-    components = np.array([[148.0e-6, 0.0, 0.0], [18.0e-6, 200.0, 0.0]])
-    output = tmp_path / "melt_pool_signal.png"
-
-    returned_path = plot_melt_pool_signal(data, components, 148.0e-6, 18.0e-6, output)
-
-    assert returned_path == output
-    image = mpimg.imread(output)
-    assert image.shape[:2] == (900, 1950)

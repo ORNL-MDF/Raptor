@@ -4,9 +4,10 @@ import logging
 import os
 import sys
 import random
+import time
 from pathlib import Path
 from typing import Any
-from enum import StrEnum, auto
+from enum import Enum
 
 import numpy as np
 from scipy.stats import qmc
@@ -16,10 +17,11 @@ from scipy.interpolate import RegularGridInterpolator
 from raptor.api import (
     create_grid,
     create_melt_pool,
+    create_path_vectors,
     compute_porosity,
     compute_morphology,
 )
-from raptor.utilities import ScanPathBuilder, MeltPoolFilter
+from raptor.utilities import MeltPoolFilter
 
 # Intersect Imports
 from intersect_sdk import (
@@ -45,7 +47,7 @@ from scalers import SCALER_REGISTRY, InputScaler
 from statistics_utilities import (
     estimate_lognormal_direct,
     estimate_lognormal_MCMC,
-    estimate_cvar,
+    bootstrap_cvar,
     estimate_lognormal_cvar,
     plot_defect_distribution,
 )
@@ -59,45 +61,49 @@ logger = logging.getLogger(__name__)
 # -----------------------------------------------------------------------------
 # USER PARAMETERS
 # -----------------------------------------------------------------------------
-LASER_POWER_WATTS = 200.0
-LASER_VELOCITY_M_S = 1.0
+LASER_POWER_WATTS = 195
+LASER_VELOCITY_M_S = 1.083
 
-HATCH_BOUNDS = (80e-6, 140e-6)
-LAYER_HEIGHT_BOUNDS = (30e-6, 80e-6)  # microns
+HATCH_BOUNDS = (60e-6, 140e-6)
+LAYER_HEIGHT_BOUNDS = (20e-6, 90e-6)  # microns
 BOUNDS = (HATCH_BOUNDS, LAYER_HEIGHT_BOUNDS)
-UNIT_BOUNDS = ((0.0, 1.0),) * 2
 NUM_DIMS = len(BOUNDS)
+UNIT_BOUNDS = ((0.0, 1.0),) * NUM_DIMS
 
-INITIAL_DATA_SIZE = 1
-MAX_ITERATIONS = 200
+INITIAL_DATA_SIZE = 4
+MAX_ITERATIONS = 400
 
-VOXEL_RESOLUTION_M = 2.5e-6  # reference 5.0e-6
-RVE_LENGTH_M = 1e-3
-QUERY_VOLUME_MM3 = 10.0  # decrease query_volume_mm3 from 10 to speed up
+VOXEL_RESOLUTION_M = 5.0e-6  # reference 5.0e-6
+RVE_LENGTH_M = 2e-3
+QUERY_VOLUME_MM3 = 8.0  # decrease query_volume_mm3 from 10 to speed up
 
 MIN_LEN_DEFECTS = 50
 
 SEED = 42
 
 
-class AnalysisMode(StrEnum):
-    MEAN = auto()
-    MAX = auto()
-    LOG_MEAN = auto()
-    LOG_CVAR = auto()
+class AnalysisMode(str, Enum):
+    MEAN = "mean"
+    WEIGHTED_MEAN = "weighted_mean"
+    MAX = "max"
+    LOG_MEAN = "log_mean"
+    LOG_CVAR = "log_cvar"
+    CVAR = "cvar"
 
 
-ANALYZE = AnalysisMode.LOG_CVAR
+ANALYZE = AnalysisMode.CVAR
 
 BACKEND = "sable"  # "sable" or "sklearn"
 
 MESHGRID_SIZE = 150
 
-N_GRIDS = (70, 60)
+N_GRIDS = (80, 70)
 
 
 def meshgrid_2d():
-    grids_1d = [np.linspace(*bound, ngrid) for bound, ngrid in zip(BOUNDS, N_GRIDS)]
+    grids_1d = [
+        np.linspace(*bound, ngrid) for bound, ngrid in zip(BOUNDS, N_GRIDS)
+    ]
     x1, x2 = np.meshgrid(*grids_1d)
     return np.stack((x1.reshape(-1), x2.reshape(-1)), axis=1)
 
@@ -106,7 +112,10 @@ INITIAL_POINTS_TO_PREDICT = meshgrid_2d()
 
 MELT_POOL_SURROGATE_PATH = os.path.abspath(
     os.path.join(
-        os.path.dirname(__file__), "..", "melt_pool_model", "melt_pool_surrogates.npz"
+        os.path.dirname(__file__),
+        "..",
+        "melt_pool_model",
+        "melt_pool_surrogates.npz",
     )
 )
 
@@ -137,7 +146,9 @@ class MeltPoolInterpolator:
 
     def query(self, velocity: float, power: float):
         point = np.array([[velocity, power]])
-        return {f: float(self.interpolators[f](point)[0]) for f in self.features}
+        return {
+            f: float(self.interpolators[f](point)[0]) for f in self.features
+        }
 
 
 def run_raptor(
@@ -146,7 +157,7 @@ def run_raptor(
     layer_thickness_m: float = 40e-6,
     query_volume_mm3: float = QUERY_VOLUME_MM3,
     voxel_resolution_m: float = VOXEL_RESOLUTION_M,
-    metric_names: list[str] = ["equivalent_diameter_area"],
+    metric_names: list[str] = ["equivalent_diameter_area", "area"],
 ):
     # Query melt pool statistics for processing conditions
     mp_stats = mp_interpolator.query(LASER_VELOCITY_M_S, LASER_POWER_WATTS)
@@ -156,10 +167,12 @@ def run_raptor(
     rve_max_point = np.array([RVE_LENGTH_M, RVE_LENGTH_M, RVE_LENGTH_M])
     rve_bounding_box = np.array([rve_min_point, rve_max_point])
 
-    grid = create_grid(voxel_resolution=voxel_resolution_m, bound_box=rve_bounding_box)
+    grid = create_grid(
+        voxel_resolution=voxel_resolution_m, bound_box=rve_bounding_box
+    )
 
     # Create scan path in RVE
-    scan_path_builder = ScanPathBuilder(
+    path_vectors = create_path_vectors(
         rve_bounding_box,
         LASER_POWER_WATTS,
         LASER_VELOCITY_M_S,
@@ -169,8 +182,6 @@ def run_raptor(
         max(rve_max_point - rve_min_point),
         10,
     )
-    scan_path_builder.generate_layers()
-    path_vectors = scan_path_builder.process_vectors()
 
     # Create stochastic melt pool model
     melt_pool_filter = MeltPoolFilter(
@@ -210,7 +221,9 @@ def run_raptor(
     melt_pool = create_melt_pool(melt_pool_dict, enable_random_phases=True)
 
     # Run simulations for all RVEs
-    single_rve_volume_mm3 = np.prod((rve_bounding_box[1] - rve_bounding_box[0]) * 1e3)
+    single_rve_volume_mm3 = np.prod(
+        (rve_bounding_box[1] - rve_bounding_box[0]) * 1e3
+    )
 
     num_rves = int(np.ceil(query_volume_mm3 / single_rve_volume_mm3))
 
@@ -222,7 +235,12 @@ def run_raptor(
 
     outputs = []
     for i in range(num_rves):
-        porosity = compute_porosity(grid, path_vectors, melt_pool, jit_warmup=0)
+        porosity = compute_porosity(
+            grid,
+            path_vectors,
+            melt_pool,
+            random_seed=SEED + i,
+        )
         metrics = compute_morphology(porosity, grid.resolution, metric_names)
         outputs.append(metrics)
 
@@ -251,29 +269,42 @@ def run_raptor(
 def process_raptor_data(raptor_data):
 
     voxel_resolution_m = raptor_data["inputs"]["voxel_resolution_m"]
-    combined_defects = raptor_data["outputs"]["equivalent_diameter_area"]
     hatch_spacing = raptor_data["inputs"]["hatch_spacing_m"]
     layer_thickness = raptor_data["inputs"]["layer_thickness_m"]
 
+    combined_defects = raptor_data["outputs"]["equivalent_diameter_area"]
+    combined_area = raptor_data["outputs"]["area"]
+
     min_len_defects = MIN_LEN_DEFECTS
     if len(combined_defects) < min_len_defects:
-        # add some pores below the voxel_resolution, to deal with empty lists due to finite resolution
-        # TODO: discuss how we should handle the fact that pores blow voxel_resolution can not be resolved
-        random.seed()  # explicitly call rng seeding to make sure this is truly random
+        # Add sub-resolution pores when the resolved defect list is too short.
+        # TODO: decide how to represent pores below the voxel resolution.
+        # Explicitly seed the RNG from system entropy.
+        random.seed()
         n_extra_defects = min_len_defects - len(combined_defects)
         mu_subgrid = voxel_resolution_m / 2
         sigma_subgrid = voxel_resolution_m / 6
         more_defects = np.random.lognormal(
             np.log(mu_subgrid), sigma_subgrid / mu_subgrid, n_extra_defects
-        ).tolist()
-        combined_defects = combined_defects.tolist() + more_defects
+        )
+        combined_defects = combined_defects.tolist() + more_defects.tolist()
+        combined_area = (
+            combined_area.tolist() + (more_defects**3 * np.pi / 6).tolist()
+        )
 
     # direct analysis of mean, max and statistics
     max_pore = np.max(combined_defects)
     mean_pore = np.mean(combined_defects)
     std_pore = np.std(combined_defects, ddof=1)
-    # compute the standard error of the mean (SEM), the standard deviation of the mean (Monte-Carlo error)
+    # Compute the standard error of the mean (Monte Carlo error).
     sem_pore = std_pore / np.sqrt(len(combined_defects))
+
+    # weighted mean
+    w_mean_pore = np.average(combined_defects, weights=combined_area)
+    w_std_pore = np.sqrt(
+        np.average((combined_defects - w_mean_pore) ** 2, weights=combined_area)
+    )
+    w_sem_pore = w_std_pore / np.sqrt(len(combined_defects))
 
     # estimate distribution parameters for lognormal pore size distribution
     # Converting to microns for numerical stability
@@ -281,46 +312,64 @@ def process_raptor_data(raptor_data):
 
     # direct estimate
     lognormal_params = estimate_lognormal_direct(sort_defect)
+    (log_mean, log_sem), (log_std, log_sev) = lognormal_params
 
     # MCMC estimate
-    logger.info("running MCMC")
-    lognormal_params_MCMC = estimate_lognormal_MCMC(sort_defect)
+    run_MCMC = False
+    if run_MCMC:
+        logger.info("running MCMC")
+        lognormal_params_MCMC = estimate_lognormal_MCMC(sort_defect)
 
-    # TODO: if we want to transform these values back to meters we need to account for different scaling of sev
-    #       for now, I will do it after further use below.
-    (log_mean, log_sem), (log_std, log_sev) = lognormal_params
-    (log_mean_pore, log_sem_pore), (log_std_pore, log_sev_pore) = lognormal_params_MCMC
+        (log_mean_pore, log_sem_pore), (log_std_pore, log_sev_pore) = (
+            lognormal_params_MCMC
+        )
 
-    # Approach 1 and 2 should give the same answer
-    print(f"-{len(combined_defects)}-\texpl.,\tMCMC")
-    print(f"mean:\t{log_mean:.3f},\t{log_mean_pore:.3f}")
-    print(f"std:\t{log_std:.3f},\t{log_std_pore:.3f}")
-    print(f"sem:\t{log_sem:.3f},\t{log_sem_pore:.3f}")
-    print(f"sev:\t{log_sev:.3f},\t{log_sev_pore:.3f}")
+        # Approach 1 and 2 should give the same answer
+        print(f"-{len(combined_defects)}-\texpl.,\tMCMC")
+        print(f"mean:\t{log_mean:.3f},\t{log_mean_pore:.3f}")
+        print(f"std:\t{log_std:.3f},\t{log_std_pore:.3f}")
+        print(f"sem:\t{log_sem:.3f},\t{log_sem_pore:.3f}")
+        print(f"sev:\t{log_sev:.3f},\t{log_sev_pore:.3f}")
 
-    # set the level in (0.0, 1.0) for the estimation of the conditional value at risk (CVAR)
-    cvar_level = 0.2
+    # Set the CVAR estimation level in (0.0, 1.0).
+    cvar_level = 0.1
 
     # Use the lognormal estimates to estimate CVAR with error
     mean_cvar, err_cvar = estimate_lognormal_cvar(
         lognormal_params, cvar_level=cvar_level
     )
-    print(f"naive CVAR: {estimate_cvar(sort_defect, cvar_level):0.3f}")
-    print(
-        f"estimated CVAR based on lognormal distr: {mean_cvar=:.3f}, {err_cvar=:0.3f}"
+    logger.info(
+        "estimated CVAR based on lognormal distr: "
+        f"{mean_cvar=:.3f}, {err_cvar=:0.3f}"
     )
+
+    mean_cvar_bs, err_cvar_bs = bootstrap_cvar(
+        sort_defect, cvar_level=cvar_level
+    )
+    logger.info(
+        f"bootstrapped direct CVAR: {mean_cvar_bs=:.3f}, {err_cvar_bs=:0.3f}"
+    )
+
     # transform back to meters
     mean_cvar = mean_cvar.item() / 1e6
     err_cvar = err_cvar.item() / 1e6
+    mean_cvar_bs = mean_cvar_bs.item() / 1e6
+    err_cvar_bs = err_cvar_bs.item() / 1e6
 
     logger.info("plotting pore distribution")
-    output_filename = f"pore_{hatch_spacing*1e6:.1f}_{layer_thickness*1e6:.1f}.png"
+    output_filename = (
+        f"pore_{hatch_spacing*1e6:.1f}_{layer_thickness*1e6:.1f}.png"
+    )
     plot_defect_distribution(
         output_filename,
         sort_defect,
         (mean_pore, std_pore),
         lognormal_params,
-        (mean_cvar, err_cvar),
+        (
+            (mean_cvar, err_cvar)
+            if ANALYZE == "log_cvar"
+            else (mean_cvar_bs, err_cvar_bs)
+        ),
     )
 
     # renormalization and exponential transform, to compare and inspect values
@@ -328,10 +377,12 @@ def process_raptor_data(raptor_data):
     sem_lognormal = log_sem.item() * mean_lognormal
     logger.info(
         f"Found {len(combined_defects)} defects: "
-        f"Hatch: {hatch_spacing*1e6:.1f}um, LT: {layer_thickness*1e6:.1f}um\n | "
-        f"Mean and Max Pore: {mean_pore*1e6:.2f}, {max_pore*1e6:.2f}um\n | "
-        f"Estimated mean_lognormal: {mean_lognormal*1e6:.6f}, sem_lognormal: {sem_lognormal*1e6:.6f}\n | "
-        f"Estimated CVAR({cvar_level:.0%}): {mean_cvar*1e6:.6f}, err_CVAR {err_cvar*1e6:.6f}\n | "
+        f"Hatch: {hatch_spacing*1e6:.1f}um, "
+        f"LT: {layer_thickness*1e6:.1f}um\n | "
+        f"Mean, weighted mean and max Pore: {mean_pore*1e6:.2f},"
+        f" {w_mean_pore*1e6:.2f}, {max_pore*1e6:.2f}um\n | "
+        f"Estimated mean_lognormal: {mean_lognormal*1e6:.6f}, "
+        f"sem_lognormal: {sem_lognormal*1e6:.6f}\n | "
         f"Learning {ANALYZE}."
     )
 
@@ -341,15 +392,20 @@ def process_raptor_data(raptor_data):
         y, yerr = float(mean_lognormal), float(sem_lognormal)
     elif ANALYZE == "log_cvar":
         y, yerr = float(mean_cvar), float(err_cvar)
+    elif ANALYZE == "cvar":
+        y, yerr = float(mean_cvar_bs), float(err_cvar_bs)
+    elif ANALYZE == "weighted_mean":
+        y, yerr = float(w_mean_pore), float(w_sem_pore)
     elif ANALYZE == "max":
-        # return the maximum pore size, use the standard deviation as approximate error estimate
+        # Use standard deviation as the approximate maximum-pore error.
         y, yerr = float(max_pore), float(std_pore)
 
-    # if the maximum pore diameter approaches the RVE_LENGTH, the statistics become meaningless
-    # return a large value with moderate certainty
-    if max_pore > RVE_LENGTH_M / 5:
-        y = RVE_LENGTH_M / 5
-        yerr = RVE_LENGTH_M / 200
+    if ANALYZE.startswith("log") or ANALYZE == "cvar":
+        # Statistics lose meaning when max defect approaches the RVE length.
+        # return a large enough value with high certainty
+        if max_pore > RVE_LENGTH_M / 4:
+            y = max(y, RVE_LENGTH_M / 4)
+            yerr = y * 1e-4
 
     return y, yerr
 
@@ -383,6 +439,10 @@ class ActiveLearningOrchestrator:
 
         self.mp_interpolator = MeltPoolInterpolator(MELT_POOL_SURROGATE_PATH)
 
+        self.time_log = [
+            (time.perf_counter(), "Initialization and initial dataset.")
+        ]
+
         logger.info(f"Performing cold start with {INITIAL_DATA_SIZE} points...")
         bounds = np.array(BOUNDS)
         lhs = qmc.LatinHypercube(d=NUM_DIMS, seed=SEED)
@@ -394,15 +454,17 @@ class ActiveLearningOrchestrator:
         initial_dataset = [
             get_data_point(x, self.mp_interpolator) for x in self.dataset_x
         ]
-        self.dataset_x, self.dataset_y, self.dataset_yerr, self.dataset_raptor = [
-            list(tup) for tup in zip(*initial_dataset)
-        ]
-        print(self.dataset_x, self.dataset_y, self.dataset_yerr)
+        (
+            self.dataset_x,
+            self.dataset_y,
+            self.dataset_yerr,
+            self.dataset_raptor,
+        ) = [list(tup) for tup in zip(*initial_dataset)]
 
         scaler = "output_focus_log"
         if scaler == "lop1p":
-            # scaling factor for output data transformation, pre-scaling, and post-scaling after log transform
-            # crucially, scaling the outputs also scales the error bar, which influences the acquisition strategy
+            # Scaling factors before and after the log transform.
+            # Output scaling also affects the acquisition-strategy error bar.
             pre_to_post_scale_ratio = 0.05
             y_prescale = pre_to_post_scale_ratio * np.max(self.dataset_y)
             y_postscale = np.log1p(1 / pre_to_post_scale_ratio)
@@ -410,11 +472,12 @@ class ActiveLearningOrchestrator:
                 y_prescale=y_prescale, y_postscale=y_postscale
             )
         elif scaler.startswith("output_focus"):
-            D_CRIT_LIST = [10e-6, 20e-6, 40e-6]
+            # D_CRIT_LIST = [10e-6, 20e-6, 40e-6]
+            D_CRIT_LIST = [20e-6, 30e-6, 40e-6]
             # [y_low, y_high] roughly outlines the "interesting" output region
             y_low = min(D_CRIT_LIST)
             y_high = max(D_CRIT_LIST)
-            # focus is a scaling parameter that allows to zoom in (focus > 1) or zoom out (focus < 1) for the target region
+            # Focus zooms in (> 1) or out (< 1) on the target region.
             focus = 3.0
             self.scaler = SCALER_REGISTRY[scaler](
                 y_low=y_low, y_high=y_high, focus=focus
@@ -430,13 +493,16 @@ class ActiveLearningOrchestrator:
         payload = None
         if operation == "initialize_workflow":
             # normalize and transform the output data
-            y_norm, yerr_norm = self.scaler.scale(self.dataset_y, self.dataset_yerr)
+            y_norm, yerr_norm = self.scaler.scale(
+                self.dataset_y, self.dataset_yerr
+            )
             # configure the output statistics and combined dataset
             self.labels_y = ["y", "yerr"]
             self.statistics_y = Normal(loc="y", scale="yerr")
+            # self.statistics_y = Normal(loc="y", scale=1e-4)
             initial_dataset_y = list(zip(y_norm, yerr_norm))
 
-            # prior variance of the kernel (how large is uncertainty without data)
+            # Prior kernel variance (uncertainty without data).
             prior_std = 1.5
             prior_variance = prior_std**2
 
@@ -455,25 +521,24 @@ class ActiveLearningOrchestrator:
                 self.kernel = "rbf"
                 self.kernel_args = {
                     # x range of the data
-                    # the bounds are always [0, 1], since dial currently normalizes the input
-                    "x_range": self.bounds_unit,
+                    # DIAL currently normalizes the bounds to [0, 1].
+                    "x_range": self.bounds_unit[0],
                     # sigma range of valid lengthscales
-                    "sigma_range": [2e-2, 0.5],
+                    "sigma_range": [1e-2, 0.5],
                     # smoothness hyperparameter gamma
-                    # (0. means the minimum degree of smoothness, i.e. continuous;
-                    #  1. is once differentiable, etc. )
+                    # 0 is continuous, 1 is once differentiable, and so on.
                     "gamma": 0.3,
                 }
                 self.backend_args = {
                     # memory size for number of features:
-                    # needs to be large enough, but becomes slower with more features
-                    "n_features": 5000,
+                    # More features increase capacity and runtime.
+                    "n_features": 10000,
                     # prior standard deviation
                     "prior_std": prior_std,
                     # algorithm hyperparameters
-                    # p is degree of adaptivity (p=2 is a GP, p=1 is fully sparse)
+                    # p=2 is a GP; p=1 is fully sparse.
                     "p": 1.0,
-                    # number of optimization steps (needs to be large enough, but slows performance)
+                    # More optimization steps improve fit but cost runtime.
                     "n_iter_irls": 100,
                 }
 
@@ -549,9 +614,15 @@ class ActiveLearningOrchestrator:
 
         if operation == "dial.initialize_workflow":
             self.workflow_id = payload
+            self.time_log.append(
+                (time.perf_counter(), "Asking DIAL for surrogate eval.")
+            )
             return self.assemble_message("get_surrogate_values")
 
         if operation == "dial.update_workflow_with_data":
+            self.time_log.append(
+                (time.perf_counter(), "Asking DIAL for surrogate eval.")
+            )
             return self.assemble_message("get_surrogate_values")
 
         if operation == "dial.get_surrogate_values":
@@ -581,13 +652,29 @@ class ActiveLearningOrchestrator:
                 n_grids=N_GRIDS,
                 laser_power=LASER_POWER_WATTS,
                 laser_velocity=LASER_VELOCITY_M_S,
+                scaler=np.array(
+                    self.scaler, dtype=object
+                ),  # save the scaler that was used
             )
+
+            # Log timings:
+            newevent = (time.perf_counter(), "Asking DIAL for next point x.")
+            for (t0, e0), (t1, e1_) in zip(
+                self.time_log,
+                self.time_log[1:] + [newevent],
+            ):
+                timespan = t1 - t0
+                logger.info(f"Timelog: took {timespan:6.2f}s for '{e0}'")
+
+            self.time_log = [newevent]
 
             if self.iteration_count >= MAX_ITERATIONS:
                 logger.info(
-                    "Active Learning Complete. Surrogate saved to 'defect_model_surrogate_2.npz'."
+                    "Active Learning Complete. Surrogate saved to "
+                    "'defect_model_surrogate_2.npz'."
                 )
                 raise Exception("DONE")
+
             return self.assemble_message("get_next_point")
 
         if operation == "dial.get_next_point":
@@ -601,7 +688,11 @@ class ActiveLearningOrchestrator:
 
             logger.info(
                 f"Iteration {self.iteration_count}: "
-                f"DIAL suggests HS={x_suggested[0]*1e6:.2f}um"
+                f"DIAL suggests HS={x_suggested[0]*1e6:.2f}um, "
+                f"LH={x_suggested[1]*1e6:.2f}."
+            )
+            self.time_log.append(
+                (time.perf_counter(), "Running Raptor to evaluate output data.")
             )
 
             new_x, new_y, new_yerr, new_raptor_data = get_data_point(
@@ -621,6 +712,9 @@ class ActiveLearningOrchestrator:
 
             self.iteration_count += 1
 
+            self.time_log.append(
+                (time.perf_counter(), "Sending new (x,y) data to DIAL.")
+            )
             return self.assemble_message(
                 "update_workflow_with_data",
                 next_x=next_x,

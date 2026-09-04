@@ -92,7 +92,9 @@ def main(filepath):
                 alpha=1,
             )
 
-            ax.vlines(hs_limit, 0, d_um, colors="k", linestyles="-", linewidth=1)
+            ax.vlines(
+                hs_limit, 0, d_um, colors="k", linestyles="-", linewidth=1
+            )
             ax.plot(hs_limit, d_um, "o", color="k", markersize=4)
 
             ax.annotate(

@@ -14,28 +14,30 @@ from intersect_sdk import (
 logger = logging.getLogger(__name__)
 
 """
-This launches the service.  Separate file due to module/import structure, plus we possibly want the capability to be a separate unit
+Launch the service separately due to its module and import structure.
 """
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # boilerplate config file setup
-    parser = argparse.ArgumentParser(description='Automated client')
+    parser = argparse.ArgumentParser(description="Automated client")
     parser.add_argument(
-        '--config',
+        "--config",
         type=Path,
-        default=os.environ.get('DIAL_CONFIG_FILE', Path(__file__).parents[1] / 'local-conf.json'),
+        default=os.environ.get(
+            "DIAL_CONFIG_FILE", Path(__file__).parents[1] / "local-conf.json"
+        ),
     )
     args = parser.parse_args()
     try:
-        with Path(args.config).open('rb') as f:
+        with Path(args.config).open("rb") as f:
             from_config_file = json.load(f)
     except (json.decoder.JSONDecodeError, OSError) as e:
-        logger.critical('unable to load config file: %s', str(e))
+        logger.critical("unable to load config file: %s", str(e))
         sys.exit(1)
 
     config = IntersectServiceConfig(
-        hierarchy=from_config_file['intersect-hierarchy'],
-        **from_config_file['intersect'],
+        hierarchy=from_config_file["intersect-hierarchy"],
+        **from_config_file["intersect"],
     )
 
     logging.basicConfig(level=logging.INFO)
@@ -43,23 +45,23 @@ if __name__ == '__main__':
     # IMPORTANT: import this after logging configuration
     from dial_service import DialCapabilityImplementation
 
-    capability = DialCapabilityImplementation(from_config_file['dial']['mongo'])
+    capability = DialCapabilityImplementation(from_config_file["dial"]["mongo"])
 
     """
-    step three - create service from both the configuration and your own capability
+    Step three: create the service from its configuration and capability.
     """
     service = IntersectService([capability], config)
 
     """
-    step four - start lifecycle loop. The only necessary parameter is your service.
-    with certain applications (i.e. REST APIs) you'll want to integrate the service in the existing lifecycle,
-    instead of using this one.
-    In that case, just be sure to call service.startup() and service.shutdown() at appropriate stages.
+    Step four: start the lifecycle loop with the service.
+    Some applications, such as REST APIs, should integrate the service into
+    their existing lifecycle. In that case, call service.startup() and
+    service.shutdown() at the appropriate stages.
     """
     default_intersect_lifecycle_loop(
         service,
     )
 
     """
-    Note that the service will run forever until you explicitly kill the application (i.e. Ctrl+C)
+    The service runs until the application is explicitly stopped (e.g. Ctrl+C).
     """

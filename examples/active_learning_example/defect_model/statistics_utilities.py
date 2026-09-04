@@ -4,13 +4,13 @@ from pathlib import Path
 
 
 def estimate_lognormal_direct(norm_defect):
-    "Approach 1: directly estimate the parameters using standard formulas bases on log transform"
+    """Estimate parameters with standard log-transform formulas."""
     log_norm_defect = np.log(norm_defect)
     log_mean_defect = np.mean(log_norm_defect)
     log_std_defect = np.std(log_norm_defect, ddof=1)
     log_sem_defect = np.sqrt(1.0 / len(norm_defect)) * log_std_defect
 
-    # formula to estimate variance of the sample variance, requires estimate of fourth moment
+    # Estimating sample-variance variance requires the fourth moment.
     def var_of_sample_var():
         n = len(norm_defect)
         coeff_n = (n / (n - 1)) * (n / (n - 2)) * (n / (n - 3))
@@ -21,14 +21,14 @@ def estimate_lognormal_direct(norm_defect):
     # standard error of the variance (sev)
     log_sev_defect = np.sqrt(var_of_sample_var())
 
-    # this simpler formula is only correct when log(norm_defect) is exactly normally distributed
+    # This simpler formula requires exactly normally distributed log defects.
     # log_sev_defect = np.sqrt(2.0 / (len(norm_defect) - 1)) * log_std_defect**2
 
     return (log_mean_defect, log_sem_defect), (log_std_defect, log_sev_defect)
 
 
 def estimate_lognormal_MCMC(norm_defect):
-    # Approach 2: using a lightweight mcmc approach assuming a lognormal underlying distribution
+    # Use lightweight MCMC with an assumed lognormal distribution.
     # target y - E[µ] in posterior, yerr - sqrt(Var[µ]) in posterior
     trace = run_metropolis_hastings(
         norm_defect,
@@ -111,15 +111,30 @@ def estimate_cvar(defects_list, level=0.05):
     return cvar
 
 
+def bootstrap_cvar(defects_list, cvar_level=0.2, max_bootstrap=1000):
+
+    cvar_array = np.zeros((max_bootstrap, 1))
+    for n_bs in range(max_bootstrap):
+        bootstrap_sample = np.random.choice(
+            defects_list, size=len(defects_list), replace=True
+        )
+        cvar = estimate_cvar(bootstrap_sample, cvar_level)
+        cvar_array[n_bs] = cvar
+
+    mean_cvar = np.mean(cvar_array)
+    std_cvar = np.std(cvar_array, ddof=1)
+    return mean_cvar, std_cvar
+
+
 def generate_lognormal_defects(lognorm_params, n_defects):
     (log_mean, log_sem), (log_std, log_sev) = lognorm_params
     while True:
-        # sample a big defect sample from a random realization of the estimated density
-        # find a random mean of the log-normal density model, using the estimated parameters
+        # Sample many defects from a realization of the estimated density.
+        # Draw a mean from the estimated lognormal model.
         log_mu = log_mean + log_sem * np.random.randn(1)
-        # find a random variance of the log-normal density model, using the estimated parameters
+        # Draw a variance from the estimated lognormal model.
         log_var = log_std**2
-        # this naive formula can produce negative variances, use a relative perturbation
+        # Use a relative perturbation to keep variance positive.
         #  log_s2_old = log_var + log_sev * np.random.randn(1)
         rel_log_sev = log_sev / log_var
         log_s2 = np.exp(np.log(log_var) + rel_log_sev * np.random.randn(1))
@@ -146,7 +161,11 @@ def estimate_lognormal_cvar(
 
 
 def plot_defect_distribution(
-    output_filename, sort_defect, normal_parameters, lognorm_parameters, cvar_parameters
+    output_filename,
+    sort_defect,
+    normal_parameters,
+    lognorm_parameters,
+    cvar_parameters,
 ):
 
     (log_mean, log_sem), (log_std, log_sev) = lognorm_parameters
@@ -168,7 +187,8 @@ def plot_defect_distribution(
     )
     ax.plot(
         defect_mesh,
-        st.norm.pdf(np.log(defect_mesh), loc=log_mean, scale=log_std) / defect_mesh,
+        st.norm.pdf(np.log(defect_mesh), loc=log_mean, scale=log_std)
+        / defect_mesh,
         color="tab:green",
         linewidth=2,
         label="Log Gaussian estimate",
@@ -190,8 +210,12 @@ def plot_defect_distribution(
         label="Pore size data in $\\mu$m",
     )
     ax.axvline(mean_cvar * 1e6, color="k", linestyle="-", label="CVAR")
-    ax.axvline((mean_cvar + err_cvar) * 1e6, color="k", linestyle=":", label="CVAR+")
-    ax.axvline((mean_cvar - err_cvar) * 1e6, color="k", linestyle=":", label="CVAR-")
+    ax.axvline(
+        (mean_cvar + err_cvar) * 1e6, color="k", linestyle=":", label="CVAR+"
+    )
+    ax.axvline(
+        (mean_cvar - err_cvar) * 1e6, color="k", linestyle=":", label="CVAR-"
+    )
     ax.axvline(np.max(sort_defect), color="b", linestyle="-", label="maximum")
     ax.legend()
     ax.set_xlabel("defect size")
