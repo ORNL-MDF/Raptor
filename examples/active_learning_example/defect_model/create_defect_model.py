@@ -158,6 +158,8 @@ def run_raptor(
     )
 
     # Create scan path in RVE
+    # Pad the scan region to limit edge effects inside the rotated RVE.
+    scan_extension_m = 5.0 * max(rve_max_point - rve_min_point)
     path_vectors = create_path_vectors(
         rve_bounding_box,
         LASER_POWER_WATTS,
@@ -165,7 +167,7 @@ def run_raptor(
         hatch_spacing_m,
         layer_thickness_m,
         67.0,
-        max(rve_max_point - rve_min_point),
+        scan_extension_m,
         10,
     )
 
@@ -187,7 +189,9 @@ def run_raptor(
     ellipse = 2
     parabola = 1
 
-    num_modes = 50
+    # Auto-select modes using the spatial resolution as the RMSE target.
+    num_modes = None
+    mode_rmse = voxel_resolution_m
 
     melt_pool_dict = {
         "width": (width_data, num_modes, 1.0, ellipse),
@@ -204,7 +208,11 @@ def run_raptor(
             parabola,
         ),
     }
-    melt_pool = create_melt_pool(melt_pool_dict, enable_random_phases=True)
+    melt_pool = create_melt_pool(
+        melt_pool_dict,
+        enable_random_phases=True,
+        tolerance=mode_rmse,
+    )
 
     # Run simulations for all RVEs
     single_rve_volume_mm3 = np.prod(

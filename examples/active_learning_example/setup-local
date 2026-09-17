@@ -49,5 +49,8 @@ if [ "$broker_health" != "healthy" ]; then
     exit 1
 fi
 
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
+export MKL_NUM_THREADS="${MKL_NUM_THREADS:-1}"
+
 echo "RabbitMQ is healthy; starting the DIAL service."
 exec python launch_service.py --config local-conf.json

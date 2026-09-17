@@ -576,7 +576,6 @@ def write_morphology(properties: dict, morphology_output_path: str) -> None:
         f"defects written to: {morphology_output_path}"
     )
 
-    pl = pv.Plotter(shape=(1, 2), window_size=(1600, 800))
 
 def visualize(vtk_output_path: str) -> None:
     """

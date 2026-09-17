@@ -17,7 +17,6 @@ spectral components, melt pools, porosity, and VTK output.
 
 import pytest
 import numpy as np
-import pandas as pd
 import tempfile
 import vtk
 from pathlib import Path
@@ -395,98 +394,6 @@ class TestComputeSpectralComponents:
         assert spectral_array[:, 1].tolist() == pytest.approx(
             [0.0, 20.0, 170.0]
         )
-
-    def test_tolerance_zero_reconstructs_even_length_signal(self):
-        time = 0.25 + np.arange(100) / 100.0
-        values = 3.0 + 0.2 * np.cos(2.0 * np.pi * 5.0 * time)
-        values += 0.1 * np.cos(2.0 * np.pi * 50.0 * time)
-        spectral_array = compute_spectral_components(
-            np.column_stack([time, values]), tolerance=0.0
-        )
-        reconstructed = sum(
-            amplitude * np.cos(2.0 * np.pi * frequency * time + phase)
-            for amplitude, frequency, phase in spectral_array
-        )
-        np.testing.assert_allclose(reconstructed, values, atol=1.0e-13)
-
-    def test_compute_spectral_components_preserves_standard_deviation(
-        self, sample_time_series_data
-    ):
-        """Test correct amplitude when the signal frequency is retained."""
-        spectral_array = compute_spectral_components(sample_time_series_data, 6)
-        time = sample_time_series_data[:, 0]
-        reconstructed = np.zeros_like(time)
-
-        for amplitude, frequency, phase in spectral_array:
-            reconstructed += amplitude * np.cos(2.0 * np.pi * frequency * time + phase)
-
-        assert reconstructed.mean() == pytest.approx(
-            sample_time_series_data[:, 1].mean()
-        )
-        assert reconstructed.std() == pytest.approx(sample_time_series_data[:, 1].std())
-
-    def test_explicit_mode_count_retains_low_frequency_prefix(self):
-        """Explicit mode counts preserve the original truncation semantics."""
-        sampling_frequency = 10_000.0
-        time = np.arange(1000) / sampling_frequency
-        values = 1.0 + 0.2 * np.sin(2.0 * np.pi * 2000.0 * time)
-        spectral_array = compute_spectral_components(np.column_stack([time, values]), 2)
-
-        assert spectral_array[1, 1] == pytest.approx(10.0)
-
-    def test_tolerance_selects_minimum_modes_and_meets_rmse(self):
-        sampling_frequency = 1000.0
-        time = np.arange(1000) / sampling_frequency
-        values = (
-            2.0
-            + 0.30 * np.cos(2.0 * np.pi * 20.0 * time + 0.2)
-            + 0.04 * np.cos(2.0 * np.pi * 170.0 * time - 0.4)
-        )
-        data = np.column_stack([time, values])
-
-        spectral_array = compute_spectral_components(data, tolerance=0.03)
-        reconstructed = sum(
-            amplitude * np.cos(2.0 * np.pi * frequency * time + phase)
-            for amplitude, frequency, phase in spectral_array
-        )
-
-        assert spectral_array.shape == (2, 3)
-        assert spectral_array[1, 1] == pytest.approx(20.0)
-        assert np.sqrt(np.mean((values - reconstructed) ** 2)) <= 0.03
-        assert compute_required_modes(data, 0.03) == 2
-
-    def test_mode_cap_retains_highest_energy_tolerance_modes(self):
-        sampling_frequency = 1000.0
-        time = np.arange(1000) / sampling_frequency
-        values = (
-            1.0
-            + 0.1 * np.cos(2.0 * np.pi * 20.0 * time)
-            + 0.9 * np.cos(2.0 * np.pi * 170.0 * time)
-        )
-        data = np.column_stack([time, values])
-
-        with pytest.warns(RuntimeWarning, match="tolerance will not be met"):
-            spectral_array = compute_spectral_components(
-                data, n_modes=2, tolerance=0.01
-            )
-
-        assert spectral_array.shape == (2, 3)
-        assert spectral_array[1, 1] == pytest.approx(170.0)
-
-    def test_tolerance_modes_are_returned_in_frequency_order(self):
-        sampling_frequency = 1000.0
-        time = np.arange(1000) / sampling_frequency
-        values = (
-            1.0
-            + 0.1 * np.cos(2.0 * np.pi * 20.0 * time)
-            + 0.9 * np.cos(2.0 * np.pi * 170.0 * time)
-        )
-
-        spectral_array = compute_spectral_components(
-            np.column_stack([time, values]), tolerance=0.01
-        )
-
-        assert spectral_array[:, 1].tolist() == pytest.approx([0.0, 20.0, 170.0])
 
     def test_tolerance_zero_reconstructs_even_length_signal(self):
         time = 0.25 + np.arange(100) / 100.0
