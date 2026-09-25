@@ -9,9 +9,8 @@
 # https://github.com/ORNL-MDF/Raptor/LICENSE
 # =============================================================================
 from pathlib import Path
-from typing import List, Optional, Tuple, Union
+from typing import Optional, Union
 
-import matplotlib.pyplot as plt
 import numpy as np
 from .structures import PathVector
 from scipy.signal import butter, sosfilt
@@ -20,7 +19,7 @@ from scipy.stats import chi2
 
 class ScanPathBuilder:
     """
-    Handles scan strategy generation from process parameters using explicit boundaries.
+    Generates scan strategies from process parameters and explicit boundaries.
     """
 
     def __init__(
@@ -38,32 +37,61 @@ class ScanPathBuilder:
         Initializes the builder with geometric and process parameters.
 
         Args:
-            min_point: The [x, y, z] minimum corner of the part volume.
-            max_point: The [x, y, z] maximum corner of the part volume.
+            bound_box: Minimum and maximum RVE corners with shape ``(2, 3)``.
             power: Laser power in Watts.
             scan_speed: Scan speed in m/s.
             hatch_spacing: Distance between adjacent scan vectors.
             layer_height: Thickness of each layer.
             rotation: Inter-layer rotation angle in degrees.
-            scan_extension: Extra length to add to scan vectors beyond the part boundary.
-            extra_layers: Extra layers to generate above the defined part volume.
+            scan_extension: Length added beyond the part boundary.
+            extra_layers: Layers generated above the part volume.
         """
-        self.min_point = bound_box[0]
-        self.max_point = bound_box[1]
+        bound_box = np.asarray(bound_box, dtype=np.float64)
+        if bound_box.shape != (2, 3) or not np.isfinite(bound_box).all():
+            raise ValueError(
+                "bound_box must be a finite array with shape (2, 3)."
+            )
+        if np.any(bound_box[1] <= bound_box[0]):
+            raise ValueError("Every bound_box maximum must exceed its minimum.")
+        positive_parameters = {
+            "scan_speed": scan_speed,
+            "hatch_spacing": hatch_spacing,
+            "layer_height": layer_height,
+        }
+        for name, value in positive_parameters.items():
+            if not np.isfinite(value) or value <= 0.0:
+                raise ValueError(f"{name} must be finite and positive.")
+        if not np.isfinite(power):
+            raise ValueError("power must be finite.")
+        if not np.isfinite(rotation):
+            raise ValueError("rotation must be finite.")
+        if not np.isfinite(scan_extension) or scan_extension < 0.0:
+            raise ValueError("scan_extension must be finite and non-negative.")
+        if (
+            isinstance(extra_layers, (bool, np.bool_))
+            or not isinstance(extra_layers, (int, np.integer))
+            or extra_layers < 0
+        ):
+            raise ValueError("extra_layers must be a non-negative integer.")
 
-        self.power = power
-        self.scan_speed = scan_speed
-        self.hatch_spacing = hatch_spacing
-        self.layer_height = layer_height
+        self.min_point = bound_box[0].copy()
+        self.max_point = bound_box[1].copy()
+
+        self.power = float(power)
+        self.scan_speed = float(scan_speed)
+        self.hatch_spacing = float(hatch_spacing)
+        self.layer_height = float(layer_height)
         self.rotation = np.deg2rad(rotation)
-        self.scan_extension = scan_extension
-        self.extra_layers = extra_layers
+        self.scan_extension = float(scan_extension)
+        self.extra_layers = int(extra_layers)
 
         self.dimensions = self.max_point - self.min_point
 
-        self.center_of_rotation = (self.min_point[:2] + self.max_point[:2]) / 2.0
-        self.nlayers = np.int16(
-            (self.dimensions[2] // self.layer_height + 1) + self.extra_layers
+        self.center_of_rotation = (
+            self.min_point[:2] + self.max_point[:2]
+        ) / 2.0
+        self.nlayers = (
+            int(self.dimensions[2] // self.layer_height + 1) + self.extra_layers
         )
 
         self.layers = {}
@@ -90,7 +118,10 @@ class ScanPathBuilder:
         for k in range(1, self.nlayers + 1):
             angle = k * self.rotation
             rotation_matrix = np.array(
-                [[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]]
+                [
+                    [np.cos(angle), -np.sin(angle)],
+                    [np.sin(angle), np.cos(angle)],
+                ]
             )
 
             starts = np.array(
@@ -116,9 +147,8 @@ class ScanPathBuilder:
 
         if not self.layers.keys():
             print("No layers generated. Aborting.")
-            return
+            return []
         time_offset = 0.0
-        rve_bound_box = np.array([self.min_point, self.max_point])
         # constructing vectors.
         for layer_key, (layer_start, layer_end) in self.layers.items():
             if layer_start.size == 0:
@@ -128,23 +158,21 @@ class ScanPathBuilder:
             layer_time = time_offset
             for start_xy, end_xy in zip(layer_start, layer_end):
                 # defining start, end points and start, end times
-                vector_start = np.array(
-                    [start_xy[0], start_xy[1], layer_key * self.layer_height]
-                )
-                vector_end = np.array(
-                    [end_xy[0], end_xy[1], layer_key * self.layer_height]
-                )
+                z_value = self.min_point[2] + layer_key * self.layer_height
+                vector_start = np.array([start_xy[0], start_xy[1], z_value])
+                vector_end = np.array([end_xy[0], end_xy[1], z_value])
                 vector_length = np.linalg.norm(vector_end - vector_start)
                 scan_duration = (
-                    vector_length / self.scan_speed if self.scan_speed > 1e-12 else 0.0
+                    vector_length / self.scan_speed
+                    if self.scan_speed > 1e-12
+                    else 0.0
                 )
-                if layer_key >= 1 and not active_vectors:
-                    start_time = self.path_vector_layers[layer_key - 1][-1].start_time
-                else:
-                    start_time = layer_time
+                start_time = layer_time
                 end_time = start_time + scan_duration
                 # PathVector object instantiation
-                path_vector = PathVector(vector_start, vector_end, start_time, end_time)
+                path_vector = PathVector(
+                    vector_start, vector_end, start_time, end_time
+                )
                 active_vectors.append(path_vector)
                 layer_time = end_time
             self.path_vector_layers[layer_key] = active_vectors
@@ -154,7 +182,6 @@ class ScanPathBuilder:
         all_vectors = []
         for layer_key, layer_vectors in self.path_vector_layers.items():
             for vec in layer_vectors:
-                # not currently filtering --> OPTIMIZE HERE
                 vec.set_coordinate_frame()
                 all_vectors.append(vec)
         return all_vectors
@@ -165,8 +192,10 @@ class ScanPathBuilder:
 
         Args:
             output_name: Base name for the output files.
-            mode: "layers" to write separate files for each layer, "all" to write a single file with all layers.
+            mode: "layers" writes one file per layer; "all" writes one file.
         """
+        if mode not in {"layers", "all"}:
+            raise ValueError("mode must be either 'layers' or 'all'.")
         if mode == "all":
             all_layers = []
         for l_key, (l_start, l_end) in self.layers.items():
@@ -176,12 +205,20 @@ class ScanPathBuilder:
             se_pairs = [
                 np.vstack(
                     [
-                        np.hstack([1, s, l_key * self.layer_height, 0, 0]),
+                        np.hstack(
+                            [
+                                1,
+                                s,
+                                self.min_point[2] + l_key * self.layer_height,
+                                0,
+                                0,
+                            ]
+                        ),
                         np.hstack(
                             [
                                 0,
                                 e,
-                                l_key * self.layer_height,
+                                self.min_point[2] + l_key * self.layer_height,
                                 self.power,
                                 self.scan_speed,
                             ]
@@ -244,23 +281,59 @@ class MeltPoolFilter:
         effect's characteristic wavelength. ``correlation_tolerance`` controls
         the relative wavelength-resolution check; it is not the FFT RMSE.
         """
-        self.mu, self.sigma = mu, sigma
-        self.scan_speed = scan_speed
-        self.voxel_resolution = voxel_resolution
+        positive_parameters = {
+            "mu": mu,
+            "sigma": sigma,
+            "scan_speed": scan_speed,
+            "voxel_resolution": voxel_resolution,
+            "ci_relative_width": ci_relative_width,
+            "correlation_tolerance": correlation_tolerance,
+        }
+        for name, value in positive_parameters.items():
+            if not np.isfinite(value) or value <= 0.0:
+                raise ValueError(f"{name} must be finite and positive.")
+        if not np.isfinite(confidence) or not 0.0 < confidence < 1.0:
+            raise ValueError("confidence must be finite and in (0, 1).")
+
+        self.mu, self.sigma = float(mu), float(sigma)
+        self.scan_speed = float(scan_speed)
+        self.voxel_resolution = float(voxel_resolution)
         self.fs = self.scan_speed / self.voxel_resolution
-        self.confidence = confidence
-        self.ci_relative_width = ci_relative_width
-        self.correlation_tolerance = correlation_tolerance
+        self.confidence = float(confidence)
+        self.ci_relative_width = float(ci_relative_width)
+        self.correlation_tolerance = float(correlation_tolerance)
         self.rng = np.random.default_rng(random_seed)
         self.physical_effects = {}
 
     def add_effect(self, effect_name: str, effect_params: list):
+        """Add a physical effect to ``MeltPoolFilter.physical_effects``.
+
+        ``effect_params`` contains the length scale, frequency, and standard
+        deviation weight.
         """
-        Adds a physical effect {effect_name} with parameters
-        length_scale_m,frequency_hz,sigma_weight = effect_params
-        to the MeltPoolFiltration.physical_effects dictionary.
-        """
+        if (
+            not isinstance(effect_params, (list, tuple))
+            or len(effect_params) != 3
+        ):
+            raise ValueError(
+                "effect_params must contain length scale, frequency, and "
+                "sigma weight."
+            )
         length_scale_m, frequency_hz, sigma_weight = effect_params
+        if length_scale_m is None and frequency_hz is None:
+            raise ValueError(
+                "An effect requires a positive length scale or frequency."
+            )
+        if length_scale_m is not None and (
+            not np.isfinite(length_scale_m) or length_scale_m <= 0.0
+        ):
+            raise ValueError("Effect length scale must be finite and positive.")
+        if frequency_hz is not None and (
+            not np.isfinite(frequency_hz) or frequency_hz <= 0.0
+        ):
+            raise ValueError("Effect frequency must be finite and positive.")
+        if not np.isfinite(sigma_weight) or sigma_weight <= 0.0:
+            raise ValueError("Effect sigma weight must be finite and positive.")
         self.physical_effects[effect_name] = {
             "length_scale_m": length_scale_m,
             "frequency_hz": frequency_hz,
@@ -274,10 +347,15 @@ class MeltPoolFilter:
         the configured linear filters to approximate the effective degrees of
         freedom of a Gaussian-process variance estimate.
         """
+        if not self.physical_effects:
+            raise ValueError("At least one physical effect must be configured.")
+
         # Calculate frequencies from length scales
         for params in self.physical_effects.values():
             if params["length_scale_m"] is not None:
-                params["frequency_hz"] = self.scan_speed / params["length_scale_m"]
+                params["frequency_hz"] = (
+                    self.scan_speed / params["length_scale_m"]
+                )
 
         # The complete passband, rather than only its center, must satisfy
         # Nyquist.  The same limits are used by bandpass_filter below.
@@ -287,11 +365,14 @@ class MeltPoolFilter:
         if highest_passband_frequency >= self.fs / 2.0:
             raise ValueError(
                 "The filter passband exceeds the Nyquist frequency. "
-                "Decrease voxel_resolution or increase the physical length scale."
+                "Decrease voxel_resolution or increase the "
+                "physical length scale."
             )
 
         # Normalize sigma weights so the variances sum correctly
-        weights = np.array([p["sigma_weight"] for p in self.physical_effects.values()])
+        weights = np.array(
+            [p["sigma_weight"] for p in self.physical_effects.values()]
+        )
         sum_of_sq_weights = np.sum(weights**2)
         self.normalization_factor = np.sqrt(sum_of_sq_weights)
 
@@ -314,7 +395,9 @@ class MeltPoolFilter:
 
         upper_points = lower_points
         for _ in range(16):
-            effective_n = self._effective_sample_size(upper_points, autocorrelation)
+            effective_n = self._effective_sample_size(
+                upper_points, autocorrelation
+            )
             planned_ci = self._variance_ci(self.sigma**2, effective_n)
             if planned_ci["precision_satisfied"]:
                 break
@@ -331,7 +414,9 @@ class MeltPoolFilter:
         while left < right:
             midpoint = (left + right) // 2
             effective_n = self._effective_sample_size(midpoint, autocorrelation)
-            if self._variance_ci(self.sigma**2, effective_n)["precision_satisfied"]:
+            if self._variance_ci(self.sigma**2, effective_n)[
+                "precision_satisfied"
+            ]:
                 right = midpoint
             else:
                 left = midpoint + 1
@@ -347,11 +432,13 @@ class MeltPoolFilter:
         )
 
     def _model_autocorrelation(self) -> np.ndarray:
-        """Return the normalized autocorrelation implied by the shared driver."""
+        """Return normalized autocorrelation for the shared driver."""
         minimum_frequency = min(
             params["frequency_hz"] for params in self.physical_effects.values()
         )
-        response_points = max(256, int(np.ceil(50.0 * self.fs / minimum_frequency)))
+        response_points = max(
+            256, int(np.ceil(50.0 * self.fs / minimum_frequency))
+        )
         impulse = np.zeros(response_points, dtype=np.float64)
         impulse[0] = 1.0
         combined_response = np.zeros(response_points, dtype=np.float64)
@@ -364,7 +451,9 @@ class MeltPoolFilter:
                 self.fs,
             )
             response_norm = np.sqrt(np.sum(response**2))
-            combined_response += params["sigma_contribution"] * response / response_norm
+            combined_response += (
+                params["sigma_contribution"] * response / response_norm
+            )
 
         n_fft = 1 << (2 * response_points - 1).bit_length()
         response_fft = np.fft.rfft(combined_response, n=n_fft)
@@ -374,8 +463,10 @@ class MeltPoolFilter:
         return autocovariance / autocovariance[0]
 
     @staticmethod
-    def _effective_sample_size(n_samples: int, autocorrelation: np.ndarray) -> float:
-        """Approximate effective sample count for a Gaussian variance estimate."""
+    def _effective_sample_size(
+        n_samples: int, autocorrelation: np.ndarray
+    ) -> float:
+        """Estimate effective samples for a Gaussian variance."""
         max_lag = min(n_samples - 1, autocorrelation.size - 1)
         if max_lag < 1:
             return float(n_samples)
@@ -402,7 +493,9 @@ class MeltPoolFilter:
         return sosfilt(sos, data)
 
     def generate_fluctuations(self, noise_scale, n_points, t):
-        base_white_noise = self.rng.normal(loc=0.0, scale=noise_scale, size=n_points)
+        base_white_noise = self.rng.normal(
+            loc=0.0, scale=noise_scale, size=n_points
+        )
         final_series = np.zeros(n_points)
         self.component_series = {}
 
@@ -418,7 +511,9 @@ class MeltPoolFilter:
             component_noise -= np.mean(component_noise)
             std_dev = np.std(component_noise)
             if not np.isfinite(std_dev) or std_dev == 0.0:
-                raise ValueError("Unable to generate finite melt-pool fluctuations.")
+                raise ValueError(
+                    "Unable to generate finite melt-pool fluctuations."
+                )
             scaled_component = component_noise * (
                 params["sigma_contribution"] / std_dev
             )
@@ -430,7 +525,9 @@ class MeltPoolFilter:
         # their sum. Apply one common correction to preserve relative weights.
         aggregate_std = np.std(final_series)
         if not np.isfinite(aggregate_std) or aggregate_std == 0.0:
-            raise ValueError("Unable to generate finite melt-pool fluctuations.")
+            raise ValueError(
+                "Unable to generate finite melt-pool fluctuations."
+            )
         covariance_scale = self.sigma / aggregate_std
         final_series *= covariance_scale
         for name in self.component_series:
@@ -442,15 +539,14 @@ class MeltPoolFilter:
         return np.column_stack([t, final_series])
 
     def evaluate_variance_ci(self, data):
-        """
-        Evaluates the confidence interval for the variance of the data.
-        Returns (lower_bound, upper_bound) for the variance.
-        """
+        """Return variance confidence-interval diagnostics for ``data``."""
         n = len(data)
         sample_variance = np.var(data, ddof=1)
 
         # Compute autocorrelation to estimate effective sample size
-        autocorr = np.correlate(data - np.mean(data), data - np.mean(data), mode="full")
+        autocorr = np.correlate(
+            data - np.mean(data), data - np.mean(data), mode="full"
+        )
         autocorr = autocorr[autocorr.size // 2 :] / autocorr[autocorr.size // 2]
 
         # Effective sample size
@@ -519,6 +615,8 @@ def plot_melt_pool_signal(
     bins: int = 40,
 ) -> Path:
     """Write a 6.5-by-3 inch, 300 dpi signal and distribution figure."""
+    import matplotlib.pyplot as plt
+
     data = np.asarray(time_series, dtype=np.float64)
     if data.ndim != 2 or data.shape[1] != 2:
         raise ValueError("time_series must have shape (n, 2).")
@@ -527,7 +625,9 @@ def plot_melt_pool_signal(
 
     time_values = data[:, 0]
     signal = data[:, 1]
-    reconstructed = reconstruct_spectral_signal(time_values, spectral_components)
+    reconstructed = reconstruct_spectral_signal(
+        time_values, spectral_components
+    )
     plot_time = time_values * time_scale
     plot_signal = signal * value_scale
     plot_reconstructed = reconstructed * value_scale
@@ -556,7 +656,11 @@ def plot_melt_pool_signal(
             1, 2, figsize=(6.5, 3.0), constrained_layout=True
         )
         signal_axis.plot(
-            plot_time, plot_signal, color="#0072B2", linewidth=0.9, label="Generated"
+            plot_time,
+            plot_signal,
+            color="#0072B2",
+            linewidth=0.9,
+            label="Generated",
         )
         signal_axis.plot(
             plot_time,
@@ -599,7 +703,9 @@ def plot_melt_pool_signal(
         distribution_axis.set_ylabel("Probability density")
         distribution_axis.legend(frameon=False, loc="upper right")
 
-        for panel, axis in zip(("(a)", "(b)"), (signal_axis, distribution_axis)):
+        for panel, axis in zip(
+            ("(a)", "(b)"), (signal_axis, distribution_axis)
+        ):
             axis.text(
                 0.02,
                 0.96,

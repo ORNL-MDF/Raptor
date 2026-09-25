@@ -10,8 +10,6 @@
 # =============================================================================
 import argparse
 import os
-import sys
-import traceback
 import yaml
 import numpy as np
 from pathlib import Path
@@ -25,7 +23,6 @@ from .api import (
     write_morphology,
 )
 from .io import read_data, read_scan_path
-from .structures import MeltPool
 
 
 def main() -> int:
@@ -33,7 +30,9 @@ def main() -> int:
     Parses args, loads config, runs porosity prediction, processes pore data.
     """
     parser = argparse.ArgumentParser(description="LPBF Porosity Predictor")
-    parser.add_argument("config_file", type=str, help="Path to YAML config file.")
+    parser.add_argument(
+        "config_file", type=str, help="Path to YAML config file."
+    )
     args = parser.parse_args()
 
     try:
@@ -42,6 +41,8 @@ def main() -> int:
             return 1
         with open(args.config_file, "r") as f:
             config = yaml.safe_load(f)
+        if not isinstance(config, dict):
+            raise ValueError("The YAML document must contain a mapping.")
         config_dir = os.path.dirname(os.path.abspath(args.config_file))
         print(f"Loaded config: {args.config_file}")
     except Exception as e:
@@ -50,86 +51,84 @@ def main() -> int:
 
     try:
         # read scan path files
-        scan_paths = config.get("scan_paths", {})
+        scan_paths = config.get("scan_paths", [])
+        if not isinstance(scan_paths, list) or not scan_paths:
+            raise ValueError("'scan_paths' must be a non-empty list.")
 
         # read simulation parameter dictionary
         scan_pattern_parameters = config.get("parameters", {})
+        if not isinstance(scan_pattern_parameters, dict):
+            raise ValueError("'parameters' must be a mapping.")
         layer_height = scan_pattern_parameters["layer_height"]
         voxel_resolution = scan_pattern_parameters["voxel_resolution"]
-        enable_random_phases = scan_pattern_parameters["enable_random_segment_phase"]
+        enable_random_phases = scan_pattern_parameters[
+            "enable_random_segment_phase"
+        ]
+        porosity_options = {
+            key: scan_pattern_parameters[key]
+            for key in (
+                "random_seed",
+                "tile_width",
+                "spectral_error_fraction",
+                "memory_limit_mb",
+            )
+            if key in scan_pattern_parameters
+        }
 
-        # read melt pool dictionary (time series or spectral components)
+        # read melt pool dictionary (time series only)
         melt_pool_dict = config.get("melt_pool_data", {})
+        if not isinstance(melt_pool_dict, dict):
+            raise ValueError("'melt_pool_data' must be a mapping.")
         melt_pool_data = {}
-        for key in melt_pool_dict:
-            datatype = melt_pool_dict[key]["type"]
-            if datatype == "time_series":
-                try:
-                    filepath = melt_pool_dict[key]["file_name"]
-                    scale = melt_pool_dict[key]["scale"]
-                    nmodes = int(melt_pool_dict[key]["nmodes"])
-                    if key == "width":
-                        shape_factor = 2
-                        melt_pool_data[key] = (
-                            read_data(filepath),
-                            nmodes,
-                            scale,
-                            shape_factor,
-                        )
-                    else:
-                        shape_factor = melt_pool_dict[key]["shape"]
-                        melt_pool_data[key] = (
-                            read_data(filepath),
-                            nmodes,
-                            scale,
-                            shape_factor,
-                        )
-                except:
-                    print(
-                        "Error reading the specified {} {} data format.".format(
-                            key, datatype
-                        )
+        try:
+            for key, dimension_config in melt_pool_dict.items():
+                datatype = dimension_config["type"]
+                if datatype not in {"time_series"}:
+                    raise ValueError(
+                        f"Unsupported {key} melt-pool data type: {datatype}. "
+                        "Only 'time_series' is supported."
                     )
-            elif datatype == "spectral_components":
-                try:
-                    filepath = melt_pool_dict[key]["file_name"]
-                    scale = melt_pool_dict[key]["scale"]
-                    nmodes = int(melt_pool_dict[key]["nmodes"])
-                    shape_factor = 2 if key == "width" else melt_pool_dict[key]["shape"]
-                    spec_array = read_data(filepath)
-                    melt_pool_data[key] = (
-                        spec_array,
-                        nmodes,
-                        scale,
-                        shape_factor,
-                    )
-                except:
-                    print(
-                        "Error reading the specified {} {} data format.".format(
-                            key, datatype
-                        )
-                    )
+                filepath = Path(dimension_config["file_name"])
+                if not filepath.is_absolute():
+                    filepath = Path(config_dir) / filepath
+                scale = dimension_config["scale"]
+                nmodes = int(dimension_config["nmodes"])
+                shape_factor = (
+                    2 if key == "width" else dimension_config["shape"]
+                )
+                melt_pool_data[key] = (
+                    read_data(filepath),
+                    nmodes,
+                    scale,
+                    shape_factor,
+                )
+        except (KeyError, TypeError, ValueError, OSError) as error:
+            print(f"Error reading melt-pool data: {error}")
+            return 1
 
         # read representative volume element (RVE) dictionary
         rve = config.get("rve", {})
-        try:
+        if rve:
             bounding_box = np.array([rve["min_point"], rve["max_point"]])
-        except:
-            print("Warning: 'rve' was not found, defaulting to none")
+        else:
+            print("Warning: 'rve' was not found; using scan-path bounds")
             bounding_box = None
 
         # read output dictionary
         output = config.get("output", {})
+        if not isinstance(output, dict):
+            raise ValueError("'output' must be a mapping.")
         vtk_dict = output.get("vtk", {})
         morphology_dict = output.get("morphology", {})
         vtk_file_name = vtk_dict.get("file_name", None)
         morphology_file_name = morphology_dict.get("file_name", None)
         morphology_fields = morphology_dict.get("fields", None)
 
-        print(vtk_file_name, morphology_file_name, morphology_fields)
-
     except KeyError as e:
         print(f"Error: Missing key '{e}' in YAML config '{args.config_file}'.")
+        return 1
+    except (TypeError, ValueError) as error:
+        print(f"Error: Invalid configuration: {error}")
         return 1
 
     # convert relative file paths to absolute file paths
@@ -137,16 +136,20 @@ def main() -> int:
         os.path.join(config_dir, path) if not os.path.isabs(path) else path
         for path in scan_paths
     ]
-    vtk_file = (
-        os.path.join(config_dir, vtk_file_name)
-        if not os.path.isabs(vtk_file_name)
-        else vtk_file_name
-    )
-    morphology_file = (
-        os.path.join(config_dir, morphology_file_name)
-        if not os.path.isabs(morphology_file_name)
-        else morphology_file_name
-    )
+    vtk_file = None
+    if vtk_file_name:
+        vtk_file = (
+            os.path.join(config_dir, vtk_file_name)
+            if not os.path.isabs(vtk_file_name)
+            else vtk_file_name
+        )
+    morphology_file = None
+    if morphology_file_name:
+        morphology_file = (
+            os.path.join(config_dir, morphology_file_name)
+            if not os.path.isabs(morphology_file_name)
+            else morphology_file_name
+        )
 
     # report summary of input parameters for simulation
     print("\n--- Simulation Parameters ---")
@@ -162,7 +165,8 @@ def main() -> int:
     for k, v_item in param_summary.items():
         if isinstance(v_item, list):
             print(f"  {k}:")
-            [print(f"    - {p}") for p in v_item]
+            for path in v_item:
+                print(f"    - {path}")
         else:
             print(f"  {k}: {v_item}")
 
@@ -175,12 +179,10 @@ def main() -> int:
 
     if bounding_box is not None:
         print("  RVE data:")
-        print(
-            f"    xmin,ymin,zmin = {bounding_box[0][0]} m,{bounding_box[0][1]} m,{bounding_box[0][2]} m"
-        )
-        print(
-            f"    xmax,ymax,zmax = {bounding_box[1][0]} m,{bounding_box[1][1]} m,{bounding_box[1][2]} m"
-        )
+        minimum = ",".join(f"{value} m" for value in bounding_box[0])
+        maximum = ",".join(f"{value} m" for value in bounding_box[1])
+        print(f"    xmin,ymin,zmin = {minimum}")
+        print(f"    xmax,ymax,zmax = {maximum}")
 
     try:
 
@@ -191,21 +193,32 @@ def main() -> int:
             for vector in scan_vectors:
                 vector.set_coordinate_frame()
                 all_vectors.append(vector)
+        if not all_vectors:
+            raise ValueError("No line-raster scan vectors were found.")
 
         melt_pool = create_melt_pool(melt_pool_data, enable_random_phases)
 
         # instantiate voxel grid
-        grid = create_grid(voxel_resolution, bound_box=bounding_box)
+        grid = (
+            create_grid(voxel_resolution, bound_box=bounding_box)
+            if bounding_box is not None
+            else create_grid(voxel_resolution, path_vectors=all_vectors)
+        )
 
         # compute porosity
-        porosity = compute_porosity(grid, all_vectors, melt_pool)
+        porosity = compute_porosity(
+            grid,
+            all_vectors,
+            melt_pool,
+            **porosity_options,
+        )
 
         # write VTK (optional)
-        if vtk_dict:
+        if vtk_dict and vtk_file:
             write_vtk(grid.origin, grid.resolution, porosity, vtk_file)
 
         # write morphology metrics (optional)
-        if morphology_fields:
+        if morphology_fields and morphology_file:
             defect_morphologies = compute_morphology(
                 porosity, voxel_resolution, morphology_fields
             )
@@ -215,8 +228,8 @@ def main() -> int:
         print(f"Error: {e}")
         return 1
 
-    except ValueError as ve:
-        print(f"Error: {ve}")
+    except (MemoryError, ValueError) as error:
+        print(f"Error: {error}")
         return 1
 
     except Exception as e:
@@ -231,5 +244,4 @@ def main() -> int:
 
 def run():
     """Entry point for the console script."""
-    main()
-    sys.exit()
+    raise SystemExit(main())

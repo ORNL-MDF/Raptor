@@ -9,9 +9,10 @@
 # https://github.com/ORNL-MDF/Raptor/LICENSE
 # =============================================================================
 import numpy as np
+import pytest
 
 from raptor.api import compute_spectral_components
-from raptor.io import read_data
+from raptor.io import read_data, read_scan_path
 
 
 def test_read_data_preserves_uniform_timestamp_precision(tmp_path):
@@ -25,3 +26,30 @@ def test_read_data_preserves_uniform_timestamp_precision(tmp_path):
 
     assert data.dtype == np.float64
     assert spectral_components.shape == (2, 3)
+
+
+def test_read_data_accepts_whitespace_delimited_text(tmp_path):
+    input_path = tmp_path / "melt_pool_data.txt"
+    np.savetxt(input_path, np.array([[0.0, 1.0], [1.0, 2.0]]))
+
+    np.testing.assert_array_equal(
+        read_data(input_path),
+        [[0.0, 1.0], [1.0, 2.0]],
+    )
+
+
+def test_header_only_scan_path_is_empty(tmp_path):
+    input_path = tmp_path / "scan_path.txt"
+    input_path.write_text("Mode X Y Z Power Parameter\n")
+
+    assert read_scan_path(input_path) == []
+
+
+def test_malformed_scan_path_row_is_rejected(tmp_path):
+    input_path = tmp_path / "scan_path.txt"
+    input_path.write_text(
+        "Mode X Y Z Power Parameter\n" "1 0 0 0 0 0\n" "0 1e-5 0 0 100\n"
+    )
+
+    with pytest.raises(ValueError, match="row 3"):
+        read_scan_path(input_path)
