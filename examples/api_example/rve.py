@@ -60,7 +60,7 @@ melt_pool_data_path = (
     SCRIPT_DIR / ".." / "data" / "meltPoolData" / "ULI_v1700_theta0_widths.txt"
 )
 width_data = read_data(melt_pool_data_path)
-n_modes = 50
+n_modes = None  # mode selection based on residual in spectral decomposition
 
 # scale melt pool data by constant factor
 width_scale = 1.0
@@ -79,7 +79,9 @@ melt_pool_dict = {
     "height": (width_data, n_modes, height_scale, height_shape),
 }
 
-melt_pool = create_melt_pool(melt_pool_dict, enable_random_phases=True)
+melt_pool = create_melt_pool(
+    melt_pool_dict, enable_random_phases=True, tolerance=voxel_resolution
+)
 
 # 4. Compute porosity using the superellipse melt-pool mask.
 porosity = compute_porosity(grid, path_vectors, melt_pool)
