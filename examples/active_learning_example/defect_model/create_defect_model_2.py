@@ -45,7 +45,7 @@ MIN_LEN_DEFECTS = 50
 # AL PARAMETERS
 # -----------------------------------------------------------------------------
 ANALYZE = AnalysisMode.CVAR
-CVAR_LEVEL = 0.05  # level for CVAR analysis
+CVAR_LEVEL = 0.01  # level for CVAR analysis
 
 INITIAL_DATA_SIZE = 1  # size of the initial data batch >=1
 MAX_ITERATIONS = (
@@ -54,7 +54,7 @@ MAX_ITERATIONS = (
 
 BACKEND = "sable"  # "sable" or "sklearn"
 STATISTICS_YERR = (
-    1e-2  # either a noise value, e.g., 1e-2 or "yerr" for the data noise
+    "yerr"  # either a noise value, e.g., 1e-2 or "yerr" for the data noise
 )
 BATCHSIZE = 5  # batch size for planning (>=1, 1 is single acquisition)
 

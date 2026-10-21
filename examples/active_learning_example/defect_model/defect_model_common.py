@@ -253,6 +253,7 @@ def process_raptor_data(
     rve_metrics = raptor_data["rve_metrics"]
     combined_defects_list: list[float] = []
     combined_areas_list: list[float] = []
+    max_defects_list: list[float] = []
     for metrics in rve_metrics:
         defects = metrics["equivalent_diameter_area"]
         areas = metrics["area"]
@@ -273,6 +274,7 @@ def process_raptor_data(
 
         combined_defects_list.extend(defects)
         combined_areas_list.extend(areas)
+        max_defects_list.append(max(defects))
 
     combined_defects = np.array(combined_defects_list)
     combined_areas = np.array(combined_areas_list)
@@ -283,6 +285,14 @@ def process_raptor_data(
     std_pore = np.std(combined_defects, ddof=1)
     # Compute the standard error of the mean (Monte Carlo error).
     sem_pore = std_pore / np.sqrt(len(combined_defects))
+
+    # compue the mean of max. RVE pore and SEM
+    max_rve_pore = np.mean(max_defects_list)
+    sem_max_rve_pore = (
+        np.std(max_defects_list, ddof=1) / np.sqrt(len(max_defects_list))
+        if len(max_defects_list) > 1
+        else std_pore
+    )
 
     # weighted mean
     w_mean_pore = np.average(combined_defects, weights=combined_areas)
@@ -349,6 +359,7 @@ def process_raptor_data(
         output_filename,
         sort_defect,
         (mean_pore, std_pore),
+        (max_rve_pore, sem_max_rve_pore),
         lognormal_params,
         (
             (mean_cvar, err_cvar)
@@ -382,8 +393,7 @@ def process_raptor_data(
     elif analyze == "weighted_mean":
         y, yerr = float(w_mean_pore), float(w_sem_pore)
     elif analyze == "max":
-        # Use standard deviation as the approximate maximum-pore error.
-        y, yerr = float(max_pore), float(std_pore)
+        y, yerr = float(max_rve_pore), float(sem_max_rve_pore)
 
     if analyze.startswith("log") or analyze == "cvar":
         # Statistics lose meaning when max defect approaches the RVE length.
@@ -566,7 +576,7 @@ class ActiveLearningOrchestrator:
                     "sigma_range": [5e-2, 0.5],
                     # smoothness hyperparameter gamma
                     # 0 is continuous, 1 is once differentiable, and so on.
-                    "gamma": 0.6,
+                    "gamma": 0.3,
                 }
                 self.backend_args = {
                     # memory size for number of features:
