@@ -164,12 +164,14 @@ def plot_defect_distribution(
     output_filename,
     sort_defect,
     normal_parameters,
+    max_rve_parameters,
     lognorm_parameters,
     cvar_parameters,
 ):
 
     (log_mean, log_sem), (log_std, log_sev) = lognorm_parameters
     (mean_pore, std_pore) = normal_parameters
+    (max_rve_pore, sem_max_rve_pore) = max_rve_parameters
     (mean_cvar, err_cvar) = cvar_parameters
     import matplotlib
 
@@ -177,14 +179,14 @@ def plot_defect_distribution(
     import matplotlib.pyplot as plt
 
     fig, ax = plt.subplots(figsize=(6.5, 4.5))
-    defect_mesh = np.linspace(0.01, (mean_pore + 3 * std_pore) * 1e6, 500)
-    ax.plot(
-        defect_mesh,
-        st.norm.pdf(defect_mesh, loc=mean_pore * 1e6, scale=std_pore * 1e6),
-        color="tab:blue",
-        linewidth=2,
-        label="Standard Gaussian estimate",
-    )
+    defect_mesh = np.linspace(0.01, np.max(sort_defect), 500)
+    # ax.plot(
+    #    defect_mesh,
+    #    st.norm.pdf(defect_mesh, loc=mean_pore * 1e6, scale=std_pore * 1e6),
+    #    color="tab:blue",
+    #    linewidth=2,
+    #    label="Standard Gaussian estimate",
+    # )
     ax.plot(
         defect_mesh,
         st.norm.pdf(np.log(defect_mesh), loc=log_mean, scale=log_std)
@@ -214,12 +216,30 @@ def plot_defect_distribution(
     )
     ax.axvline(mean_cvar * 1e6, color="k", linestyle="-", label="CVAR")
     ax.axvline(
-        (mean_cvar + err_cvar) * 1e6, color="k", linestyle=":", label="CVAR+"
+        (mean_cvar + 2 * err_cvar) * 1e6,
+        color="k",
+        linestyle=":",
+        label="CVAR conf. int.",
     )
     ax.axvline(
-        (mean_cvar - err_cvar) * 1e6, color="k", linestyle=":", label="CVAR-"
+        (mean_cvar - 2 * err_cvar) * 1e6,
+        color="k",
+        linestyle=":",
     )
-    ax.axvline(np.max(sort_defect), color="b", linestyle="-", label="maximum")
+    ax.axvline(
+        max_rve_pore * 1e6, color="tab:blue", linestyle="-", label="RVE Maximum"
+    )
+    ax.axvline(
+        (max_rve_pore + 2 * sem_max_rve_pore) * 1e6,
+        color="tab:blue",
+        linestyle=":",
+        label="RVE Maximum conf. int.",
+    )
+    ax.axvline(
+        (max_rve_pore - 2 * sem_max_rve_pore) * 1e6,
+        color="tab:blue",
+        linestyle=":",
+    )
     ax.legend()
     ax.set_xlabel("defect size")
     ax.set_ylabel("probability density")

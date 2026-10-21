@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 # USER PARAMETERS
 # -----------------------------------------------------------------------------
 # Critical flaw size (meters)
-D_CRIT_LIST = [10e-6, 20e-6, 40e-6]
+D_CRIT_LIST = [20e-6, 30e-6, 40e-6]
 
 
 def main(filepath):
@@ -42,7 +42,7 @@ def main(filepath):
         actual_mean_um,
         color="royalblue",
         linewidth=2,
-        label="GP Mean Prediction",
+        label="Surrogate Mean Prediction",
     )
 
     ax.fill_between(
@@ -98,7 +98,10 @@ def main(filepath):
             ax.plot(hs_limit, d_um, "o", color="k", markersize=4)
 
             ax.annotate(
-                r"$h_{opt}$" + f"= {hs_limit:.3f} mm",
+                r"$h_{opt}$"
+                + f"= {hs_limit:.3f} mm"
+                + " for $d_{crit}$"
+                + f"= {d_um:.1f} $\\mu$m",
                 xy=(np.min(Xg_mm), d_um),
                 xytext=(3, 3),
                 textcoords="offset points",
@@ -108,9 +111,10 @@ def main(filepath):
 
     ax.set_xlim(np.min(Xg_mm), np.max(Xg_mm))
     ax.set_yscale("symlog", linthresh=10)
-    ax.set_ylim(bottom=0, top=np.max(actual_mean_um) * 1.5)
+    # ax.set_ylim(bottom=0, top=np.max(actual_mean_um) * 1.5)
+    ax.set_ylim(0, 200)
     ax.set_xlabel("Hatch Spacing (mm)")
-    ax.set_ylabel("Maximum Pore Diameter ($\\mu$m)")
+    ax.set_ylabel("Pore Diameter Statistic ($\\mu$m)")
     ax.set_title(f"P={laser_power}W, V={laser_velocity}m/s")
     ax.minorticks_on()
 
@@ -132,7 +136,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--file",
         type=str,
-        default="defect_model_surrogate.npz",
+        default="defect_model_surrogate_1.npz",
         help="Path to the saved .npz surrogate file.",
     )
     args = parser.parse_args()
