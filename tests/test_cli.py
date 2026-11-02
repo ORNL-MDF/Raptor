@@ -34,6 +34,7 @@ parameters:
   voxel_resolution: 1.0e-5
   enable_random_segment_phase: false
   memory_limit_mb: 512
+  boundary_tracking: false
 melt_pool_data:
   width: {type: time_series, file_name: dimension.txt, nmodes: 1, scale: 1.0}
   depth:
@@ -74,6 +75,7 @@ output: {}
 
     assert cli.main() == 0
     assert observed_options["memory_limit_mb"] == 512
+    assert observed_options["boundary_tracking"] is False
 
 
 def test_console_entry_point_propagates_failure_status(monkeypatch):

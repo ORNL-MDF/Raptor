@@ -487,6 +487,35 @@ class TestComputeMeltMask:
         assert diagnostics["execution_mode"] == "streamed"
         assert diagnostics["spectral_table_batches"] == 2
 
+        untracked_streamed = compute_melt_mask_grid(
+            grid.origin,
+            grid.shape,
+            grid.resolution,
+            constant_melt_pool,
+            active,
+            tile_size=tile_size,
+            candidate_offsets=offsets,
+            candidate_indices=indices,
+            boundary_tracking=False,
+        )
+        monkeypatch.setattr(core, "plan_memory_execution", original_planner)
+        untracked = compute_melt_mask_grid(
+            grid.origin,
+            grid.shape,
+            grid.resolution,
+            constant_melt_pool,
+            active,
+            tile_size=tile_size,
+            candidate_offsets=offsets,
+            candidate_indices=indices,
+            boundary_tracking=False,
+        )
+        np.testing.assert_array_equal(untracked_streamed, untracked)
+        assert set(np.unique(untracked)) <= {0, 1}
+        assert np.any(resident >= 2)
+        assert np.all(untracked[resident == 1] == 1)
+        assert np.all(untracked[resident == 0] == 0)
+
     def test_optimized_grid_kernel_and_orientation_contract(
         self, constant_melt_pool, path_vector
     ):

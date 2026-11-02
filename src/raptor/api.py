@@ -320,8 +320,15 @@ def compute_porosity(
     tile_width: Optional[float] = None,
     spectral_error_fraction: float = DEFAULT_SPECTRAL_ERROR_FRACTION,
     memory_limit_mb: Optional[int] = None,
+    boundary_tracking: bool = True,
 ) -> np.ndarray:
     """Compute the porosity phase field.
+
+    With ``boundary_tracking=True`` (default) the field holds phase codes
+    0 (pore), 1 (melted), 2 (boundary) and 3 (boundary intersection), where
+    boundary voxels lie within one voxel of a melt-pool surface. With
+    ``boundary_tracking=False`` only 0 (pore, never melted) and 1 (melted)
+    are written.
 
     ``tile_width`` is a performance-only spatial-index control measured in
     meters.
@@ -338,6 +345,8 @@ def compute_porosity(
         raise ValueError("tile_width must be finite and positive or None.")
     validate_spectral_error_fraction(spectral_error_fraction)
     validate_memory_limit(memory_limit_mb)
+    if not isinstance(boundary_tracking, (bool, np.bool_)):
+        raise ValueError("boundary_tracking must be True or False.")
 
     requested_tile_size = None
     if tile_width is not None:
@@ -387,6 +396,7 @@ def compute_porosity(
         spectral_error_fraction=spectral_error_fraction,
         memory_limit_mb=memory_limit_mb,
         report=True,
+        boundary_tracking=bool(boundary_tracking),
     )
     t_elapsed = time.time() - t0_run
 

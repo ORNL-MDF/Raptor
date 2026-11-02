@@ -190,12 +190,15 @@ def compute_melt_mask_grid(
     memory_limit_mb: Optional[int] = None,
     diagnostics: Optional[dict] = None,
     report: bool = False,
+    boundary_tracking: bool = True,
 ) -> np.ndarray:
     """Compute a regular RVE with the horizontal packed-table kernel.
 
     Spectral accuracy is planned globally before the memory policy selects
     either a resident table or ordered vector batches. Both modes use identical
     samples and update the shared phase field in the same vector order.
+    With ``boundary_tracking=False`` the field contains only 0 (unmelted) and
+    1 (melted).
     """
     budget_bytes, budget_source = resolve_memory_budget(memory_limit_mb)
 
@@ -431,6 +434,7 @@ def compute_melt_mask_grid(
             centroids[start:stop],
             height_shape_factor,
             depth_shape_factor,
+            boundary_tracking,
         )
     return melt_mask
 
@@ -460,11 +464,13 @@ def compute_melt_mask_kernel(
     centroids: np.ndarray,
     height_shape_factor: np.float64,
     depth_shape_factor: np.float64,
+    boundary_tracking: bool,
 ) -> np.ndarray:
     """Apply ordered horizontal paths to complete voxel z-columns.
 
     Each path reads independently evaluated width, depth, and height histories.
     Parallelism is across columns, so each phase-field element has one writer.
+    Without ``boundary_tracking`` only melted voxels are written (phase 1).
     """
     n_tile_y = (voxel_shape[1] + tile_size - 1) // tile_size
     n_columns = voxel_shape[0] * voxel_shape[1]
@@ -581,9 +587,10 @@ def compute_melt_mask_kernel(
                 previous_phase = melt_mask[flat_index]
                 if is_voxel_melted:
                     melt_mask[flat_index] = 1
-                if is_voxel_boundary:
-                    melt_mask[flat_index] = 2
-                if previous_phase > 1 and is_voxel_boundary:
-                    melt_mask[flat_index] = 3
+                if boundary_tracking:
+                    if is_voxel_boundary:
+                        melt_mask[flat_index] = 2
+                    if previous_phase > 1 and is_voxel_boundary:
+                        melt_mask[flat_index] = 3
 
     return melt_mask

@@ -699,6 +699,84 @@ class TestComputePorosity:
 # =============================================================================
 
 
+class TestBoundaryTracking:
+    """``boundary_tracking=False`` writes only pores (0) and melt (1)."""
+
+    @staticmethod
+    def simulation():
+        t = np.arange(400, dtype=np.float64) * 2.5e-6
+        width = 70.0e-6 + 12.0e-6 * np.sin(2 * np.pi * 900.0 * t)
+        series = np.column_stack([t, width])
+        melt_pool = create_melt_pool(
+            {
+                "width": (series, 8, 1.0, 2.0),
+                "depth": (series, 8, 0.8, 1.0),
+                "height": (series, 8, 0.3, 1.0),
+            },
+            enable_random_phases=True,
+        )
+        bound_box = np.array([[0.0, 0.0, 0.0], [100.0e-6, 100.0e-6, 80.0e-6]])
+        grid = create_grid(5.0e-6, bound_box=bound_box)
+        vectors = create_path_vectors(
+            bound_box, 200.0, 1.0, 70.0e-6, 50.0e-6, 67.0, 50.0e-6, 1
+        )
+        return grid, vectors, melt_pool
+
+    def test_default_tracks_boundaries(self):
+        grid, vectors, melt_pool = self.simulation()
+        default = compute_porosity(grid, vectors, melt_pool, random_seed=5)
+        tracked = compute_porosity(
+            grid, vectors, melt_pool, random_seed=5, boundary_tracking=True
+        )
+        np.testing.assert_array_equal(default, tracked)
+        assert np.any(tracked >= 2)
+
+    def test_untracked_field_has_only_pore_and_melt(self):
+        grid, vectors, melt_pool = self.simulation()
+        tracked = compute_porosity(grid, vectors, melt_pool, random_seed=5)
+        untracked = compute_porosity(
+            grid, vectors, melt_pool, random_seed=5, boundary_tracking=False
+        )
+        histogram = compute_phase_histogram(untracked)
+        assert histogram[2] == histogram[3] == 0
+        assert histogram[0] > 0 and histogram[1] > 0
+        # Melt is never lost and pores are never invented.
+        assert np.all(untracked[tracked == 1] == 1)
+        assert np.all(untracked[tracked == 0] == 0)
+        # Some boundary voxels are unmelted and become pores.
+        assert np.any((tracked >= 2) & (untracked == 0))
+        assert histogram[0] > compute_phase_histogram(tracked)[0]
+
+        tracked_pores = compute_morphology(
+            tracked, grid.resolution, ["equivalent_diameter_area"]
+        )
+        untracked_pores = compute_morphology(
+            untracked, grid.resolution, ["equivalent_diameter_area"]
+        )
+        assert untracked_pores["equivalent_diameter_area"].sum() >= (
+            tracked_pores["equivalent_diameter_area"].sum()
+        )
+
+    def test_surface_voxel_is_boundary_only_when_tracked(
+        self, minimal_simulation
+    ):
+        grid, vectors, melt_pool = minimal_simulation
+        tracked = compute_porosity(grid, vectors, melt_pool)
+        untracked = compute_porosity(
+            grid, vectors, melt_pool, boundary_tracking=False
+        )
+        surface = tracked >= 2
+        assert np.any(surface)
+        np.testing.assert_array_equal(untracked[~surface], tracked[~surface])
+        assert set(np.unique(untracked[surface])) <= {0, 1}
+
+    @pytest.mark.parametrize("value", ["false", 0, None])
+    def test_non_boolean_flag_is_rejected(self, minimal_simulation, value):
+        grid, vectors, melt_pool = minimal_simulation
+        with pytest.raises(ValueError, match="boundary_tracking"):
+            compute_porosity(grid, vectors, melt_pool, boundary_tracking=value)
+
+
 class TestWriteVtk:
     """Test cases for the write_vtk function."""
 

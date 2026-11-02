@@ -130,6 +130,7 @@ def warm_numba_cache(
         centroids,
         1.0,
         1.0,
+        True,
     )
     timings["production_mask"] = time.perf_counter() - start
 

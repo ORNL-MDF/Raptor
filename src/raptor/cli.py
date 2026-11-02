@@ -71,6 +71,7 @@ def main() -> int:
                 "tile_width",
                 "spectral_error_fraction",
                 "memory_limit_mb",
+                "boundary_tracking",
             )
             if key in scan_pattern_parameters
         }
