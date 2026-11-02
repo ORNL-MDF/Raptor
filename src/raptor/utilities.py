@@ -9,12 +9,71 @@
 # https://github.com/ORNL-MDF/Raptor/LICENSE
 # =============================================================================
 from pathlib import Path
-from typing import Optional, Union
+from typing import List, Optional, Union
 
 import numpy as np
 from .structures import PathVector
 from scipy.signal import butter, sosfilt
 from scipy.stats import chi2
+
+# Default powder consolidation factor: at steady state the powder layer is
+# about twice the nominal layer height, so the effective layer thickness is
+# ``layer_height / 0.5``. See https://doi.org/10.1184/R1/6720581.
+DEFAULT_POWDER_CONSOLIDATION = 0.5
+
+
+def validate_powder_consolidation(powder_consolidation: float) -> None:
+    """Require a powder consolidation factor in ``(0, 1]``."""
+    if (
+        isinstance(powder_consolidation, (bool, np.bool_))
+        or not isinstance(powder_consolidation, (int, float, np.number))
+        or not np.isfinite(powder_consolidation)
+        or not 0.0 < powder_consolidation <= 1.0
+    ):
+        raise ValueError(
+            "powder_consolidation must be a finite value in (0, 1]."
+        )
+
+
+def apply_powder_consolidation(
+    path_vectors: List[PathVector],
+    powder_consolidation: float,
+    reference_z: Optional[float] = None,
+) -> List[PathVector]:
+    """Stretch path-vector heights to the effective layer thickness.
+
+    Scan paths read from files carry each layer at its nominal height. With
+    powder consolidation ``phi`` the effective layer thickness is
+    ``layer_height / phi``, so every height is mapped to
+    ``reference_z + (z - reference_z) / phi``. ``reference_z`` defaults to the
+    lowest vector start height. In-plane coordinates and times are unchanged.
+    New vectors are returned with their coordinate frames set.
+
+    Reference for the powder consolidation factor:
+    https://doi.org/10.1184/R1/6720581 (default ``phi = 0.5``, see
+    ``DEFAULT_POWDER_CONSOLIDATION``).
+    """
+    validate_powder_consolidation(powder_consolidation)
+    if not path_vectors:
+        return []
+    if reference_z is None:
+        reference_z = min(float(v.start_point[2]) for v in path_vectors)
+    elif not np.isfinite(reference_z):
+        raise ValueError("reference_z must be finite.")
+    stretch = 1.0 / float(powder_consolidation)
+
+    consolidated = []
+    for vector in path_vectors:
+        start_point = vector.start_point.copy()
+        end_point = vector.end_point.copy()
+        start_point[2] = reference_z + (start_point[2] - reference_z) * stretch
+        end_point[2] = reference_z + (end_point[2] - reference_z) * stretch
+        new_vector = PathVector(
+            start_point, end_point, vector.start_time, vector.end_time
+        )
+        new_vector.set_coordinate_frame()
+        consolidated.append(new_vector)
+    return consolidated
 
 
 class ScanPathBuilder:
@@ -32,6 +91,7 @@ class ScanPathBuilder:
         rotation: float,
         scan_extension: float,
         extra_layers: int,
+        powder_consolidation: float = DEFAULT_POWDER_CONSOLIDATION,
     ):
         """
         Initializes the builder with geometric and process parameters.
@@ -41,10 +101,14 @@ class ScanPathBuilder:
             power: Laser power in Watts.
             scan_speed: Scan speed in m/s.
             hatch_spacing: Distance between adjacent scan vectors.
-            layer_height: Thickness of each layer.
+            layer_height: Nominal (machine) layer thickness.
             rotation: Inter-layer rotation angle in degrees.
             scan_extension: Length added beyond the part boundary.
             extra_layers: Layers generated above the part volume.
+            powder_consolidation: Powder consolidation factor to convert
+                to effective layer thickness in situ
+                (``layer_height / powder_consolidation``). See
+                https://doi.org/10.1184/R1/6720581.
         """
         bound_box = np.asarray(bound_box, dtype=np.float64)
         if bound_box.shape != (2, 3) or not np.isfinite(bound_box).all():
@@ -73,6 +137,7 @@ class ScanPathBuilder:
             or extra_layers < 0
         ):
             raise ValueError("extra_layers must be a non-negative integer.")
+        validate_powder_consolidation(powder_consolidation)
 
         self.min_point = bound_box[0].copy()
         self.max_point = bound_box[1].copy()
@@ -81,6 +146,10 @@ class ScanPathBuilder:
         self.scan_speed = float(scan_speed)
         self.hatch_spacing = float(hatch_spacing)
         self.layer_height = float(layer_height)
+        self.powder_consolidation = float(powder_consolidation)
+        self.effective_layer_thickness = (
+            self.layer_height / self.powder_consolidation
+        )
         self.rotation = np.deg2rad(rotation)
         self.scan_extension = float(scan_extension)
         self.extra_layers = int(extra_layers)
@@ -91,7 +160,8 @@ class ScanPathBuilder:
             self.min_point[:2] + self.max_point[:2]
         ) / 2.0
         self.nlayers = (
-            int(self.dimensions[2] // self.layer_height + 1) + self.extra_layers
+            int(self.dimensions[2] // self.effective_layer_thickness + 1)
+            + self.extra_layers
         )
 
         self.layers = {}
@@ -158,7 +228,10 @@ class ScanPathBuilder:
             layer_time = time_offset
             for start_xy, end_xy in zip(layer_start, layer_end):
                 # defining start, end points and start, end times
-                z_value = self.min_point[2] + layer_key * self.layer_height
+                z_value = (
+                    self.min_point[2]
+                    + layer_key * self.effective_layer_thickness
+                )
                 vector_start = np.array([start_xy[0], start_xy[1], z_value])
                 vector_end = np.array([end_xy[0], end_xy[1], z_value])
                 vector_length = np.linalg.norm(vector_end - vector_start)
