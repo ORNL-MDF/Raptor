@@ -25,6 +25,7 @@ from .api import (
 )
 from .io import read_data, read_scan_path
 from .utilities import (
+    DEFAULT_POWDER_CONSOLIDATION,
     apply_powder_consolidation,
     validate_powder_consolidation,
 )
@@ -72,7 +73,7 @@ def main() -> int:
             "enable_random_segment_phase"
         ]
         powder_consolidation = scan_pattern_parameters.get(
-            "powder_consolidation", 1.0
+            "powder_consolidation", DEFAULT_POWDER_CONSOLIDATION
         )
         validate_powder_consolidation(powder_consolidation)
         porosity_options = {

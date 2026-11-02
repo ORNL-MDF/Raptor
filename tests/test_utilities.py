@@ -13,6 +13,7 @@ import pytest
 
 from raptor.structures import PathVector
 from raptor.utilities import (
+    DEFAULT_POWDER_CONSOLIDATION,
     MeltPoolFilter,
     ScanPathBuilder,
     apply_powder_consolidation,
@@ -153,21 +154,28 @@ def layer_heights(vectors):
     return np.unique(np.round([v.start_point[2] for v in vectors], 12))
 
 
-def test_default_consolidation_keeps_nominal_layer_height():
+def test_default_consolidation_is_one_half():
     builder, default_vectors = build_vectors()
-    _, explicit_vectors = build_vectors(powder_consolidation=1.0)
+    _, explicit_vectors = build_vectors(powder_consolidation=0.5)
 
-    assert builder.layer_pitch == LAYER
-    heights = layer_heights(default_vectors)
-    np.testing.assert_allclose(heights, np.arange(heights.size) * LAYER)
-    for a, b in zip(default_vectors, explicit_vectors):
+    assert builder.powder_consolidation == DEFAULT_POWDER_CONSOLIDATION == 0.5
+    assert builder.layer_pitch == pytest.approx(2.0 * LAYER)
+    for a, b in zip(default_vectors, explicit_vectors, strict=True):
         np.testing.assert_array_equal(a.start_point, b.start_point)
         np.testing.assert_array_equal(a.end_point, b.end_point)
 
 
+def test_unit_consolidation_keeps_nominal_layer_height():
+    builder, vectors = build_vectors(powder_consolidation=1.0)
+
+    assert builder.layer_pitch == LAYER
+    heights = layer_heights(vectors)
+    np.testing.assert_allclose(heights, np.arange(heights.size) * LAYER)
+
+
 def test_consolidation_sets_layer_pitch_to_height_over_phi():
     builder, vectors = build_vectors(powder_consolidation=0.5)
-    _, nominal = build_vectors()
+    _, nominal = build_vectors(powder_consolidation=1.0)
 
     assert builder.layer_pitch == pytest.approx(2.0 * LAYER)
     heights = layer_heights(vectors)

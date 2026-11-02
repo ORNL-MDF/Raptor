@@ -29,7 +29,7 @@ from .spectral import (
 )
 from .spatial import build_spatial_index
 from .structures import Grid, MeltPool, PathVector
-from .utilities import ScanPathBuilder
+from .utilities import DEFAULT_POWDER_CONSOLIDATION, ScanPathBuilder
 
 
 def create_grid(
@@ -55,12 +55,14 @@ def create_path_vectors(
     rotation: float,
     scan_extension: float,
     extra_layers: int,
-    powder_consolidation: float = 1.0,
+    powder_consolidation: float = DEFAULT_POWDER_CONSOLIDATION,
 ) -> List[PathVector]:
     """Generate rotated raster path vectors for a box.
 
-    ``powder_consolidation`` (``phi`` in ``(0, 1]``) places successive layers
-    ``layer_height / phi`` apart; see :class:`raptor.utilities.ScanPathBuilder`.
+    ``powder_consolidation`` (``phi`` in ``(0, 1]``, default ``0.5``) places
+    successive layers ``layer_height / phi`` apart; see
+    :class:`raptor.utilities.ScanPathBuilder` and
+    https://doi.org/10.1184/R1/6720581.
     """
     scan_path_builder = ScanPathBuilder(
         bound_box,

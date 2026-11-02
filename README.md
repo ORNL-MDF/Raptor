@@ -132,7 +132,7 @@ parameters:
   tile_width: null
   spectral_error_fraction: 0.25
   memory_limit_mb: null
-  powder_consolidation: 1.0 # Optional, in (0, 1]; layers are layer_height / phi apart
+  powder_consolidation: 0.5 # Optional (default 0.5), in (0, 1]; layers are layer_height / phi apart
 
 # Melt pool dimension data: every dimension uses 'time_series' (time, value)
 # data, or every dimension uses 'spectral_components' (see below).
@@ -200,7 +200,7 @@ currently available memory.
 
    * The RVE min and max points *filter the scan paths for those that are near* the box defined by `min_point` and `max_point`; a large number of scan path files (such as from a part-scale build) can be downselected using this parameter setting.
 
-* **Powder Consolidation** (`parameters.powder_consolidation`, optional, default `1.0`): the powder consolidation factor `phi` in `(0, 1]`. At steady state the powder layer the laser fuses is `layer_height / phi` thick, so the heights in the scan path files are stretched about the lowest vector to place layers `layer_height / phi` apart. For example, `phi = 0.5` with a 30 um nominal layer gives a 60 um pitch. An explicit `rve` box must cover the stretched build height.
+* **Powder Consolidation** (`parameters.powder_consolidation`, optional, default `0.5`): the powder consolidation factor `phi` in `(0, 1]`. At steady state the powder layer the laser fuses is `layer_height / phi` thick, so the heights in the scan path files are stretched about the lowest vector to place layers `layer_height / phi` apart. The default `phi = 0.5` gives a 60 um pitch for a 30 um nominal layer [Scime 2018]; set `1.0` to keep the nominal layer heights. An explicit `rve` box must cover the stretched build height.
 
 * **Melt Pool Data Files**: These files provide the data for the `melt_pool_data` section of the config. All three dimensions must use the same `type`.
    *   With `type: "time_series"`, the file should be a two-column text or CSV file: `[time, value]`.
@@ -239,7 +239,7 @@ grid = create_grid(voxel_resolution, bound_box=bound_box)
 #### Step 2:  Generate Scan Path Vectors
 Use the `ScanPathBuilder` utility to programmatically generate a scan strategy. This builder takes process parameters like power, speed, and hatch spacing to create a list of PathVector objects for the simulation.
 
-The optional `powder_consolidation` argument (`phi`, default `1.0`) accounts for powder consolidation. At steady state the fused powder layer is `layer_height / phi` thick, so successive layers are placed `layer_height / phi` apart; `phi = 0.5` with a 30 um layer gives a 60 um pitch. For path vectors read from scan-path files, `raptor.utilities.apply_powder_consolidation(vectors, phi)` applies the same stretch to their heights.
+The optional `powder_consolidation` argument (`phi`, default `0.5`) accounts for powder consolidation. At steady state the fused powder layer is `layer_height / phi` thick, so successive layers are placed `layer_height / phi` apart; the default `phi = 0.5` gives a 60 um pitch for a 30 um layer [Scime 2018]. Pass `powder_consolidation=1.0` to place layers `layer_height` apart. For path vectors read from scan-path files, `raptor.utilities.apply_powder_consolidation(vectors, phi)` applies the same stretch to their heights.
 
 ```python
 from raptor.utilities import ScanPathBuilder
@@ -428,3 +428,6 @@ To visualize the example output, uncomment the `visualize("./rve.vti")` line.
 
 The melt pool measurements in the examples are scans performed in Ti6Al4V from the following study:
 * Miner, Justin; Narra, Sneha Prabha (2024). Dataset of Melt Pool Variability Measurements for Powder Bed Fusion - Laser Beam of Ti-6Al-4V. Carnegie Mellon University. Dataset. https://doi.org/10.1184/R1/25696293.v1
+
+The default powder consolidation factor (`powder_consolidation = 0.5`) follows:
+* Scime, L. R. (2018). Methods for the Expansion of Additive Manufacturing Process Space and the Development of In-Situ Process Monitoring Methodologies. Carnegie Mellon University. https://doi.org/10.1184/R1/6720581

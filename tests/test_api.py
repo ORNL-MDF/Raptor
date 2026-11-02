@@ -1038,13 +1038,13 @@ class TestPathVectorPowderConsolidation:
         self, sample_bound_box, sample_process_parameters
     ):
         nominal = create_path_vectors(
-            sample_bound_box, **sample_process_parameters
-        )
-        consolidated = create_path_vectors(
             sample_bound_box,
             **sample_process_parameters,
-            powder_consolidation=0.5,
+            powder_consolidation=1.0,
         )
+        consolidated = create_path_vectors(
+            sample_bound_box, **sample_process_parameters
+        )  # default powder_consolidation = 0.5
         layer = sample_process_parameters["layer_height"]
         nominal_z = np.unique([v.start_point[2] for v in nominal])
         consolidated_z = np.unique([v.start_point[2] for v in consolidated])

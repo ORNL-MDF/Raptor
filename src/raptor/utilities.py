@@ -16,6 +16,11 @@ from .structures import PathVector
 from scipy.signal import butter, sosfilt
 from scipy.stats import chi2
 
+# Default powder consolidation factor: a fused layer occupies about half the
+# thickness of the steady-state powder layer, so layers are placed
+# ``layer_height / 0.5`` apart. See https://doi.org/10.1184/R1/6720581.
+DEFAULT_POWDER_CONSOLIDATION = 0.5
+
 
 def validate_powder_consolidation(powder_consolidation: float) -> None:
     """Require a powder consolidation factor in ``(0, 1]``."""
@@ -43,6 +48,10 @@ def apply_powder_consolidation(
     ``reference_z + (z - reference_z) / phi``. ``reference_z`` defaults to the
     lowest vector start height. In-plane coordinates and times are unchanged.
     New vectors are returned with their coordinate frames set.
+
+    Reference for the powder consolidation factor:
+    https://doi.org/10.1184/R1/6720581 (default ``phi = 0.5``, see
+    ``DEFAULT_POWDER_CONSOLIDATION``).
     """
     validate_powder_consolidation(powder_consolidation)
     if not path_vectors:
@@ -82,7 +91,7 @@ class ScanPathBuilder:
         rotation: float,
         scan_extension: float,
         extra_layers: int,
-        powder_consolidation: float = 1.0,
+        powder_consolidation: float = DEFAULT_POWDER_CONSOLIDATION,
     ):
         """
         Initializes the builder with geometric and process parameters.
@@ -100,9 +109,9 @@ class ScanPathBuilder:
                 ``(0, 1]``. At steady state the powder layer the laser
                 fuses is ``layer_height / phi`` thick, so successive layers
                 are placed ``layer_height / phi`` apart (the layer pitch).
-                For example, ``phi = 0.5`` with a 30 um nominal layer gives a
-                60 um pitch. The default ``1.0`` places layers
-                ``layer_height`` apart.
+                The default ``0.5`` gives a 60 um pitch for a 30 um nominal
+                layer; ``1.0`` places layers ``layer_height`` apart. See
+                https://doi.org/10.1184/R1/6720581.
         """
         bound_box = np.asarray(bound_box, dtype=np.float64)
         if bound_box.shape != (2, 3) or not np.isfinite(bound_box).all():
