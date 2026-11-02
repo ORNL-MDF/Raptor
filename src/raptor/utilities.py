@@ -105,13 +105,9 @@ class ScanPathBuilder:
             rotation: Inter-layer rotation angle in degrees.
             scan_extension: Length added beyond the part boundary.
             extra_layers: Layers generated above the part volume.
-            powder_consolidation: Powder consolidation factor ``phi`` in
-                ``(0, 1]``. At steady state the powder layer the laser
-                fuses is thicker than the nominal layer, giving an effective
-                layer thickness of ``layer_height / phi``; successive layers
-                are placed one effective layer thickness apart. The default
-                ``0.5`` gives a 60 um effective layer thickness for a 30 um
-                nominal layer; ``1.0`` uses ``layer_height`` itself. See
+            powder_consolidation: Powder consolidation factor to convert
+                to effective layer thickness in situ
+                (``layer_height / powder_consolidation``). See
                 https://doi.org/10.1184/R1/6720581.
         """
         bound_box = np.asarray(bound_box, dtype=np.float64)

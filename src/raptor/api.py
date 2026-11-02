@@ -313,10 +313,7 @@ def create_melt_pool_from_spectra(
     with lengths in meters and frequencies in Hz. Row 0 is the mean
     ``(A_0, 0[, 0])``; every other row has ``f_k > 0``. Amplitudes are cosine
     amplitudes, the convention :func:`compute_spectral_components` returns
-    (``2|F_k|/N`` of the FFT). Raptor 1.1.0 and earlier computed ``|F_k|/N``,
-    half the cosine amplitude. Spectra from those versions must be doubled
-    to represent the measured signal, or used unchanged to reproduce results
-    obtained with them.
+    (``2|F_k|/N`` of the FFT).
 
     ``(m, 2)`` spectra have no phases and are accepted only with
     ``enable_random_phases=True``.

@@ -320,10 +320,7 @@ X(t) = A_0 + sum_k A_k cos(2 pi f_k t + phase_k)
 
 with lengths in meters and frequencies in Hz. Row 0 is the mean `(A_0, 0, 0)`.
 The amplitudes are cosine amplitudes, the same convention returned by
-`compute_spectral_components` (`2|F_k|/N` of the FFT). Raptor 1.1.0 and
-earlier computed `|F_k|/N`, half the cosine amplitude. Spectra from those
-versions must be doubled to represent the measured signal, or used unchanged
-to reproduce results obtained with them.
+`compute_spectral_components` (`2|F_k|/N` of the FFT).
 
 `scale` multiplies every amplitude, including the mean. Passing the width
 spectrum for depth and height with `scale` equal to their aspect ratios
