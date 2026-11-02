@@ -132,8 +132,10 @@ parameters:
   tile_width: null
   spectral_error_fraction: 0.25
   memory_limit_mb: null
+  powder_consolidation: 1.0 # Optional, in (0, 1]; layers are layer_height / phi apart
 
-# Melt pool dimension data. Must be 'time_series' (time, value) data.
+# Melt pool dimension data: every dimension uses 'time_series' (time, value)
+# data, or every dimension uses 'spectral_components' (see below).
 melt_pool_data:
   width:
     type: "time_series"
@@ -198,8 +200,18 @@ currently available memory.
 
    * The RVE min and max points *filter the scan paths for those that are near* the box defined by `min_point` and `max_point`; a large number of scan path files (such as from a part-scale build) can be downselected using this parameter setting.
 
-* **Melt Pool Data Files**: These files provide the data for the `melt_pool_data` section of the config.
+* **Powder Consolidation** (`parameters.powder_consolidation`, optional, default `1.0`): the powder consolidation factor `phi` in `(0, 1]`. At steady state the powder layer the laser fuses is `layer_height / phi` thick, so the heights in the scan path files are stretched about the lowest vector to place layers `layer_height / phi` apart. For example, `phi = 0.5` with a 30 um nominal layer gives a 60 um pitch. An explicit `rve` box must cover the stretched build height.
+
+* **Melt Pool Data Files**: These files provide the data for the `melt_pool_data` section of the config. All three dimensions must use the same `type`.
    *   With `type: "time_series"`, the file should be a two-column text or CSV file: `[time, value]`.
+   *   With `type: "spectral_components"`, the file holds a precomputed cosine spectrum, three columns `[amplitude, frequency, phase]` or two columns `[amplitude, frequency]` (two columns require `enable_random_segment_phase: true`). Row 0 is the mean, with frequency `0`. Keys are `file_name`, `scale`, `shape` (depth and height), and an optional `mean` that replaces the row 0 amplitude before scaling. See [Supplying a melt-pool spectrum directly](#supplying-a-melt-pool-spectrum-directly).
+
+     ```yaml
+     melt_pool_data:
+       width:  {type: "spectral_components", file_name: "w_spectrum.csv", scale: 1.0, mean: 1.8e-4}
+       depth:  {type: "spectral_components", file_name: "w_spectrum.csv", scale: 0.78, shape: 1.0, mean: 1.8e-4}
+       height: {type: "spectral_components", file_name: "w_spectrum.csv", scale: 0.16, shape: 1.0, mean: 1.8e-4}
+     ```
 
 ### 2. Python Library (API)
 
@@ -226,6 +238,8 @@ grid = create_grid(voxel_resolution, bound_box=bound_box)
 
 #### Step 2:  Generate Scan Path Vectors
 Use the `ScanPathBuilder` utility to programmatically generate a scan strategy. This builder takes process parameters like power, speed, and hatch spacing to create a list of PathVector objects for the simulation.
+
+The optional `powder_consolidation` argument (`phi`, default `1.0`) accounts for powder consolidation. At steady state the fused powder layer is `layer_height / phi` thick, so successive layers are placed `layer_height / phi` apart; `phi = 0.5` with a 30 um layer gives a 60 um pitch. For path vectors read from scan-path files, `raptor.utilities.apply_powder_consolidation(vectors, phi)` applies the same stretch to their heights.
 
 ```python
 from raptor.utilities import ScanPathBuilder
@@ -291,6 +305,46 @@ melt_pool_dict = {
 }
 
 melt_pool = create_melt_pool(melt_pool_dict, enable_random_phases=False)
+```
+
+##### Supplying a melt-pool spectrum directly
+When the melt-pool fluctuations are characterized as a spectrum, for example
+an average over many experiments, pass it to `create_melt_pool_from_spectra`
+instead of a time series. Each dimension is a `(spectrum, scale, shape_factor)`
+tuple. A spectrum has rows `[amplitude, frequency, phase]` (or
+`[amplitude, frequency]` when random phases are enabled) and describes
+
+```
+X(t) = A_0 + sum_k A_k cos(2 pi f_k t + phase_k)
+```
+
+with lengths in meters and frequencies in Hz. Row 0 is the mean `(A_0, 0, 0)`.
+The amplitudes are cosine amplitudes, the same convention returned by
+`compute_spectral_components` (`2|F_k|/N` of the FFT). Raptor 1.1.0 and
+earlier computed `|F_k|/N`, half the cosine amplitude. Spectra from those
+versions must be doubled to represent the measured signal, or used unchanged
+to reproduce results obtained with them.
+
+`scale` multiplies every amplitude, including the mean. Passing the width
+spectrum for depth and height with `scale` equal to their aspect ratios
+therefore gives `D(t) = eta_D W(t)` and `H(t) = eta_H W(t)`. The optional
+`means` argument replaces `A_0` before scaling, for example with a mean width
+measured separately from the fluctuations.
+
+```python
+import numpy as np
+from raptor.api import create_melt_pool_from_spectra
+
+width_spectrum = np.loadtxt("w_spectrum.csv", delimiter=",")  # [A, f(, phase)]
+melt_pool = create_melt_pool_from_spectra(
+    {
+        "width": (width_spectrum, 1.0, 2.0),
+        "depth": (width_spectrum, 0.78, 1.0),
+        "height": (width_spectrum, 0.16, 1.0),
+    },
+    enable_random_phases=True,
+    means={"width": 1.8e-4, "depth": 1.8e-4, "height": 1.8e-4},
+)
 ```
 
 #### Step 4:  Compute Porosity

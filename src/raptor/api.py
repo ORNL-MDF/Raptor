@@ -55,8 +55,13 @@ def create_path_vectors(
     rotation: float,
     scan_extension: float,
     extra_layers: int,
+    powder_consolidation: float = 1.0,
 ) -> List[PathVector]:
+    """Generate rotated raster path vectors for a box.
 
+    ``powder_consolidation`` (``phi`` in ``(0, 1]``) places successive layers
+    ``layer_height / phi`` apart; see :class:`raptor.utilities.ScanPathBuilder`.
+    """
     scan_path_builder = ScanPathBuilder(
         bound_box,
         power,
@@ -66,6 +71,7 @@ def create_path_vectors(
         rotation,
         scan_extension,
         extra_layers,
+        powder_consolidation=powder_consolidation,
     )
 
     scan_path_builder.generate_layers()
@@ -181,17 +187,13 @@ def compute_spectral_components(
     return spectral_array
 
 
-def create_melt_pool(
-    melt_pool_dict: Dict[str, Any],
-    enable_random_phases: bool,
-    tolerance: Optional[float] = None,
-) -> MeltPool:
+MELT_POOL_DIMENSIONS = ("width", "depth", "height")
 
-    processed_components: Dict[str, np.ndarray] = {}
-    required_dimensions = ("width", "depth", "height")
+
+def _require_melt_pool_dimensions(melt_pool_dict: Dict[str, Any]) -> None:
     missing_dimensions = [
         dimension
-        for dimension in required_dimensions
+        for dimension in MELT_POOL_DIMENSIONS
         if dimension not in melt_pool_dict
     ]
     if missing_dimensions:
@@ -200,78 +202,192 @@ def create_melt_pool(
             + ", ".join(missing_dimensions)
         )
 
-    for key in required_dimensions:
-        try:
-            data, n_modes, scale, shape_factor = melt_pool_dict[key]
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                f"{key} must be a (data, n_modes, scale, shape_factor) tuple."
-            ) from exc
 
-        if not np.isfinite(scale) or scale <= 0.0:
-            raise ValueError(f"{key} scale must be finite and positive.")
-        if not np.isfinite(shape_factor) or shape_factor <= 0.0:
-            raise ValueError(f"{key} shape factor must be finite and positive.")
-        if key == "width" and shape_factor != 2.0:
-            raise ValueError(
-                "The width shape factor must be 2.0; the optimized "
-                "transverse exponent is fixed."
-            )
+def _validate_scale_and_shape(
+    key: str, scale: float, shape_factor: float
+) -> None:
+    if not np.isfinite(scale) or scale <= 0.0:
+        raise ValueError(f"{key} scale must be finite and positive.")
+    if not np.isfinite(shape_factor) or shape_factor <= 0.0:
+        raise ValueError(f"{key} shape factor must be finite and positive.")
+    if key == "width" and shape_factor != 2.0:
+        raise ValueError(
+            "The width shape factor must be 2.0; the optimized "
+            "transverse exponent is fixed."
+        )
 
-        data = np.asarray(data, dtype=np.float64)
-        if data.ndim != 2:
-            raise ValueError(
-                f"{key} data must have shape (n, 2) representing "
-                f"(time, value); got {data.shape}."
-            )
-        if not np.isfinite(data).all():
-            raise ValueError(f"{key} data must contain only finite values.")
 
-        # Only (n, 2) time-series input is supported; spectral components
-        # are always computed internally from the supplied time series.
-        if data.shape[1] == 2:
-            component_tolerance = tolerance
-            if tolerance is not None and scale != 0.0:
-                component_tolerance = tolerance / abs(scale)
-            spectral_array = compute_spectral_components(
-                data,
-                n_modes=n_modes,
-                tolerance=component_tolerance,
-            )
-            spectral_array[:, 0] *= scale
-
-        else:
-            raise ValueError(
-                f"{key} data must have shape (n, 2) representing "
-                f"(time, value); got {data.shape}."
-            )
-
-        processed_components[key] = np.asarray(spectral_array, dtype=np.float64)
-
-    # 3. Create the MeltPool object
-    width_oscillations = processed_components["width"]
-    depth_oscillations = processed_components["depth"]
-    height_oscillations = processed_components["height"]
-
-    # 4. Unpack shape factors
-    width_shape_factor = melt_pool_dict["width"][-1]
-    depth_shape_factor = melt_pool_dict["depth"][-1]
-    height_shape_factor = melt_pool_dict["height"][-1]
-
-    melt_pool = MeltPool(
+def _build_melt_pool(
+    components: Dict[str, np.ndarray],
+    shape_factors: Dict[str, float],
+    enable_random_phases: bool,
+) -> MeltPool:
+    """Construct a MeltPool from validated (m, 3) spectral arrays."""
+    width_oscillations = components["width"]
+    depth_oscillations = components["depth"]
+    height_oscillations = components["height"]
+    return MeltPool(
         width_oscillations,
         depth_oscillations,
         height_oscillations,
         np.abs(width_oscillations[:, 0]).sum(axis=0),
         np.abs(depth_oscillations[:, 0]).sum(axis=0),
         np.abs(height_oscillations[:, 0]).sum(axis=0),
-        width_shape_factor,
-        height_shape_factor,
-        depth_shape_factor,
+        shape_factors["width"],
+        shape_factors["height"],
+        shape_factors["depth"],
         enable_random_phases,
     )
 
-    return melt_pool
+
+def create_melt_pool(
+    melt_pool_dict: Dict[str, Any],
+    enable_random_phases: bool,
+    tolerance: Optional[float] = None,
+) -> MeltPool:
+    """Create a melt pool from ``(time, value)`` series for each dimension.
+
+    ``melt_pool_dict`` maps ``"width"``, ``"depth"`` and ``"height"`` to
+    ``(data, n_modes, scale, shape_factor)`` tuples, where ``data`` has shape
+    ``(n, 2)``. To supply precomputed spectra instead, use
+    :func:`create_melt_pool_from_spectra`.
+    """
+    _require_melt_pool_dimensions(melt_pool_dict)
+    processed_components: Dict[str, np.ndarray] = {}
+    shape_factors: Dict[str, float] = {}
+
+    for key in MELT_POOL_DIMENSIONS:
+        try:
+            data, n_modes, scale, shape_factor = melt_pool_dict[key]
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"{key} must be a (data, n_modes, scale, shape_factor) tuple."
+            ) from exc
+        _validate_scale_and_shape(key, scale, shape_factor)
+
+        data = np.asarray(data, dtype=np.float64)
+        if data.ndim != 2 or data.shape[1] != 2:
+            raise ValueError(
+                f"{key} data must have shape (n, 2) representing "
+                f"(time, value); got {data.shape}. For precomputed spectra "
+                "use create_melt_pool_from_spectra."
+            )
+        if not np.isfinite(data).all():
+            raise ValueError(f"{key} data must contain only finite values.")
+
+        component_tolerance = tolerance
+        if tolerance is not None and scale != 0.0:
+            component_tolerance = tolerance / abs(scale)
+        spectral_array = compute_spectral_components(
+            data,
+            n_modes=n_modes,
+            tolerance=component_tolerance,
+        )
+        spectral_array[:, 0] *= scale
+
+        processed_components[key] = np.asarray(spectral_array, dtype=np.float64)
+        shape_factors[key] = shape_factor
+
+    return _build_melt_pool(
+        processed_components, shape_factors, enable_random_phases
+    )
+
+
+def create_melt_pool_from_spectra(
+    spectra: Dict[str, Any],
+    enable_random_phases: bool,
+    means: Optional[Dict[str, float]] = None,
+) -> MeltPool:
+    """Create a melt pool from precomputed cosine spectra.
+
+    ``spectra`` maps ``"width"``, ``"depth"`` and ``"height"`` to
+    ``(spectrum, scale, shape_factor)`` tuples. Each ``spectrum`` has rows
+    ``[amplitude, frequency, phase]`` (shape ``(m, 3)``) or
+    ``[amplitude, frequency]`` (shape ``(m, 2)``) describing
+
+        X(t) = A_0 + sum_{k >= 1} A_k cos(2 pi f_k t + phase_k)
+
+    with lengths in meters and frequencies in Hz. Row 0 is the mean
+    ``(A_0, 0[, 0])``; every other row has ``f_k > 0``. Amplitudes are cosine
+    amplitudes, the convention :func:`compute_spectral_components` returns
+    (``2|F_k|/N`` of the FFT). Raptor 1.1.0 and earlier computed ``|F_k|/N``,
+    half the cosine amplitude. Spectra from those versions must be doubled
+    to represent the measured signal, or used unchanged to reproduce results
+    obtained with them.
+
+    ``(m, 2)`` spectra have no phases and are accepted only with
+    ``enable_random_phases=True``.
+
+    ``means`` optionally replaces ``A_0`` per dimension (for example a mean
+    width measured independently of the spectrum). The override is applied
+    before ``scale``, and ``scale`` multiplies every amplitude including the
+    mean. Passing the width spectrum as the depth with ``scale = eta_D``
+    therefore gives ``D(t) = eta_D * W(t)``.
+    """
+    _require_melt_pool_dimensions(spectra)
+    means = {} if means is None else dict(means)
+    unknown = set(means) - set(MELT_POOL_DIMENSIONS)
+    if unknown:
+        raise ValueError(
+            "means has unknown dimensions: " + ", ".join(sorted(unknown))
+        )
+
+    processed_components: Dict[str, np.ndarray] = {}
+    shape_factors: Dict[str, float] = {}
+    for key in MELT_POOL_DIMENSIONS:
+        try:
+            spectrum, scale, shape_factor = spectra[key]
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"{key} must be a (spectrum, scale, shape_factor) tuple."
+            ) from exc
+        _validate_scale_and_shape(key, scale, shape_factor)
+
+        spectrum = np.asarray(spectrum, dtype=np.float64)
+        if (
+            spectrum.ndim != 2
+            or spectrum.shape[1] not in (2, 3)
+            or spectrum.shape[0] < 1
+        ):
+            raise ValueError(
+                f"{key} spectrum must have shape (m, 3) [amplitude, "
+                "frequency, phase] or (m, 2) [amplitude, frequency]; "
+                f"got {spectrum.shape}."
+            )
+        if not np.isfinite(spectrum).all():
+            raise ValueError(f"{key} spectrum must contain only finite values.")
+        if spectrum.shape[1] == 2 and not enable_random_phases:
+            raise ValueError(
+                f"{key} spectrum has no phase column; provide (m, 3) "
+                "[amplitude, frequency, phase] or enable random phases."
+            )
+
+        component = np.zeros((spectrum.shape[0], 3), dtype=np.float64)
+        component[:, : spectrum.shape[1]] = spectrum
+        if key in means:
+            mean = means[key]
+            if not np.isfinite(mean):
+                raise ValueError(f"{key} mean must be finite.")
+            component[0, 0] = mean
+            component[0, 2] = 0.0
+        if component[0, 1] != 0.0:
+            raise ValueError(
+                f"{key} spectrum row 0 must be the mean with frequency 0."
+            )
+        if component[0, 0] <= 0.0:
+            raise ValueError(f"{key} mean (row 0 amplitude) must be positive.")
+        if np.any(component[1:, 1] <= 0.0):
+            raise ValueError(
+                f"{key} spectrum frequencies after row 0 must be positive."
+            )
+        component[:, 0] *= scale
+
+        processed_components[key] = component
+        shape_factors[key] = shape_factor
+
+    return _build_melt_pool(
+        processed_components, shape_factors, enable_random_phases
+    )
 
 
 def _assign_melt_pool_properties(

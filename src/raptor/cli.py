@@ -17,12 +17,19 @@ from pathlib import Path
 from .api import (
     create_grid,
     create_melt_pool,
+    create_melt_pool_from_spectra,
     compute_porosity,
     write_vtk,
     compute_morphology,
     write_morphology,
 )
 from .io import read_data, read_scan_path
+from .utilities import (
+    apply_powder_consolidation,
+    validate_powder_consolidation,
+)
+
+MELT_POOL_DATA_TYPES = {"time_series", "spectral_components"}
 
 
 def main() -> int:
@@ -64,6 +71,10 @@ def main() -> int:
         enable_random_phases = scan_pattern_parameters[
             "enable_random_segment_phase"
         ]
+        powder_consolidation = scan_pattern_parameters.get(
+            "powder_consolidation", 1.0
+        )
+        validate_powder_consolidation(powder_consolidation)
         porosity_options = {
             key: scan_pattern_parameters[key]
             for key in (
@@ -75,36 +86,57 @@ def main() -> int:
             if key in scan_pattern_parameters
         }
 
-        # read melt pool dictionary (time series only)
+        # read melt pool dictionary: every dimension is either a time series
+        # [time, value] or a precomputed spectrum [amplitude, frequency(,
+        # phase)]; the two types cannot be mixed.
         melt_pool_dict = config.get("melt_pool_data", {})
         if not isinstance(melt_pool_dict, dict):
             raise ValueError("'melt_pool_data' must be a mapping.")
         melt_pool_data = {}
+        melt_pool_means = {}
+        melt_pool_types = set()
         try:
             for key, dimension_config in melt_pool_dict.items():
                 datatype = dimension_config["type"]
-                if datatype not in {"time_series"}:
+                if datatype not in MELT_POOL_DATA_TYPES:
                     raise ValueError(
                         f"Unsupported {key} melt-pool data type: {datatype}. "
-                        "Only 'time_series' is supported."
+                        "Use 'time_series' or 'spectral_components'."
                     )
+                melt_pool_types.add(datatype)
                 filepath = Path(dimension_config["file_name"])
                 if not filepath.is_absolute():
                     filepath = Path(config_dir) / filepath
                 scale = dimension_config["scale"]
-                nmodes = int(dimension_config["nmodes"])
                 shape_factor = (
                     2 if key == "width" else dimension_config["shape"]
                 )
-                melt_pool_data[key] = (
-                    read_data(filepath),
-                    nmodes,
-                    scale,
-                    shape_factor,
+                if datatype == "time_series":
+                    nmodes = int(dimension_config["nmodes"])
+                    melt_pool_data[key] = (
+                        read_data(filepath),
+                        nmodes,
+                        scale,
+                        shape_factor,
+                    )
+                else:
+                    melt_pool_data[key] = (
+                        read_data(filepath),
+                        scale,
+                        shape_factor,
+                    )
+                    if dimension_config.get("mean") is not None:
+                        melt_pool_means[key] = float(dimension_config["mean"])
+            if len(melt_pool_types) > 1:
+                raise ValueError(
+                    "All melt-pool dimensions must use the same type; got "
+                    + ", ".join(sorted(melt_pool_types))
+                    + "."
                 )
         except (KeyError, TypeError, ValueError, OSError) as error:
             print(f"Error reading melt-pool data: {error}")
             return 1
+        spectral_input = melt_pool_types == {"spectral_components"}
 
         # read representative volume element (RVE) dictionary
         rve = config.get("rve", {})
@@ -157,6 +189,7 @@ def main() -> int:
         "Scan Paths": scan_path_files,
         "Random Phases": f"{enable_random_phases}",
         "Layer Height": f"{layer_height:.2e} m",
+        "Powder Consolidation": f"{powder_consolidation}",
         "VTK Output": vtk_file,
         "Morphology Output": morphology_file,
         "Voxel Res": f"{voxel_resolution:.2e} m",
@@ -174,8 +207,13 @@ def main() -> int:
     for key in melt_pool_data:
         print(f"    {key} datatype: " + melt_pool_dict[key]["type"])
         print(f"    {key} path : " + melt_pool_dict[key]["file_name"])
-        print(f"    {key} scaling : {melt_pool_data[key][2]}")
-        print(f"    {key} modes : {melt_pool_data[key][1]}")
+        print(f"    {key} scaling : {melt_pool_dict[key]['scale']}")
+        if spectral_input:
+            print(f"    {key} modes : {melt_pool_data[key][0].shape[0]}")
+            if key in melt_pool_means:
+                print(f"    {key} mean : {melt_pool_means[key]:.4e} m")
+        else:
+            print(f"    {key} modes : {melt_pool_data[key][1]}")
 
     if bounding_box is not None:
         print("  RVE data:")
@@ -195,8 +233,17 @@ def main() -> int:
                 all_vectors.append(vector)
         if not all_vectors:
             raise ValueError("No line-raster scan vectors were found.")
+        if powder_consolidation != 1.0:
+            all_vectors = apply_powder_consolidation(
+                all_vectors, powder_consolidation
+            )
 
-        melt_pool = create_melt_pool(melt_pool_data, enable_random_phases)
+        if spectral_input:
+            melt_pool = create_melt_pool_from_spectra(
+                melt_pool_data, enable_random_phases, means=melt_pool_means
+            )
+        else:
+            melt_pool = create_melt_pool(melt_pool_data, enable_random_phases)
 
         # instantiate voxel grid
         grid = (
