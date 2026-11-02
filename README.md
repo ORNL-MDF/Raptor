@@ -132,7 +132,7 @@ parameters:
   tile_width: null
   spectral_error_fraction: 0.25
   memory_limit_mb: null
-  powder_consolidation: 0.5 # Optional (default 0.5), in (0, 1]; layers are layer_height / phi apart
+  powder_consolidation: 0.5 # Optional (default 0.5), in (0, 1]; effective layer thickness = layer_height / phi
 
 # Melt pool dimension data: every dimension uses 'time_series' (time, value)
 # data, or every dimension uses 'spectral_components' (see below).
@@ -200,7 +200,7 @@ currently available memory.
 
    * The RVE min and max points *filter the scan paths for those that are near* the box defined by `min_point` and `max_point`; a large number of scan path files (such as from a part-scale build) can be downselected using this parameter setting.
 
-* **Powder Consolidation** (`parameters.powder_consolidation`, optional, default `0.5`): the powder consolidation factor `phi` in `(0, 1]`. At steady state the powder layer the laser fuses is `layer_height / phi` thick, so the heights in the scan path files are stretched about the lowest vector to place layers `layer_height / phi` apart. The default `phi = 0.5` gives a 60 um pitch for a 30 um nominal layer [Scime 2018]; set `1.0` to keep the nominal layer heights. An explicit `rve` box must cover the stretched build height.
+* **Powder Consolidation** (`parameters.powder_consolidation`, optional, default `0.5`): the powder consolidation factor `phi` in `(0, 1]`. At steady state the powder layer the laser fuses is thicker than the nominal layer, giving an effective layer thickness of `layer_height / phi`. The heights in the scan path files are stretched about the lowest vector so that successive layers are one effective layer thickness apart. The default `phi = 0.5` gives a 60 um effective layer thickness for a 30 um nominal layer [Scime 2018]; set `1.0` to keep the nominal layer heights. An explicit `rve` box must cover the stretched build height.
 
 * **Melt Pool Data Files**: These files provide the data for the `melt_pool_data` section of the config. All three dimensions must use the same `type`.
    *   With `type: "time_series"`, the file should be a two-column text or CSV file: `[time, value]`.
@@ -239,7 +239,7 @@ grid = create_grid(voxel_resolution, bound_box=bound_box)
 #### Step 2:  Generate Scan Path Vectors
 Use the `ScanPathBuilder` utility to programmatically generate a scan strategy. This builder takes process parameters like power, speed, and hatch spacing to create a list of PathVector objects for the simulation.
 
-The optional `powder_consolidation` argument (`phi`, default `0.5`) accounts for powder consolidation. At steady state the fused powder layer is `layer_height / phi` thick, so successive layers are placed `layer_height / phi` apart; the default `phi = 0.5` gives a 60 um pitch for a 30 um layer [Scime 2018]. Pass `powder_consolidation=1.0` to place layers `layer_height` apart. For path vectors read from scan-path files, `raptor.utilities.apply_powder_consolidation(vectors, phi)` applies the same stretch to their heights.
+The optional `powder_consolidation` argument (`phi`, default `0.5`) accounts for powder consolidation. At steady state the fused powder layer is thicker than the nominal layer, giving an effective layer thickness of `layer_height / phi`, and successive layers are placed one effective layer thickness apart. The default `phi = 0.5` gives a 60 um effective layer thickness for a 30 um layer [Scime 2018]. Pass `powder_consolidation=1.0` to use `layer_height` as the layer thickness. For path vectors read from scan-path files, `raptor.utilities.apply_powder_consolidation(vectors, phi)` applies the same stretch to their heights.
 
 ```python
 from raptor.utilities import ScanPathBuilder

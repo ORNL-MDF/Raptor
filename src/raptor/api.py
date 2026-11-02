@@ -59,8 +59,9 @@ def create_path_vectors(
 ) -> List[PathVector]:
     """Generate rotated raster path vectors for a box.
 
-    ``powder_consolidation`` (``phi`` in ``(0, 1]``, default ``0.5``) places
-    successive layers ``layer_height / phi`` apart; see
+    ``powder_consolidation`` (``phi`` in ``(0, 1]``, default ``0.5``) sets the
+    effective layer thickness ``layer_height / phi``, the spacing between
+    successive layers; see
     :class:`raptor.utilities.ScanPathBuilder` and
     https://doi.org/10.1184/R1/6720581.
     """

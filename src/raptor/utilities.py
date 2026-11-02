@@ -16,9 +16,9 @@ from .structures import PathVector
 from scipy.signal import butter, sosfilt
 from scipy.stats import chi2
 
-# Default powder consolidation factor: a fused layer occupies about half the
-# thickness of the steady-state powder layer, so layers are placed
-# ``layer_height / 0.5`` apart. See https://doi.org/10.1184/R1/6720581.
+# Default powder consolidation factor: at steady state the powder layer is
+# about twice the nominal layer height, so the effective layer thickness is
+# ``layer_height / 0.5``. See https://doi.org/10.1184/R1/6720581.
 DEFAULT_POWDER_CONSOLIDATION = 0.5
 
 
@@ -40,11 +40,11 @@ def apply_powder_consolidation(
     powder_consolidation: float,
     reference_z: Optional[float] = None,
 ) -> List[PathVector]:
-    """Stretch path-vector heights from the nominal layer height to the pitch.
+    """Stretch path-vector heights to the effective layer thickness.
 
     Scan paths read from files carry each layer at its nominal height. With
-    powder consolidation ``phi`` the fused layers are ``layer_height / phi``
-    apart, so every height is mapped to
+    powder consolidation ``phi`` the effective layer thickness is
+    ``layer_height / phi``, so every height is mapped to
     ``reference_z + (z - reference_z) / phi``. ``reference_z`` defaults to the
     lowest vector start height. In-plane coordinates and times are unchanged.
     New vectors are returned with their coordinate frames set.
@@ -107,10 +107,11 @@ class ScanPathBuilder:
             extra_layers: Layers generated above the part volume.
             powder_consolidation: Powder consolidation factor ``phi`` in
                 ``(0, 1]``. At steady state the powder layer the laser
-                fuses is ``layer_height / phi`` thick, so successive layers
-                are placed ``layer_height / phi`` apart (the layer pitch).
-                The default ``0.5`` gives a 60 um pitch for a 30 um nominal
-                layer; ``1.0`` places layers ``layer_height`` apart. See
+                fuses is thicker than the nominal layer, giving an effective
+                layer thickness of ``layer_height / phi``; successive layers
+                are placed one effective layer thickness apart. The default
+                ``0.5`` gives a 60 um effective layer thickness for a 30 um
+                nominal layer; ``1.0`` uses ``layer_height`` itself. See
                 https://doi.org/10.1184/R1/6720581.
         """
         bound_box = np.asarray(bound_box, dtype=np.float64)
@@ -150,7 +151,9 @@ class ScanPathBuilder:
         self.hatch_spacing = float(hatch_spacing)
         self.layer_height = float(layer_height)
         self.powder_consolidation = float(powder_consolidation)
-        self.layer_pitch = self.layer_height / self.powder_consolidation
+        self.effective_layer_thickness = (
+            self.layer_height / self.powder_consolidation
+        )
         self.rotation = np.deg2rad(rotation)
         self.scan_extension = float(scan_extension)
         self.extra_layers = int(extra_layers)
@@ -161,7 +164,8 @@ class ScanPathBuilder:
             self.min_point[:2] + self.max_point[:2]
         ) / 2.0
         self.nlayers = (
-            int(self.dimensions[2] // self.layer_pitch + 1) + self.extra_layers
+            int(self.dimensions[2] // self.effective_layer_thickness + 1)
+            + self.extra_layers
         )
 
         self.layers = {}
@@ -228,7 +232,10 @@ class ScanPathBuilder:
             layer_time = time_offset
             for start_xy, end_xy in zip(layer_start, layer_end):
                 # defining start, end points and start, end times
-                z_value = self.min_point[2] + layer_key * self.layer_pitch
+                z_value = (
+                    self.min_point[2]
+                    + layer_key * self.effective_layer_thickness
+                )
                 vector_start = np.array([start_xy[0], start_xy[1], z_value])
                 vector_end = np.array([end_xy[0], end_xy[1], z_value])
                 vector_length = np.linalg.norm(vector_end - vector_start)
